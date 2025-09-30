@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  fmt:
+    name: rustfmt (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: rustfmt (check)
+        run: cargo +nightly fmt --all -- --check
+
+  lint-test:
+    name: clippy & tests (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: tests
+        run: cargo test --all-features --all-targets --no-fail-fast
