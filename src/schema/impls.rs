@@ -24,7 +24,10 @@ use {
         len::BincodeLen,
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
-    core::mem::{transmute, MaybeUninit},
+    core::{
+        mem::{transmute, MaybeUninit},
+        ptr,
+    },
 };
 
 macro_rules! impl_int {
@@ -287,10 +290,21 @@ where
     #[inline]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
-        let ptr =
+        let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
-        for slot in ptr.iter_mut() {
-            T::read(reader, slot)?;
+
+        for (i, slot) in dst.iter_mut().enumerate() {
+            if let Err(e) = T::read(reader, slot) {
+                // SAFETY: we've read at least `i` elements and assume T::read properly initializes the elements.
+                unsafe {
+                    // use drop for [T::Dst]
+                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                        dst.as_mut_ptr().cast::<T::Dst>(),
+                        i,
+                    ));
+                }
+                return Err(e);
+            }
         }
         Ok(())
     }
