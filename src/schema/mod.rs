@@ -62,18 +62,18 @@ pub trait SchemaWrite {
 }
 
 /// Types that can be read (deserialized) from a byte buffer.
-pub trait SchemaRead {
+pub trait SchemaRead<'de> {
     type Dst;
     /// Read into `dst` from `reader`.
     ///
     /// # Safety
     ///
     /// - Implementation must properly initialize the `Self::Dst`.
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()>;
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut Reader) -> Result<Self::Dst> {
+    fn get(reader: &mut Reader<'de>) -> Result<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
@@ -190,7 +190,7 @@ mod tests {
             }
         }
 
-        impl SchemaRead for DropCounted {
+        impl SchemaRead<'_> for DropCounted {
             type Dst = Self;
             fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
                 reader.consume(1)?;
@@ -212,7 +212,7 @@ mod tests {
             }
         }
 
-        impl SchemaRead for ErrorsOnRead {
+        impl SchemaRead<'_> for ErrorsOnRead {
             type Dst = Self;
             fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
                 reader.consume(1)?;

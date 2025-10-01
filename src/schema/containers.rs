@@ -214,7 +214,7 @@ impl<T> SchemaWrite for Pod<T> {
     }
 }
 
-impl<T> SchemaRead for Pod<T> {
+impl<T> SchemaRead<'_> for Pod<T> {
     type Dst = T;
 
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -244,10 +244,10 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for Vec<Elem<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for Vec<Elem<T>, Len>
 where
     Len: SeqLen,
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = alloc::vec::Vec<T::Dst>;
 
@@ -261,7 +261,7 @@ where
     /// # Safety
     ///
     /// - `T::read` must properly initialize elements.
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T::Dst>(reader)?;
         let mut vec = alloc::vec::Vec::with_capacity(len);
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
@@ -303,7 +303,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for Vec<Pod<T>, Len>
+impl<T, Len> SchemaRead<'_> for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
 {
@@ -357,7 +357,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for BoxedSlice<Pod<T>, Len>
+impl<T, Len> SchemaRead<'_> for BoxedSlice<Pod<T>, Len>
 where
     Len: SeqLen,
 {
@@ -396,15 +396,15 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for BoxedSlice<Elem<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for BoxedSlice<Elem<T>, Len>
 where
     Len: SeqLen,
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = alloc::boxed::Box<[T::Dst]>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut v = MaybeUninit::uninit();
         <Vec<Elem<T>, Len>>::read(reader, &mut v)?;
         // SAFETY: The given `SchemaRead` must properly initialize the dst.
@@ -441,7 +441,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for VecDeque<Pod<T>, Len>
+impl<T, Len> SchemaRead<'_> for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
 {
@@ -481,15 +481,15 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead for VecDeque<Elem<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for VecDeque<Elem<T>, Len>
 where
     Len: SeqLen,
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = alloc::collections::VecDeque<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.

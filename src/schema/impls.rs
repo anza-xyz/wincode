@@ -57,7 +57,7 @@ macro_rules! impl_int {
             }
         }
 
-        impl SchemaRead for $type {
+        impl SchemaRead<'_> for $type {
             type Dst = $type;
 
             #[inline(always)]
@@ -101,7 +101,7 @@ macro_rules! impl_int {
             }
         }
 
-        impl SchemaRead for $type {
+        impl SchemaRead<'_> for $type {
             type Dst = $type;
 
             #[inline]
@@ -150,7 +150,7 @@ macro_rules! impl_pod {
             }
         }
 
-        impl SchemaRead for $type {
+        impl SchemaRead<'_> for $type {
             type Dst = $type;
 
             #[inline]
@@ -179,7 +179,7 @@ impl SchemaWrite for bool {
     }
 }
 
-impl SchemaRead for bool {
+impl SchemaRead<'_> for bool {
     type Dst = bool;
 
     #[inline]
@@ -219,14 +219,14 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T> SchemaRead for Vec<T>
+impl<'de, T> SchemaRead<'de> for Vec<T>
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = Vec<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -251,14 +251,14 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T> SchemaRead for VecDeque<T>
+impl<'de, T> SchemaRead<'de> for VecDeque<T>
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = VecDeque<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -281,14 +281,14 @@ where
     }
 }
 
-impl<T, const N: usize> SchemaRead for [T; N]
+impl<'de, T, const N: usize> SchemaRead<'de> for [T; N]
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = [T::Dst; N];
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
@@ -334,14 +334,14 @@ where
     }
 }
 
-impl<T> SchemaRead for Option<T>
+impl<'de, T> SchemaRead<'de> for Option<T>
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = Option<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let variant = u8::get(reader)?;
         match variant {
             0 => {
@@ -445,14 +445,14 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T> SchemaRead for Box<T>
+impl<'de, T> SchemaRead<'de> for Box<T>
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = Box<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut mem = Box::new_uninit();
         T::read(reader, &mut mem)?;
         unsafe {
@@ -464,14 +464,14 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T> SchemaRead for Box<[T]>
+impl<'de, T> SchemaRead<'de> for Box<[T]>
 where
-    T: SchemaRead,
+    T: SchemaRead<'de>,
 {
     type Dst = Box<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -620,7 +620,7 @@ macro_rules! compound {
             $vis trait [<$src Ext>] {
                 $(
                     /// Get a mutable [`MaybeUninit`](core::mem::MaybeUninit) to the corresponding slot in `dst` for the field.
-                    fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst>;
+                    fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead<'_>>::Dst>;
                     /// Read the field into the corresponding slot in `dst` from `reader`.
                     ///
                     /// # Safety
@@ -634,7 +634,7 @@ macro_rules! compound {
 
             impl [<$src Ext>] for $src {
                 #[inline]
-                $(fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead>::Dst> {
+                $(fn [<get_uninit_ $field _mut>](dst: &mut core::mem::MaybeUninit<$target>) -> &mut core::mem::MaybeUninit<<$schema as $crate::SchemaRead<'_>>::Dst> {
                     unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() }
                 })+
                 #[inline]
@@ -676,7 +676,7 @@ macro_rules! compound {
             };
         )+
 
-        impl $crate::SchemaRead for $src {
+        impl $crate::SchemaRead<'_> for $src {
             type Dst = $target;
 
             #[inline]
@@ -710,14 +710,14 @@ macro_rules! impl_tuple {
             }
         }
 
-        impl<$($schema),+> $crate::SchemaRead for ($($schema),+)
+        impl<'de, $($schema),+> $crate::SchemaRead<'de> for ($($schema),+)
         where
-            $($schema: $crate::SchemaRead),+,
+            $($schema: $crate::SchemaRead<'de>),+,
         {
             type Dst = ($($schema::Dst),+);
 
             #[inline]
-            fn read(reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+            fn read(reader: &mut $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 let dst_ptr = dst.as_mut_ptr();
                 $crate::__read_fields_with_drop!(dst_ptr, reader; [] ; $($field: $schema),+);
                 Ok(())

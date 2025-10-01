@@ -32,10 +32,10 @@ use {
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// ```
-pub trait Deserialize: SchemaRead {
+pub trait Deserialize<'de>: SchemaRead<'de> {
     /// Deserialize `bytes` into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(bytes: &[u8]) -> Result<Self::Dst> {
+    fn deserialize(bytes: &'de [u8]) -> Result<Self::Dst> {
         let mut dst = MaybeUninit::uninit();
         Self::deserialize_into(bytes, &mut dst)?;
         // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
@@ -44,14 +44,14 @@ pub trait Deserialize: SchemaRead {
 
     /// Deserialize `bytes` into `target`.
     #[inline]
-    fn deserialize_into(bytes: &[u8], target: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn deserialize_into(bytes: &'de [u8], target: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut cursor = Reader::new(bytes);
         Self::read(&mut cursor, target)?;
         Ok(())
     }
 }
 
-impl<T> Deserialize for T where T: SchemaRead {}
+impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de> {}
 
 /// Helper over [`SchemaWrite`] that automatically constructs a writer
 /// and serializes a source.
@@ -127,9 +127,9 @@ impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
 /// assert_eq!(vec, deserialized);
 /// ```
 #[inline(always)]
-pub fn deserialize<T>(bytes: &[u8]) -> Result<T>
+pub fn deserialize<'de, T>(bytes: &'de [u8]) -> Result<T>
 where
-    T: SchemaRead<Dst = T>,
+    T: SchemaRead<'de, Dst = T>,
 {
     T::deserialize(bytes)
 }
@@ -138,9 +138,9 @@ where
 ///
 /// Like [`deserialize`], but allows the caller to provide their own target.
 #[inline]
-pub fn deserialize_into<T>(bytes: &[u8], target: &mut MaybeUninit<T>) -> Result<()>
+pub fn deserialize_into<'de, T>(bytes: &'de [u8], target: &mut MaybeUninit<T>) -> Result<()>
 where
-    T: SchemaRead<Dst = T>,
+    T: SchemaRead<'de, Dst = T>,
 {
     T::deserialize_into(bytes, target)
 }
