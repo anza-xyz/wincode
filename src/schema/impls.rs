@@ -476,6 +476,47 @@ where
     }
 }
 
+// Recursively drop the given initialized fields in reverse order.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __drop_rev {
+    // Done
+    ($dst_ptr:expr,) => {};
+    ($dst_ptr:expr, $head:tt $($rest:tt)*) => {
+        unsafe { core::ptr::drop_in_place(&mut (*$dst_ptr).$head); }
+        $crate::__drop_rev!($dst_ptr, $($rest)*);
+    };
+}
+
+/// Recursive read of struct / tuple fields in order, accumulating a list of initialized fields on step.
+/// This allows us to expand out to code that will drop the fields that have been initialized successfully
+/// when a subsequent `read` encounters an error.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __read_fields_with_drop {
+    // Done
+    ($dst_ptr:expr, $reader:expr; [$($done:tt)*] ; ) => {};
+
+    // Step
+    ($dst_ptr:expr, $reader:expr; [$($done:tt)*] ;
+        $field:tt : $schema:ty $(, $rest_field:tt : $rest_schema:ty )* ) => {
+        // Clippy will warn about using `?` on the first `read` because it doesn't have any fields to drop,
+        // and its block will just contain `return Err(e)`.
+        #[allow(clippy::question_mark)]
+        if let Err(e) = <$schema as $crate::SchemaRead>::read(
+            $reader,
+            // Cast the *mut pointer of the struct field to a &mut MaybeUninit.
+            unsafe { &mut *(&raw mut (*$dst_ptr).$field).cast() },
+        ) {
+            // Drop the fields that have been initialized successfully.
+            $crate::__drop_rev!($dst_ptr, $($done)*);
+            return Err(e);
+        }
+        // Recurse.
+        $crate::__read_fields_with_drop!($dst_ptr, $reader; [$field $($done)*] ; $( $rest_field : $rest_schema ),* );
+    };
+}
+
 /// Implement [`SchemaWrite`] and [`SchemaRead`] for a struct by specifying its constituent field schemas.
 ///
 /// Note using this on packed structs is UB.
@@ -634,12 +675,14 @@ macro_rules! compound {
                 );
             };
         )+
+
         impl $crate::SchemaRead for $src {
             type Dst = $target;
 
             #[inline]
             fn read(reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
-                $(<$schema as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).$field).cast() })?;)+
+                let dst_ptr = dst.as_mut_ptr();
+                $crate::__read_fields_with_drop!(dst_ptr, reader; []; $($field: $schema ),+);
                 Ok(())
             }
         }
@@ -647,35 +690,36 @@ macro_rules! compound {
 }
 
 macro_rules! impl_tuple {
-    ($($name:ident: $field:tt),+) => {
-        impl<$($name),+> $crate::SchemaWrite for ($($name),+)
+    ($($schema:ident: $field:tt),+) => {
+        impl<$($schema),+> $crate::SchemaWrite for ($($schema),+)
         where
-            $($name: $crate::SchemaWrite),+,
-            $($name::Src: Sized),+
+            $($schema: $crate::SchemaWrite),+,
+            $($schema::Src: Sized),+
         {
-            type Src = ($($name::Src),+);
+            type Src = ($($schema::Src),+);
 
             #[inline]
             fn size_of(value: &Self::Src) -> $crate::error::Result<usize> {
-                Ok(0 $(+ <$name as $crate::SchemaWrite>::size_of(&value.$field)?)+)
+                Ok(0 $(+ <$schema as $crate::SchemaWrite>::size_of(&value.$field)?)+)
             }
 
             #[inline]
             fn write(writer: &mut $crate::io::Writer, value: &Self::Src) -> $crate::error::Result<()> {
-                $(<$name as $crate::SchemaWrite>::write(writer, &value.$field)?;)+
+                $(<$schema as $crate::SchemaWrite>::write(writer, &value.$field)?;)+
                 Ok(())
             }
         }
 
-        impl<$($name),+> $crate::SchemaRead for ($($name),+)
+        impl<$($schema),+> $crate::SchemaRead for ($($schema),+)
         where
-            $($name: $crate::SchemaRead),+,
+            $($schema: $crate::SchemaRead),+,
         {
-            type Dst = ($($name::Dst),+);
+            type Dst = ($($schema::Dst),+);
 
             #[inline]
-            fn read(reader: &mut $crate::io::Reader, value: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
-                $(<$name as $crate::SchemaRead>::read(reader, unsafe { &mut *(&raw mut (*value.as_mut_ptr()).$field).cast() })?;)+
+            fn read(reader: &mut $crate::io::Reader, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+                let dst_ptr = dst.as_mut_ptr();
+                $crate::__read_fields_with_drop!(dst_ptr, reader; [] ; $($field: $schema),+);
                 Ok(())
             }
         }

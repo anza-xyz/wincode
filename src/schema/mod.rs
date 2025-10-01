@@ -122,11 +122,16 @@ mod tests {
             compound,
             containers::{self, Elem, Pod},
             deserialize,
+            io::{Reader, Writer},
             len::BincodeLen,
-            serialize, Deserialize, Serialize,
+            serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
         alloc::{boxed::Box, collections::VecDeque, vec::Vec},
-        core::result::Result,
+        core::{
+            mem::MaybeUninit,
+            result::Result,
+            sync::atomic::{AtomicUsize, Ordering},
+        },
         proptest::prelude::*,
     };
 
@@ -153,6 +158,120 @@ mod tests {
 
     fn strat_byte_vec() -> impl Strategy<Value = Vec<u8>> {
         proptest::collection::vec(any::<u8>(), 0..=100)
+    }
+
+    /// Test that the `compound!` macro handles drops of initialized fields on partially initialized structs.
+    #[test]
+    fn compound_handles_partial_drop() {
+        static LIVE: AtomicUsize = AtomicUsize::new(0);
+        struct DropCounted;
+
+        impl DropCounted {
+            fn new() -> Self {
+                LIVE.fetch_add(1, Ordering::SeqCst);
+                Self
+            }
+        }
+
+        impl Drop for DropCounted {
+            fn drop(&mut self) {
+                LIVE.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+
+        impl SchemaWrite for DropCounted {
+            type Src = Self;
+            fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+                Ok(1)
+            }
+            fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+                u8::write(writer, &0)?;
+                Ok(())
+            }
+        }
+
+        impl SchemaRead for DropCounted {
+            type Dst = Self;
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+                reader.consume(1)?;
+                // This will increment the counter.
+                dst.write(DropCounted::new());
+                Ok(())
+            }
+        }
+
+        struct ErrorsOnRead;
+
+        impl SchemaWrite for ErrorsOnRead {
+            type Src = Self;
+            fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+                Ok(1)
+            }
+            fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+                u8::write(writer, &1)
+            }
+        }
+
+        impl SchemaRead for ErrorsOnRead {
+            type Dst = Self;
+            fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+                reader.consume(1)?;
+                Err(crate::error::Error::PointerSizedDecodeError)
+            }
+        }
+
+        /// Represents a struct that would leak if the `compound!` macro didn't handle drops of initialized fields
+        /// on error.
+        struct CouldLeak {
+            // Increments by 1
+            data: DropCounted,
+            // Increments by 1
+            data2: DropCounted,
+            // Will trigger an error on `CouldLeak::read`, which will exercise the `compound!` macro's handling of
+            // drops of initialized fields on error.
+            err: ErrorsOnRead,
+        }
+
+        impl CouldLeak {
+            fn new() -> Self {
+                Self {
+                    data: DropCounted::new(),
+                    data2: DropCounted::new(),
+                    err: ErrorsOnRead,
+                }
+            }
+        }
+
+        compound! {
+            CouldLeak {
+                data: DropCounted,
+                data2: DropCounted,
+                err: ErrorsOnRead,
+            }
+        }
+
+        {
+            // Ensure our incrementing counter works
+            let serialized = { serialize(&[DropCounted::new(), DropCounted::new()]).unwrap() };
+            let deserialized: [DropCounted; 2] = deserialize(&serialized).unwrap();
+            assert_eq!(LIVE.load(Ordering::SeqCst), 2);
+            drop(deserialized);
+            assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+        }
+
+        let serialized = { serialize(&CouldLeak::new()).unwrap() };
+        let deserialized = CouldLeak::deserialize(&serialized);
+        assert!(deserialized.is_err());
+        // This would be `2` if the initialized fields were not dropped.
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+
+        // Ensure this works with tuples too.
+        let serialized =
+            { serialize(&(DropCounted::new(), DropCounted::new(), ErrorsOnRead)).unwrap() };
+        let deserialized = <(DropCounted, DropCounted, ErrorsOnRead)>::deserialize(&serialized);
+        assert!(deserialized.is_err());
+        // This would be `2` if the initialized fields were not dropped.
+        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
     }
 
     proptest! {
