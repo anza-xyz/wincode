@@ -111,14 +111,6 @@ impl<'a> Writer<'a> {
         }
     }
 
-    #[inline]
-    fn ensure_capacity(&mut self, len: usize) -> Result<()> {
-        if self.buffer.len().saturating_sub(self.pos) < len {
-            return Err(write_size_limit(len));
-        }
-        Ok(())
-    }
-
     /// Get the number of bytes written to the buffer.
     #[inline]
     pub fn finish(self) -> usize {
@@ -138,7 +130,9 @@ impl<'a> Writer<'a> {
     /// Write exactly `src.len()` bytes from the given `src` into the internal buffer.
     #[inline]
     pub fn write_exact(&mut self, src: &[u8]) -> Result<()> {
-        self.ensure_capacity(src.len())?;
+        if self.buffer.len().saturating_sub(self.pos) < src.len() {
+            return Err(write_size_limit(src.len()));
+        }
 
         unsafe {
             // SAFETY:
@@ -156,21 +150,20 @@ impl<'a> Writer<'a> {
 
     /// Write `len` bytes from the given `write` function into the internal buffer.
     ///
-    /// Prefer [`Writer::write_exact`] or [`Writer::write_t`] wherever possible.
-    ///
     /// This method can be used to get `len` [`MaybeUninit<u8>`] bytes from internal
-    /// buffer memory and write into them directly.
+    /// buffer for direct writes.
     ///
     /// # Safety
     ///
     /// - `write` must write EXACTLY `len` bytes into the given buffer.
-    /// - `write` must not write from a buffer that overlaps with the internal buffer.
     pub unsafe fn write_with<F>(&mut self, len: usize, write: F) -> Result<()>
     where
         F: FnOnce(&mut [MaybeUninit<u8>]) -> Result<()>,
     {
-        self.ensure_capacity(len)?;
-        let dst = &mut self.buffer[self.pos..self.pos + len];
+        let dst = self
+            .buffer
+            .get_mut(self.pos..self.pos + len)
+            .ok_or_else(|| write_size_limit(len))?;
         write(dst)?;
         self.pos += len;
         Ok(())
