@@ -116,16 +116,13 @@ mod tests {
             compound,
             containers::{self, Elem, Pod},
             deserialize,
+            error::invalid_tag_encoding,
             io::{Reader, Writer},
             len::BincodeLen,
             serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
         alloc::{boxed::Box, collections::VecDeque, vec::Vec},
-        core::{
-            mem::MaybeUninit,
-            result::Result,
-            sync::atomic::{AtomicUsize, Ordering},
-        },
+        core::{cell::Cell, mem::MaybeUninit, result::Result},
         proptest::prelude::*,
     };
 
@@ -154,66 +151,210 @@ mod tests {
         proptest::collection::vec(any::<u8>(), 0..=100)
     }
 
+    thread_local! {
+        /// TL counter for tracking drops (or lack thereof -- a leak).
+        static TL_DROP_COUNT: Cell<isize> = const { Cell::new(0) };
+    }
+
+    fn get_tl_drop_count() -> isize {
+        TL_DROP_COUNT.with(|cell| cell.get())
+    }
+
+    fn tl_drop_count_inc() {
+        TL_DROP_COUNT.with(|cell| cell.set(cell.get() + 1));
+    }
+
+    fn tl_drop_count_dec() {
+        TL_DROP_COUNT.with(|cell| cell.set(cell.get() - 1));
+    }
+
+    fn tl_drop_count_reset() {
+        TL_DROP_COUNT.with(|cell| cell.set(0));
+    }
+
+    #[must_use]
+    #[derive(Debug)]
+    /// Guard for test set up that will ensure that the TL counter is 0 at the start and end of the test.
+    struct TLDropGuard;
+
+    impl TLDropGuard {
+        fn new() -> Self {
+            assert_eq!(
+                get_tl_drop_count(),
+                0,
+                "TL counter drifted from zero -- another test may have leaked"
+            );
+            Self
+        }
+    }
+
+    impl Drop for TLDropGuard {
+        #[track_caller]
+        fn drop(&mut self) {
+            let v = get_tl_drop_count();
+            if !std::thread::panicking() {
+                assert_eq!(
+                    v, 0,
+                    "TL counter drifted from zero -- this test might have leaked"
+                );
+            }
+            tl_drop_count_reset();
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    /// A `SchemaWrite` and `SchemaRead` that will increment the TL counter when constructed.
+    struct DropCounted;
+
+    impl DropCounted {
+        const TAG_BYTE: u8 = 0;
+
+        fn new() -> Self {
+            tl_drop_count_inc();
+            Self
+        }
+    }
+
+    impl Clone for DropCounted {
+        fn clone(&self) -> Self {
+            tl_drop_count_inc();
+            Self
+        }
+    }
+
+    impl Drop for DropCounted {
+        fn drop(&mut self) {
+            tl_drop_count_dec();
+        }
+    }
+
+    impl SchemaWrite for DropCounted {
+        type Src = Self;
+        fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+            Ok(1)
+        }
+        fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+            u8::write(writer, &Self::TAG_BYTE)?;
+            Ok(())
+        }
+    }
+
+    impl SchemaRead<'_> for DropCounted {
+        type Dst = Self;
+
+        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+            reader.consume(1)?;
+            // This will increment the counter.
+            dst.write(DropCounted::new());
+            Ok(())
+        }
+    }
+
+    /// A `SchemaRead` that will always error on read.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct ErrorsOnRead;
+
+    impl ErrorsOnRead {
+        const TAG_BYTE: u8 = 1;
+    }
+
+    impl SchemaWrite for ErrorsOnRead {
+        type Src = Self;
+
+        fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+            Ok(1)
+        }
+
+        fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+            u8::write(writer, &Self::TAG_BYTE)
+        }
+    }
+
+    impl SchemaRead<'_> for ErrorsOnRead {
+        type Dst = Self;
+
+        fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+            reader.consume(1)?;
+            Err(crate::error::Error::PointerSizedDecodeError)
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum DropCountedMaybeError {
+        DropCounted(DropCounted),
+        ErrorsOnRead(ErrorsOnRead),
+    }
+
+    impl SchemaWrite for DropCountedMaybeError {
+        type Src = Self;
+
+        fn size_of(src: &Self::Src) -> crate::Result<usize> {
+            match src {
+                DropCountedMaybeError::DropCounted(v) => DropCounted::size_of(v),
+                DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::size_of(v),
+            }
+        }
+
+        fn write(writer: &mut Writer, src: &Self::Src) -> crate::Result<()> {
+            match src {
+                DropCountedMaybeError::DropCounted(v) => DropCounted::write(writer, v),
+                DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::write(writer, v),
+            }
+        }
+    }
+
+    impl SchemaRead<'_> for DropCountedMaybeError {
+        type Dst = Self;
+        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+            let byte = u8::get(reader)?;
+            match byte {
+                DropCounted::TAG_BYTE => {
+                    dst.write(DropCountedMaybeError::DropCounted(DropCounted::new()));
+                    Ok(())
+                }
+                ErrorsOnRead::TAG_BYTE => Err(crate::error::Error::PointerSizedDecodeError),
+                _ => Err(invalid_tag_encoding(byte as usize)),
+            }
+        }
+    }
+
+    fn strat_drop_counted_maybe_error() -> impl Strategy<Value = DropCountedMaybeError> {
+        prop_oneof![
+            Just(DropCountedMaybeError::DropCounted(DropCounted::new())),
+            Just(DropCountedMaybeError::ErrorsOnRead(ErrorsOnRead)),
+        ]
+    }
+
+    #[test]
+    fn drop_count_sanity() {
+        let _guard = TLDropGuard::new();
+        // Ensure our incrementing counter works
+        let serialized = { serialize(&[DropCounted::new(), DropCounted::new()]).unwrap() };
+        let _deserialized: [DropCounted; 2] = deserialize(&serialized).unwrap();
+        assert_eq!(get_tl_drop_count(), 2);
+    }
+
+    #[test]
+    fn drop_count_maybe_error_sanity() {
+        let _guard = TLDropGuard::new();
+        let serialized =
+            { serialize(&[DropCountedMaybeError::DropCounted(DropCounted::new())]).unwrap() };
+        let _deserialized: [DropCountedMaybeError; 1] = deserialize(&serialized).unwrap();
+        assert_eq!(get_tl_drop_count(), 1);
+
+        let serialized = {
+            serialize(&[
+                DropCountedMaybeError::DropCounted(DropCounted::new()),
+                DropCountedMaybeError::ErrorsOnRead(ErrorsOnRead),
+            ])
+            .unwrap()
+        };
+        let _deserialized: crate::Result<[DropCountedMaybeError; 2]> = deserialize(&serialized);
+    }
+
     /// Test that the `compound!` macro handles drops of initialized fields on partially initialized structs.
     #[test]
     fn compound_handles_partial_drop() {
-        static LIVE: AtomicUsize = AtomicUsize::new(0);
-        struct DropCounted;
-
-        impl DropCounted {
-            fn new() -> Self {
-                LIVE.fetch_add(1, Ordering::SeqCst);
-                Self
-            }
-        }
-
-        impl Drop for DropCounted {
-            fn drop(&mut self) {
-                LIVE.fetch_sub(1, Ordering::SeqCst);
-            }
-        }
-
-        impl SchemaWrite for DropCounted {
-            type Src = Self;
-            fn size_of(_src: &Self::Src) -> crate::Result<usize> {
-                Ok(1)
-            }
-            fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
-                u8::write(writer, &0)?;
-                Ok(())
-            }
-        }
-
-        impl SchemaRead<'_> for DropCounted {
-            type Dst = Self;
-            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
-                reader.consume(1)?;
-                // This will increment the counter.
-                dst.write(DropCounted::new());
-                Ok(())
-            }
-        }
-
-        struct ErrorsOnRead;
-
-        impl SchemaWrite for ErrorsOnRead {
-            type Src = Self;
-            fn size_of(_src: &Self::Src) -> crate::Result<usize> {
-                Ok(1)
-            }
-            fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
-                u8::write(writer, &1)
-            }
-        }
-
-        impl SchemaRead<'_> for ErrorsOnRead {
-            type Dst = Self;
-            fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
-                reader.consume(1)?;
-                Err(crate::error::Error::PointerSizedDecodeError)
-            }
-        }
-
         /// Represents a struct that would leak if the `compound!` macro didn't handle drops of initialized fields
         /// on error.
         struct CouldLeak {
@@ -244,28 +385,68 @@ mod tests {
             }
         }
 
-        {
-            // Ensure our incrementing counter works
-            let serialized = { serialize(&[DropCounted::new(), DropCounted::new()]).unwrap() };
-            let deserialized: [DropCounted; 2] = deserialize(&serialized).unwrap();
-            assert_eq!(LIVE.load(Ordering::SeqCst), 2);
-            drop(deserialized);
-            assert_eq!(LIVE.load(Ordering::SeqCst), 0);
-        }
-
+        let _guard = TLDropGuard::new();
         let serialized = { serialize(&CouldLeak::new()).unwrap() };
         let deserialized = CouldLeak::deserialize(&serialized);
         assert!(deserialized.is_err());
-        // This would be `2` if the initialized fields were not dropped.
-        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+    }
 
-        // Ensure this works with tuples too.
+    #[test]
+    fn tuple_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
         let serialized =
             { serialize(&(DropCounted::new(), DropCounted::new(), ErrorsOnRead)).unwrap() };
         let deserialized = <(DropCounted, DropCounted, ErrorsOnRead)>::deserialize(&serialized);
         assert!(deserialized.is_err());
-        // This would be `2` if the initialized fields were not dropped.
-        assert_eq!(LIVE.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_vec_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(|(vec in proptest::collection::vec(strat_drop_counted_maybe_error(), 0..100))| {
+            let serialized = serialize(&vec).unwrap();
+            let deserialized = <Vec<DropCountedMaybeError>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(vec, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_vec_deque_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(|(vec in proptest::collection::vec_deque(strat_drop_counted_maybe_error(), 0..100))| {
+            let serialized = serialize(&vec).unwrap();
+            let deserialized = <VecDeque<DropCountedMaybeError>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(vec, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_boxed_slice_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(|(slice in proptest::collection::vec(strat_drop_counted_maybe_error(), 0..100).prop_map(|vec| vec.into_boxed_slice()))| {
+            let serialized = serialize(&slice).unwrap();
+            let deserialized = <Box<[DropCountedMaybeError]>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(slice, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_array_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+
+        proptest!(|(array in proptest::array::uniform32(strat_drop_counted_maybe_error()))| {
+            let serialized = serialize(&array).unwrap();
+            let deserialized = <[DropCountedMaybeError; 32]>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(array, deserialized);
+            }
+        });
     }
 
     proptest! {
