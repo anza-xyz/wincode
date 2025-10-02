@@ -643,7 +643,7 @@ macro_rules! compound {
                 })+
                 #[inline]
                 $(fn [<write_uninit_ $field>](val: <$schema as $crate::SchemaRead>::Dst, dst: &mut core::mem::MaybeUninit<$target>) {
-                    <$schema as $crate::SchemaRead>::write_into_uninit(val, Self::[<get_uninit_ $field _mut>](dst) );
+                    Self::[<get_uninit_ $field _mut>](dst).write(val);
                 })+
             }
         }

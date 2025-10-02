@@ -79,12 +79,6 @@ pub trait SchemaRead<'de> {
         // SAFETY: `read` must properly initialize the `Self::Dst`.
         Ok(unsafe { value.assume_init() })
     }
-
-    /// Write an instance of `Self::Dst` into `dst`.
-    #[doc(hidden)]
-    fn write_into_uninit(value: Self::Dst, dst: &mut MaybeUninit<Self::Dst>) {
-        dst.write(value);
-    }
 }
 
 #[inline(always)]
