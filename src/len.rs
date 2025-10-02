@@ -30,6 +30,12 @@ pub trait SeqLen {
 
 const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
 /// [`SeqLen`] implementation for bincode's default fixint encoding.
+///
+/// The `MAX_SIZE` constant is a limit on the maximum preallocation size
+/// (in bytes) for heap allocated structures. This is a safety precaution
+/// against malicious input causing OOM. The default is 4 MiB. Users are
+/// free to override this limit by passing a different constant or by
+/// implementing their own `SeqLen` implementation.
 pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
 
 impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
@@ -42,11 +48,6 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     #[inline(always)]
     fn size_hint_cautious<T>(reader: &mut Reader) -> Result<usize> {
         let len = Self::size_hint(reader)?;
-        // Disallow lengths greater than `MAX_SIZE`.
-        //
-        // Enforcing this limit lengths prevents malicious input from causing OOM.
-        //
-        // Users can override this limit by implementing their own `SeqLen` implementation.
         let needed = len
             .checked_mul(size_of::<T>())
             .ok_or_else(|| size_hint_overflow("isize::MAX"))?;
