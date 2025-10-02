@@ -309,7 +309,7 @@ where
 {
     type Dst = alloc::vec::Vec<T>;
 
-    /// Read a sequence of bytes or a sequence of fixed length byte arrays from the cursor into `dst`.
+    /// Read a sequence of bytes or a sequence of fixed length byte arrays from the reader into `dst`.
     ///
     /// This reads the entire sequence at once, rather than yielding each element to the caller.
     ///

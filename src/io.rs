@@ -25,7 +25,7 @@ impl<'a> Reader<'a> {
         };
         unsafe {
             // SAFETY:
-            // - `buf` mustn't overlap with the cursor (shouldn't be the case unless the user is doing something they shouldn't).
+            // - `dst` must not overlap with the cursor (shouldn't be the case unless the user is doing something they shouldn't).
             // - We just checked that we have enough bytes remaining in the cursor.
             ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len());
         }
@@ -164,7 +164,7 @@ impl<'a> Writer<'a> {
     /// # Safety
     ///
     /// - `write` must write EXACTLY `len` bytes into the given buffer.
-    /// - `write` must not write from a buffer that overlap with the internal buffer.
+    /// - `write` must not write from a buffer that overlaps with the internal buffer.
     pub unsafe fn write_with<F>(&mut self, len: usize, write: F) -> Result<()>
     where
         F: FnOnce(&mut [MaybeUninit<u8>]) -> Result<()>,
@@ -176,7 +176,7 @@ impl<'a> Writer<'a> {
         Ok(())
     }
 
-    /// Write T into the internal buffer.
+    /// Write `T` as bytes into the internal buffer.
     ///
     /// # Safety
     ///
@@ -186,12 +186,11 @@ impl<'a> Writer<'a> {
         self.write_slice_t(slice::from_ref(value))
     }
 
-    /// Write `len` bytes from the given `write` function into the internal buffer.
+    /// Write `[T]` as bytes into the internal buffer.
     ///
     /// # Safety
     ///
-    /// - `write` must write EXACTLY `len` bytes into the given buffer.
-    /// - `write` must not write from a buffer that overlap with the internal buffer.
+    /// - `T` must be plain ol' data.
     #[inline]
     pub unsafe fn write_slice_t<T>(&mut self, value: &[T]) -> Result<()> {
         unsafe {
