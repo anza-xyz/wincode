@@ -25,6 +25,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
     core::{
+        hint::unreachable_unchecked,
         mem::{transmute, MaybeUninit},
         ptr,
     },
@@ -348,12 +349,13 @@ where
                 dst.write(Option::None);
             }
             1 => {
-                let mut value = MaybeUninit::uninit();
-                T::read(reader, &mut value)?;
-                // SAFETY:
-                // - `T::read` must properly initialize the `T::Dst`.
+                let ptr = dst.as_mut_ptr().cast::<Option<MaybeUninit<T::Dst>>>();
                 unsafe {
-                    dst.write(Option::Some(value.assume_init()));
+                    ptr.write(Option::Some(MaybeUninit::uninit()));
+                    match &mut *ptr {
+                        Some(dst) => T::read(reader, dst)?,
+                        None => unreachable_unchecked(),
+                    }
                 }
             }
             _ => return Err(invalid_tag_encoding(variant as usize)),
