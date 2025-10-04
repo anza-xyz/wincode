@@ -395,17 +395,18 @@ where
 impl<'a, T> SchemaWrite for &'a T
 where
     T: SchemaWrite,
+    T: ?Sized,
 {
     type Src = &'a T::Src;
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        T::size_of(src)
+        T::size_of(*src)
     }
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
-        T::write(writer, value)
+        T::write(writer, *value)
     }
 }
 
