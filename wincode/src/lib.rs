@@ -149,6 +149,3 @@ pub mod __private {
     #[doc(hidden)]
     pub use paste::paste;
 }
-
-#[cfg(feature = "derive")]
-pub use wincode_derive::*;
