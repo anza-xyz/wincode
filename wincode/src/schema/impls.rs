@@ -13,15 +13,16 @@
 #[cfg(feature = "alloc")]
 use {
     crate::containers::{self, Elem},
-    alloc::{boxed::Box, collections::VecDeque, vec::Vec},
+    alloc::{boxed::Box, collections::VecDeque, string::String, vec::Vec},
 };
 use {
     crate::{
         error::{
-            invalid_bool_encoding, invalid_tag_encoding, pointer_sized_decode_error, Error, Result,
+            invalid_bool_encoding, invalid_tag_encoding, invalid_utf8_encoding,
+            pointer_sized_decode_error, Error, Result,
         },
         io::{Reader, Writer},
-        len::BincodeLen,
+        len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
     core::{
@@ -476,6 +477,70 @@ where
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+    }
+}
+
+impl SchemaWrite for str {
+    type Src = str;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        Ok(<BincodeLen>::bytes_needed(src.len())? + src.len())
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        <BincodeLen>::encode_len(writer, src.len())?;
+        writer.write_exact(src.as_bytes())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl SchemaWrite for String {
+    type Src = String;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        <str>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        <str>::write(writer, src)
+    }
+}
+
+impl<'de> SchemaRead<'de> for &'de str {
+    type Dst = &'de str;
+
+    #[inline]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        let len = <BincodeLen>::size_hint_cautious::<u8>(reader)?;
+        let bytes = reader.read_borrowed(len)?;
+        match core::str::from_utf8(bytes) {
+            Ok(s) => {
+                dst.write(s);
+                Ok(())
+            }
+            Err(e) => Err(invalid_utf8_encoding(e)),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl SchemaRead<'_> for String {
+    type Dst = String;
+
+    #[inline]
+    fn read(reader: &mut Reader<'_>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        let len = <BincodeLen>::size_hint_cautious::<u8>(reader)?;
+        match String::from_utf8(reader.read_borrowed(len)?.to_vec()) {
+            Ok(s) => {
+                dst.write(s);
+                Ok(())
+            }
+            Err(e) => Err(invalid_utf8_encoding(e.utf8_error())),
+        }
     }
 }
 

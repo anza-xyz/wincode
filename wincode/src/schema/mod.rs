@@ -109,7 +109,7 @@ where
     Ok(())
 }
 
-#[cfg(all(test, feature = "alloc"))]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use {
         crate::{
@@ -121,7 +121,7 @@ mod tests {
             len::BincodeLen,
             serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
-        alloc::{boxed::Box, collections::VecDeque, vec::Vec},
+        alloc::{boxed::Box, collections::VecDeque, string::String, vec::Vec},
         core::{cell::Cell, mem::MaybeUninit, result::Result},
         proptest::prelude::*,
     };
@@ -631,6 +631,22 @@ mod tests {
             prop_assert_eq!(&tuple, &bincode_deserialized);
             prop_assert_eq!(&tuple, &schema_deserialized);
 
+        }
+
+        #[test]
+        fn test_str(str in any::<String>()) {
+            let bincode_serialized = bincode::serialize(&str).unwrap();
+            let schema_serialized = serialize(&str).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: &str = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: &str = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&str, &bincode_deserialized);
+            prop_assert_eq!(&str, &schema_deserialized);
+
+            let bincode_deserialized: String = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: String = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&str, &bincode_deserialized);
+            prop_assert_eq!(&str, &schema_deserialized);
         }
     }
 }

@@ -57,6 +57,16 @@ impl<'a> Reader<'a> {
         Ok(())
     }
 
+    /// Read exactly `len` bytes from the cursor into a slice.
+    #[inline]
+    pub fn read_borrowed(&mut self, len: usize) -> Result<&'a [u8]> {
+        let Some((src, rest)) = self.cursor.split_at_checked(len) else {
+            return Err(read_size_limit(len));
+        };
+        self.cursor = rest;
+        Ok(src)
+    }
+
     /// Read T from the cursor into a new T.
     ///
     /// # Safety

@@ -1,5 +1,5 @@
 //! Error types and helpers.
-use thiserror::Error;
+use {core::str::Utf8Error, thiserror::Error};
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -22,6 +22,8 @@ pub enum Error {
     InvalidTagEncoding(usize),
     #[error("Writer has trailing bytes: {0}")]
     WriterTrailingBytes(usize),
+    #[error(transparent)]
+    InvalidUtf8Encoding(#[from] Utf8Error),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -64,4 +66,9 @@ pub fn invalid_tag_encoding(tag: usize) -> Error {
 #[cold]
 pub fn writer_trailing_bytes(bytes: usize) -> Error {
     Error::WriterTrailingBytes(bytes)
+}
+
+#[cold]
+pub fn invalid_utf8_encoding(error: Utf8Error) -> Error {
+    Error::InvalidUtf8Encoding(error)
 }
