@@ -16,6 +16,7 @@ use {
 ///
 /// Using containers (indirect deserialization):
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// # use wincode::{Deserialize, containers::{self, Pod}};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
@@ -23,14 +24,17 @@ use {
 /// type Dst = containers::Vec<Pod<u8>>;
 /// let deserialized = Dst::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
+/// # }
 /// ```
 ///
 /// Using direct deserialization (`T::Dst = T`) (non-optimized):
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
+/// # }
 /// ```
 pub trait Deserialize<'de>: SchemaRead<'de> {
     /// Deserialize `bytes` into a new `Self::Dst`.
@@ -60,6 +64,7 @@ impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de> {}
 ///
 /// Using containers (indirect serialization):
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// # use wincode::{Serialize, containers::{self, Pod}};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// // Use the optimized `Pod` container
@@ -67,14 +72,17 @@ impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de> {}
 /// let bytes = Src::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
+/// # }
 /// ```
 ///
 /// Using direct serialization (`T::Src = T`) (non-optimized):
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
+/// # }
 /// ```
 pub trait Serialize: SchemaWrite {
     /// Serialize a serializable type into a `Vec` of bytes.
@@ -121,10 +129,12 @@ impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
 /// # Examples
 ///
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
+/// # }
 /// ```
 #[inline(always)]
 pub fn deserialize<'de, T>(bytes: &'de [u8]) -> Result<T>

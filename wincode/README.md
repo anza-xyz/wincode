@@ -10,7 +10,7 @@ Fast, bincode‑compatible serializer/deserializer focused on in‑place initial
 `wincode` traits are implemented for many built-in types (like `Vec`, integers, etc.).
 
 You'll most likely want to start by using `wincode` on your own struct types, which can be
-done with the done with the derive macros.
+done with the derive macros.
 
 ```rust
 #[derive(SchemaWrite, SchemaRead)]

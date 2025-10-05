@@ -161,13 +161,11 @@ pub mod short_vec {
     mod tests {
         use {
             super::*,
-            crate::{
-                compound,
-                containers::{self, Pod},
-            },
+            crate::containers::{self, Pod},
             alloc::vec::Vec,
             proptest::prelude::*,
             solana_short_vec::ShortU16,
+            wincode_derive::{SchemaRead, SchemaWrite},
         };
 
         fn our_short_u16_encode(len: u16) -> Vec<u8> {
@@ -180,20 +178,19 @@ pub mod short_vec {
             buf
         }
 
-        #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+        #[derive(
+            serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, SchemaWrite, SchemaRead,
+        )]
+        #[wincode(internal)]
         struct ShortVecStruct {
             #[serde(with = "solana_short_vec")]
+            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16Len>")]
             bytes: Vec<u8>,
             #[serde(with = "solana_short_vec")]
+            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16Len>")]
             ar: Vec<[u8; 32]>,
         }
 
-        compound! {
-            ShortVecStruct {
-                bytes: containers::Vec<Pod<u8>, ShortU16Len>,
-                ar: containers::Vec<Pod<[u8; 32]>, ShortU16Len>,
-            }
-        }
         fn strat_short_vec_struct() -> impl Strategy<Value = ShortVecStruct> {
             (
                 proptest::collection::vec(any::<u8>(), 0..=100),

@@ -1,0 +1,21 @@
+[package]
+name = "wincode-derive"
+version = "0.1.0"
+authors.workspace = true
+description = "Derive macros for wincode"
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+edition.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+darling = "0.21.3"
+proc-macro2 = "1.0.101"
+quote = "1.0.41"
+syn = "2.0.106"
+
+[dev-dependencies]
+wincode = { path = "../wincode", default-features = false }

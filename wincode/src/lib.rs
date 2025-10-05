@@ -10,47 +10,45 @@
 //! `wincode` traits are implemented for many built-in types (like `Vec`, integers, etc.).
 //!
 //! You'll most likely want to start by using `wincode` on your own struct types, which can be
-//! done with the [`compound!`] macro.
+//! done easily with the derive macros.
 //!
 //! ```
-//! # use {wincode::compound, serde::{Serialize, Deserialize}};
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use serde::{Serialize, Deserialize};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # #[derive(Serialize, Deserialize, PartialEq, Eq, Debug)]
+//! #
+//! #[derive(SchemaWrite, SchemaRead)]
 //! struct MyStruct {
 //!     data: Vec<u64>,
 //!     win: bool,
 //! }
 //!
-//! compound! {
-//!     MyStruct {
-//!         data: Vec<u64>,
-//!         win: bool,
-//!     }
-//! }
-//!
 //! let val = MyStruct { data: vec![1,2,3], win: true };
 //! assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap());
+//! # }
 //! ```
 //!
 //! For POD‑like fields (bytes, arrays of bytes, POD newtypes), use [`containers`]
 //! to leverage optimized read/write implementations.
 //!
 //! ```
-//! # use {wincode::{compound, containers::{self, Pod}}, serde::{Serialize, Deserialize}};
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{containers::{self, Pod}};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
+//! # use serde::{Serialize, Deserialize};
 //! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
+//! #[derive(SchemaWrite, SchemaRead)]
 //! struct MyStruct {
+//!     #[wincode(with = "containers::Vec<Pod<_>>")]
 //!     data: Vec<u8>,
+//!     #[wincode(with = "containers::Vec<Pod<_>>")]
 //!     addresses: Vec<[u8; 32]>,
-//! }
-//!
-//! compound! {
-//!     MyStruct {
-//!         data: containers::Vec<Pod<u8>>,
-//!         addresses: containers::Vec<Pod<[u8; 32]>>,
-//!     }
 //! }
 //!
 //! let val = MyStruct { data: vec![1,2,3], addresses: vec![[0; 32], [1; 32]] };
 //! assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap());
+//! # }
 //! ```
 //!
 //! # Motivation
@@ -87,18 +85,23 @@
 //!
 //! `wincode` can solve this with the following:
 //! ```
-//! # use wincode::{compound, Serialize, Deserialize, containers::{self, Pod}};
-//! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{Serialize as _, Deserialize as _, containers::{self, Pod}};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
+//! # use serde::{Serialize, Deserialize};
+//! # #[derive(Debug, PartialEq, Eq)]
+//! // Defined in some foreign crate...
+//! #[derive(Serialize, Deserialize)]
 //! pub struct A {
 //!     pub data: Vec<u8>,
 //!     pub address: [u8; 32],
 //! }
 //!
-//! compound! {
-//!     struct MyA => A {
-//!         data: containers::Vec<Pod<u8>>,
-//!         address: Pod<[u8; 32]>,
-//!     }
+//! #[derive(SchemaWrite, SchemaRead)]
+//! #[wincode(from = "A")]
+//! pub struct MyA {
+//!     data: containers::Vec<Pod<u8>>,
+//!     address: Pod<[u8; 32]>,
 //! }
 //!
 //! let val = A {
@@ -113,6 +116,7 @@
 //! let wincode_deserialize = MyA::deserialize(&bincode_serialize).unwrap();
 //! assert_eq!(val, bincode_deserialize);
 //! assert_eq!(val, wincode_deserialize);
+//! # }
 //! ```
 //!
 //! Now, when deserializing `A`:
@@ -127,9 +131,128 @@
 //! # Compatibility
 //!
 //! - Produces the same bytes as `bincode` for the covered shapes when using bincode's
-//!   default configuration, provided your [`compound!`] schema and [`containers`] match the
-//!   layout implied by your `serde` types.
+//!   default configuration, provided your [`SchemaWrite`] and [`SchemaRead`] schemas and
+//!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
+//!
+//! # Derive attributes
+//!
+//! ## Top level
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
+//! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
+//! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
+//!
+//! ### `no_suppress_unused`
+//!
+//! When creating a mapping type with `#[wincode(from = "AnotherType")]`, fields are typically
+//! comprised of [`containers`] (of course not strictly always true). As a result, these structs
+//! purely exist for the compiler to generate optimized implementations, and are never actually
+//! constructed. As a result, unused field lints will be triggered, which can be annoying.
+//! By default, when `from` is used, the derive macro will generate dummy function that references all
+//! the struct fields, which suppresses those lints. This function will ultimately be compiled out of your
+//! build, but you can disable this by setting `no_suppress_unused` to `true`. You can also avoid
+//! these lint errors with visibility modifiers (e.g., `pub`).
+//!
+//! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
+//!
+//! ### `struct_extensions`
+//!
+//! You may have some exotic serialization logic that requires you to implement `SchemaRead` manually
+//! for a type. In these scenarios, you'll likely want to leverage some additional helper methods
+//! to reduce the amount of boilerplate that is typically required when dealing with uninitialized
+//! fields.
+//!
+//! For example:
+//!
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::Result};
+//! # use serde::{Serialize, Deserialize};
+//! # use core::mem::MaybeUninit;
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaRead, SchemaWrite)]
+//! #[wincode(struct_extensions)]
+//! struct Header {
+//!     num_required_signatures: u8,
+//!     num_signed_accounts: u8,
+//!     num_unsigned_accounts: u8,
+//! }
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaRead, SchemaWrite)]
+//! #[wincode(struct_extensions)]
+//! struct Payload {
+//!     header: Header,
+//!     data: Vec<u8>,
+//! }
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite)]
+//! struct Message {
+//!     payload: Payload,
+//! }
+//!
+//! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
+//! impl SchemaRead<'_> for Message {
+//!     type Dst = Message;
+//!
+//!     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+//!         // We have to do a big ugly cast like this to get a mutable MaybeUninit<Payload>.
+//!         let mut payload = unsafe {
+//!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
+//!         };
+//!         // `Payload::get_uninit_header_mut` is generated by `#[wincode(struct_extensions)]`.
+//!         // This avoids having to do a big ugly cast like we had to do for payload above.
+//!         //
+//!         // Project a mutable `MaybeUninit<Header>` from the `MaybeUninit<Payload>`.
+//!         let header = Payload::get_uninit_header_mut(payload);
+//!         // Similarly, `Header::read_num_required_signatures` is generated
+//!         // by `#[wincode(struct_extensions)]`.
+//!         //
+//!         // Read directly into the projected MaybeUninit<Header> slot.
+//!         Header::read_num_required_signatures(reader, header)?;
+//!         // ...
+//!         Header::read_num_signed_accounts(reader, header)?;
+//!         Header::read_num_unsigned_accounts(reader, header)?;
+//!         // Alternatively, we could have done `Payload::read_header(reader, payload)?;`
+//!         // rather than reading all the fields individually.
+//!         Payload::read_data(reader, payload)?;
+//!         Ok(())
+//!     }
+//! }
+//!
+//! let msg = Message {
+//!     payload: Payload {
+//!         header: Header {
+//!             num_required_signatures: 1,
+//!             num_signed_accounts: 2,
+//!             num_unsigned_accounts: 3
+//!         },
+//!         data: vec![4, 5, 6, 7, 8, 9]
+//!     }
+//! };
+//! let serialized = wincode::serialize(&msg).unwrap();
+//! let deserialized = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(msg, deserialized);
+//! # }
+//! ```
+//!
+//! `#[wincode(struct_extensions)]` generates three methods per field:
+//! - `get_uninit_<field_name>_mut`
+//!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
+//! - `read_<field_name>`
+//!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
+//! - `write_uninit_<field_name>`
+//!   - Writes a `MaybeUninit`'s `<field_name>` slot with the given value.
+//!
+//!
+//! ## Field level
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
+//!
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #[cfg(feature = "alloc")]
@@ -149,3 +272,6 @@ pub mod __private {
     #[doc(hidden)]
     pub use paste::paste;
 }
+
+#[cfg(feature = "derive")]
+pub use wincode_derive::*;

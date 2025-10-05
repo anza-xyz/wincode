@@ -3,8 +3,10 @@
 //! # Example
 //!
 //! ```
+//! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
 //! # use rand::prelude::*;
-//! # use wincode::{compound, Serialize, Deserialize, len::{BincodeLen, ShortU16Len}, containers::{self, Pod}};
+//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16Len}, containers::{self, Pod}};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
 //!
 //! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
@@ -14,18 +16,13 @@
 //! #[repr(transparent)]
 //! struct Address([u8; 32]);
 //!
-//! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+//! # #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 //! struct MyStruct {
+//!     #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
 //!     signature: Vec<Signature>,
 //!     #[serde(with = "solana_short_vec")]
+//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16Len>")]
 //!     address: Vec<Address>,
-//! }
-//!
-//! compound! {
-//!     MyStruct {
-//!         signature: containers::Vec<Pod<Signature>, BincodeLen>,
-//!         address: containers::Vec<Pod<Address>, ShortU16Len>,
-//!     }
 //! }
 //!
 //! let my_struct = MyStruct {
@@ -39,6 +36,7 @@
 //! let bincode_deserialized: MyStruct = bincode::deserialize(&bincode_serialized).unwrap();
 //! let wincode_deserialized: MyStruct = wincode::deserialize(&wincode_serialized).unwrap();
 //! assert_eq!(bincode_deserialized, wincode_deserialized);
+//! # }
 //! ```
 use {
     crate::{
@@ -109,11 +107,10 @@ where
     Ok(())
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(all(test, feature = "std", feature = "derive"))]
 mod tests {
     use {
         crate::{
-            compound,
             containers::{self, Elem, Pod},
             deserialize,
             error::invalid_tag_encoding,
@@ -126,17 +123,13 @@ mod tests {
         proptest::prelude::*,
     };
 
-    #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+    #[derive(
+        serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, SchemaWrite, SchemaRead,
+    )]
+    #[wincode(internal)]
     struct SomeStruct {
         a: u64,
         b: u64,
-    }
-
-    compound! {
-        SomeStruct {
-            a: u64,
-            b: u64,
-        }
     }
 
     fn strat_some_struct() -> impl Strategy<Value = SomeStruct> {
@@ -352,17 +345,19 @@ mod tests {
         let _deserialized: crate::Result<[DropCountedMaybeError; 2]> = deserialize(&serialized);
     }
 
-    /// Test that the `compound!` macro handles drops of initialized fields on partially initialized structs.
+    /// Test that the derive macro handles drops of initialized fields on partially initialized structs.
     #[test]
     fn compound_handles_partial_drop() {
-        /// Represents a struct that would leak if the `compound!` macro didn't handle drops of initialized fields
+        /// Represents a struct that would leak if the derive macro didn't handle drops of initialized fields
         /// on error.
+        #[derive(SchemaWrite, SchemaRead)]
+        #[wincode(internal)]
         struct CouldLeak {
             // Increments by 1
             data: DropCounted,
             // Increments by 1
             data2: DropCounted,
-            // Will trigger an error on `CouldLeak::read`, which will exercise the `compound!` macro's handling of
+            // Will trigger an error on `CouldLeak::read`, which will exercise the derive macro's handling of
             // drops of initialized fields on error.
             err: ErrorsOnRead,
         }
@@ -374,14 +369,6 @@ mod tests {
                     data2: DropCounted::new(),
                     err: ErrorsOnRead,
                 }
-            }
-        }
-
-        compound! {
-            CouldLeak {
-                data: DropCounted,
-                data2: DropCounted,
-                err: ErrorsOnRead,
             }
         }
 
