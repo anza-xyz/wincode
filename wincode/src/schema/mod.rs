@@ -124,24 +124,22 @@ mod tests {
     };
 
     #[derive(
-        serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq, SchemaWrite, SchemaRead,
+        serde::Serialize,
+        serde::Deserialize,
+        Debug,
+        PartialEq,
+        Eq,
+        SchemaWrite,
+        SchemaRead,
+        proptest_derive::Arbitrary,
     )]
     #[wincode(internal)]
     struct SomeStruct {
         a: u64,
-        b: u64,
-    }
-
-    fn strat_some_struct() -> impl Strategy<Value = SomeStruct> {
-        (0..=u64::MAX, 0..=u64::MAX).prop_map(|(a, b)| SomeStruct { a, b })
-    }
-
-    fn strat_byte_array() -> impl Strategy<Value = [u8; 32]> {
-        any::<[u8; 32]>()
-    }
-
-    fn strat_byte_vec() -> impl Strategy<Value = Vec<u8>> {
-        proptest::collection::vec(any::<u8>(), 0..=100)
+        b: bool,
+        d: String,
+        #[wincode(with = "Pod<_>")]
+        e: [u8; 32],
     }
 
     thread_local! {
@@ -199,6 +197,14 @@ mod tests {
     /// A `SchemaWrite` and `SchemaRead` that will increment the TL counter when constructed.
     struct DropCounted;
 
+    impl Arbitrary for DropCounted {
+        type Parameters = ();
+        type Strategy = Just<Self>;
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            Just(Self::new())
+        }
+    }
+
     impl DropCounted {
         const TAG_BYTE: u8 = 0;
 
@@ -244,7 +250,7 @@ mod tests {
     }
 
     /// A `SchemaRead` that will always error on read.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, proptest_derive::Arbitrary)]
     struct ErrorsOnRead;
 
     impl ErrorsOnRead {
@@ -272,7 +278,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone, PartialEq, Eq, proptest_derive::Arbitrary)]
     enum DropCountedMaybeError {
         DropCounted(DropCounted),
         ErrorsOnRead(ErrorsOnRead),
@@ -311,13 +317,6 @@ mod tests {
         }
     }
 
-    fn strat_drop_counted_maybe_error() -> impl Strategy<Value = DropCountedMaybeError> {
-        prop_oneof![
-            Just(DropCountedMaybeError::DropCounted(DropCounted::new())),
-            Just(DropCountedMaybeError::ErrorsOnRead(ErrorsOnRead)),
-        ]
-    }
-
     #[test]
     fn drop_count_sanity() {
         let _guard = TLDropGuard::new();
@@ -353,11 +352,8 @@ mod tests {
         #[derive(SchemaWrite, SchemaRead, proptest_derive::Arbitrary, Debug, PartialEq, Eq)]
         #[wincode(internal)]
         struct CouldLeak {
-            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
             data: DropCountedMaybeError,
-            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
             data2: DropCountedMaybeError,
-            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
             data3: DropCountedMaybeError,
         }
 
@@ -380,17 +376,15 @@ mod tests {
         #[wincode(internal)]
         enum CouldLeak {
             A {
-                #[proptest(strategy = "strat_drop_counted_maybe_error()")]
                 a: DropCountedMaybeError,
-                #[proptest(strategy = "strat_drop_counted_maybe_error()")]
                 b: DropCountedMaybeError,
             },
             B(
-                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
-                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
-                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
+                DropCountedMaybeError,
+                DropCountedMaybeError,
+                DropCountedMaybeError,
             ),
-            C(#[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError),
+            C(DropCountedMaybeError),
             D,
         }
 
@@ -416,7 +410,7 @@ mod tests {
     #[test]
     fn test_vec_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(vec in proptest::collection::vec(strat_drop_counted_maybe_error(), 0..100))| {
+        proptest!(|(vec in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100))| {
             let serialized = serialize(&vec).unwrap();
             let deserialized = <Vec<DropCountedMaybeError>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -428,7 +422,7 @@ mod tests {
     #[test]
     fn test_vec_deque_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(vec in proptest::collection::vec_deque(strat_drop_counted_maybe_error(), 0..100))| {
+        proptest!(|(vec in proptest::collection::vec_deque(any::<DropCountedMaybeError>(), 0..100))| {
             let serialized = serialize(&vec).unwrap();
             let deserialized = <VecDeque<DropCountedMaybeError>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -440,7 +434,7 @@ mod tests {
     #[test]
     fn test_boxed_slice_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(slice in proptest::collection::vec(strat_drop_counted_maybe_error(), 0..100).prop_map(|vec| vec.into_boxed_slice()))| {
+        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(|vec| vec.into_boxed_slice()))| {
             let serialized = serialize(&slice).unwrap();
             let deserialized = <Box<[DropCountedMaybeError]>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -453,7 +447,7 @@ mod tests {
     fn test_array_handles_partial_drop() {
         let _guard = TLDropGuard::new();
 
-        proptest!(|(array in proptest::array::uniform32(strat_drop_counted_maybe_error()))| {
+        proptest!(|(array in proptest::array::uniform32(any::<DropCountedMaybeError>()))| {
             let serialized = serialize(&array).unwrap();
             let deserialized = <[DropCountedMaybeError; 32]>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -515,7 +509,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn test_vec_elem(vec in proptest::collection::vec(strat_some_struct(), 0..=100)) {
+        fn test_vec_elem(vec in proptest::collection::vec(any::<SomeStruct>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             type Target = containers::Vec<Elem<SomeStruct>, BincodeLen>;
             let schema_serialized = Target::serialize(&vec).unwrap();
@@ -529,7 +523,7 @@ mod tests {
         }
 
         #[test]
-        fn test_vec_pod(vec in proptest::collection::vec(strat_byte_array(), 0..=100)) {
+        fn test_vec_pod(vec in proptest::collection::vec(any::<[u8; 32]>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             type Target = containers::Vec<Pod<[u8; 32]>, BincodeLen>;
             let schema_serialized = Target::serialize(&vec).unwrap();
@@ -543,7 +537,7 @@ mod tests {
         }
 
         #[test]
-        fn test_vec_deque_elem(vec in proptest::collection::vec_deque(strat_some_struct(), 0..=100)) {
+        fn test_vec_deque_elem(vec in proptest::collection::vec_deque(any::<SomeStruct>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             type Target = containers::VecDeque<Elem<SomeStruct>, BincodeLen>;
             let schema_serialized = Target::serialize(&vec).unwrap();
@@ -557,7 +551,7 @@ mod tests {
         }
 
         #[test]
-        fn test_array(array in strat_byte_array()) {
+        fn test_array(array in any::<[u8; 32]>()) {
             let bincode_serialized = bincode::serialize(&array).unwrap();
             type Target = [u8; 32];
             let schema_serialized = Target::serialize(&array).unwrap();
@@ -569,7 +563,7 @@ mod tests {
         }
 
         #[test]
-        fn test_option(option in proptest::option::of(strat_some_struct())) {
+        fn test_option(option in proptest::option::of(any::<SomeStruct>())) {
             let bincode_serialized = bincode::serialize(&option).unwrap();
             let schema_serialized = serialize(&option).unwrap();
 
@@ -581,7 +575,7 @@ mod tests {
         }
 
         #[test]
-        fn test_option_container(option in proptest::option::of(strat_byte_array())) {
+        fn test_option_container(option in proptest::option::of(any::<[u8; 32]>())) {
             let bincode_serialized = bincode::serialize(&option).unwrap();
             type Target = Option<Pod<[u8; 32]>>;
             let schema_serialized = Target::serialize(&option).unwrap();
@@ -612,7 +606,7 @@ mod tests {
         }
 
         #[test]
-        fn test_box(ar in strat_byte_array(), s in strat_some_struct()) {
+        fn test_box(ar in any::<[u8; 32]>(), s in any::<SomeStruct>()) {
             let data = (Box::new(ar), Box::new(s));
             let bincode_serialized = bincode::serialize(&data).unwrap();
             type Target = (Box<[u8; 32]>, Box<SomeStruct>);
@@ -630,7 +624,7 @@ mod tests {
         }
 
         #[test]
-        fn test_boxed_slice(vec in strat_byte_vec()) {
+        fn test_boxed_slice(vec in any::<Vec<u8>>()) {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
             type Target = Box<[u8]>;
@@ -677,11 +671,11 @@ mod tests {
         #[test]
         fn test_tuple(
             tuple in (
-                strat_some_struct(),
-                strat_byte_array(),
-                proptest::option::of(strat_some_struct()),
-                proptest::collection::vec(strat_some_struct(), 0..=100),
-                proptest::collection::vec_deque(strat_byte_array(), 0..=100)
+                any::<SomeStruct>(),
+                any::<[u8; 32]>(),
+                proptest::option::of(any::<SomeStruct>()),
+                proptest::collection::vec(any::<SomeStruct>(), 0..=100),
+                proptest::collection::vec_deque(any::<[u8; 32]>(), 0..=100)
             )
         ) {
             let bincode_serialized = bincode::serialize(&tuple).unwrap();
