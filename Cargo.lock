@@ -208,6 +208,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "proptest-derive"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "095a99f75c69734802359b682be8daaf8980296731f6470434ea2c652af1dd30"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -468,6 +479,7 @@ dependencies = [
  "bincode",
  "paste",
  "proptest",
+ "proptest-derive",
  "rand 0.8.5",
  "serde",
  "solana-short-vec",

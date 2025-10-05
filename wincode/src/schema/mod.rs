@@ -347,39 +347,65 @@ mod tests {
 
     /// Test that the derive macro handles drops of initialized fields on partially initialized structs.
     #[test]
-    fn compound_handles_partial_drop() {
+    fn test_struct_derive_handles_partial_drop() {
         /// Represents a struct that would leak if the derive macro didn't handle drops of initialized fields
         /// on error.
-        #[derive(SchemaWrite, SchemaRead)]
+        #[derive(SchemaWrite, SchemaRead, proptest_derive::Arbitrary, Debug, PartialEq, Eq)]
         #[wincode(internal)]
         struct CouldLeak {
-            // Increments by 1
-            data: DropCounted,
-            // Increments by 1
-            data2: DropCounted,
-            // Will trigger an error on `CouldLeak::read`, which will exercise the derive macro's handling of
-            // drops of initialized fields on error.
-            err: ErrorsOnRead,
-        }
-
-        impl CouldLeak {
-            fn new() -> Self {
-                Self {
-                    data: DropCounted::new(),
-                    data2: DropCounted::new(),
-                    err: ErrorsOnRead,
-                }
-            }
+            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
+            data: DropCountedMaybeError,
+            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
+            data2: DropCountedMaybeError,
+            #[proptest(strategy = "strat_drop_counted_maybe_error()")]
+            data3: DropCountedMaybeError,
         }
 
         let _guard = TLDropGuard::new();
-        let serialized = { serialize(&CouldLeak::new()).unwrap() };
-        let deserialized = CouldLeak::deserialize(&serialized);
-        assert!(deserialized.is_err());
+        proptest!(|(could_leak: CouldLeak)| {
+            let serialized = serialize(&could_leak).unwrap();
+            let deserialized = CouldLeak::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(could_leak, deserialized);
+            }
+        });
+    }
+
+    /// Test that the derive macro handles drops of initialized fields on partially initialized enums.
+    #[test]
+    fn test_enum_derive_handles_partial_drop() {
+        /// Represents an enum that would leak if the derive macro didn't handle drops of initialized fields
+        /// on error.
+        #[derive(SchemaWrite, SchemaRead, proptest_derive::Arbitrary, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        enum CouldLeak {
+            A {
+                #[proptest(strategy = "strat_drop_counted_maybe_error()")]
+                a: DropCountedMaybeError,
+                #[proptest(strategy = "strat_drop_counted_maybe_error()")]
+                b: DropCountedMaybeError,
+            },
+            B(
+                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
+                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
+                #[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError,
+            ),
+            C(#[proptest(strategy = "strat_drop_counted_maybe_error()")] DropCountedMaybeError),
+            D,
+        }
+
+        let _guard = TLDropGuard::new();
+        proptest!(|(could_leak: CouldLeak)| {
+            let serialized = serialize(&could_leak).unwrap();
+            let deserialized = CouldLeak::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(could_leak, deserialized);
+            }
+        });
     }
 
     #[test]
-    fn tuple_handles_partial_drop() {
+    fn test_tuple_handles_partial_drop() {
         let _guard = TLDropGuard::new();
         let serialized =
             { serialize(&(DropCounted::new(), DropCounted::new(), ErrorsOnRead)).unwrap() };
@@ -433,6 +459,57 @@ mod tests {
             if let Ok(deserialized) = deserialized {
                 prop_assert_eq!(array, deserialized);
             }
+        });
+    }
+
+    #[test]
+    fn test_struct_with_reference_equivalence() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct WithReference<'a> {
+            data: &'a str,
+            id: u64,
+        }
+
+        proptest!(|(s in any::<String>(), id in any::<u64>())| {
+            let serialized = serialize(&WithReference { data: &s, id }).unwrap();
+            let bincode_serialized = bincode::serialize(&WithReference { data: &s, id }).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: WithReference = deserialize(&serialized).unwrap();
+            let bincode_deserialized: WithReference = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_enum_equivalence() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+            Clone,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        enum Enum {
+            A { name: String, id: u64 },
+            B(String, #[wincode(with = "containers::Vec<Pod<_>>")] Vec<u8>),
+            C,
+        }
+
+        proptest!(|(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let bincode_serialized = bincode::serialize(&e).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
         });
     }
 
