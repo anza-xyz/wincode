@@ -118,9 +118,13 @@ mod tests {
             len::BincodeLen,
             serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
-        alloc::{boxed::Box, collections::VecDeque, string::String, vec::Vec},
-        core::{cell::Cell, mem::MaybeUninit, result::Result},
         proptest::prelude::*,
+        std::{
+            cell::Cell,
+            collections::{BinaryHeap, VecDeque},
+            mem::MaybeUninit,
+            result::Result,
+        },
     };
 
     #[derive(
@@ -129,15 +133,17 @@ mod tests {
         Debug,
         PartialEq,
         Eq,
+        Ord,
+        PartialOrd,
         SchemaWrite,
         SchemaRead,
         proptest_derive::Arbitrary,
+        Hash,
     )]
     #[wincode(internal)]
     struct SomeStruct {
         a: u64,
         b: bool,
-        d: String,
         #[wincode(with = "Pod<_>")]
         e: [u8; 32],
     }
@@ -551,6 +557,84 @@ mod tests {
         }
 
         #[test]
+        fn test_hash_map(map in proptest::collection::hash_map(any::<u64>(), any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&map).unwrap();
+            let schema_serialized = serialize(&map).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&map, &bincode_deserialized);
+            prop_assert_eq!(map, schema_deserialized);
+        }
+
+        #[test]
+        fn test_hash_set(set in proptest::collection::hash_set(any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&set).unwrap();
+            let schema_serialized = serialize(&set).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&set, &bincode_deserialized);
+            prop_assert_eq!(set, schema_deserialized);
+        }
+
+        #[test]
+        fn test_btree_map(map in proptest::collection::btree_map(any::<u64>(), any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&map).unwrap();
+            let schema_serialized = serialize(&map).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&map, &bincode_deserialized);
+            prop_assert_eq!(map, schema_deserialized);
+        }
+
+        #[test]
+        fn test_btree_set(set in proptest::collection::btree_set(any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&set).unwrap();
+            let schema_serialized = serialize(&set).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&set, &bincode_deserialized);
+            prop_assert_eq!(set, schema_deserialized);
+        }
+
+        #[test]
+        fn test_binary_heap(heap in proptest::collection::binary_heap(any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&heap).unwrap();
+            let schema_serialized = serialize(&heap).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: BinaryHeap<SomeStruct> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: BinaryHeap<SomeStruct> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
+            prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
+        }
+
+        #[test]
+        fn test_binary_heap_pod(heap in proptest::collection::binary_heap(any::<[u8; 32]>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&heap).unwrap();
+            type Target = containers::BinaryHeap<Pod<[u8; 32]>>;
+            let schema_serialized = Target::serialize(&heap).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: BinaryHeap<[u8; 32]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
+            prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
+        }
+
+        #[test]
+        fn test_linked_list(list in proptest::collection::linked_list(any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&list).unwrap();
+            let schema_serialized = serialize(&list).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&list, &bincode_deserialized);
+            prop_assert_eq!(list, schema_deserialized);
+        }
+
+        #[test]
         fn test_array(array in any::<[u8; 32]>()) {
             let bincode_serialized = bincode::serialize(&array).unwrap();
             type Target = [u8; 32];
@@ -624,7 +708,7 @@ mod tests {
         }
 
         #[test]
-        fn test_boxed_slice(vec in any::<Vec<u8>>()) {
+        fn test_boxed_slice(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
             type Target = Box<[u8]>;

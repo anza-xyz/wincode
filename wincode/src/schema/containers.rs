@@ -480,3 +480,90 @@ where
         Ok(())
     }
 }
+
+#[cfg(feature = "alloc")]
+/// A [`BinaryHeap`](alloc::collections::BinaryHeap) with a customizable length encoding and optimized
+/// read/write implementation for [`Pod`].
+pub struct BinaryHeap<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
+
+#[cfg(feature = "alloc")]
+impl<T, Len> SchemaWrite for BinaryHeap<Elem<T>, Len>
+where
+    Len: SeqLen,
+    T: SchemaWrite,
+    T::Src: Sized,
+{
+    type Src = alloc::collections::BinaryHeap<T::Src>;
+
+    #[inline(always)]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        size_of_elem_iter::<T, Len>(src.iter())
+    }
+
+    #[inline(always)]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        write_elem_iter::<T, Len>(writer, src.iter())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T, Len> SchemaRead<'de> for BinaryHeap<Elem<T>, Len>
+where
+    Len: SeqLen,
+    T: SchemaRead<'de>,
+    T::Dst: Ord,
+{
+    type Dst = alloc::collections::BinaryHeap<T::Dst>;
+
+    #[inline(always)]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        let mut vec = MaybeUninit::uninit();
+        // Leverage the vec impl.
+        <Vec<Elem<T>, Len>>::read(reader, &mut vec)?;
+        dst.write(alloc::collections::BinaryHeap::from(unsafe {
+            vec.assume_init()
+        }));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, Len> SchemaWrite for BinaryHeap<Pod<T>, Len>
+where
+    Len: SeqLen,
+{
+    type Src = alloc::collections::BinaryHeap<T>;
+
+    #[inline(always)]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        Ok(Len::bytes_needed(src.len())? + size_of_val(src.as_slice()))
+    }
+
+    #[inline(always)]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        Len::encode_len(writer, src.len())?;
+        // SAFETY: Caller ensures `T` is plain ol' data.
+        unsafe { writer.write_slice_t(src.as_slice())? }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T, Len> SchemaRead<'_> for BinaryHeap<Pod<T>, Len>
+where
+    Len: SeqLen,
+    T: Ord,
+{
+    type Dst = alloc::collections::BinaryHeap<T>;
+
+    #[inline(always)]
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        let mut vec = MaybeUninit::uninit();
+        // Leverage the vec impl.
+        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
+        dst.write(alloc::collections::BinaryHeap::from(unsafe {
+            vec.assume_init()
+        }));
+        Ok(())
+    }
+}

@@ -10,10 +10,20 @@
 //! Additionally, we have to assume [`BincodeLen`] for all sequences, because
 //! there is no way to specify a different length encoding without one of the
 //! [`containers`].
+#[cfg(feature = "std")]
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+};
 #[cfg(feature = "alloc")]
 use {
     crate::containers::{self, Elem},
-    alloc::{boxed::Box, collections::VecDeque, string::String, vec::Vec},
+    alloc::{
+        boxed::Box,
+        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+        string::String,
+        vec::Vec,
+    },
 };
 use {
     crate::{
@@ -539,6 +549,153 @@ impl SchemaRead<'_> for String {
             }
             Err(e) => Err(invalid_utf8_encoding(e.utf8_error())),
         }
+    }
+}
+
+/// Implement `SchemaWrite` and `SchemaRead` for types that may be iterated over sequentially.
+///
+/// Generally this should only be used on types for which we cannot provide an optimized implementation,
+/// and where the most optimal implementation is simply iterating over the type to write or collecting
+/// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
+macro_rules! impl_seq {
+    ($feature: literal, $target: ident<$key: ident : $($constraint:path)|*, $value: ident>) => {
+        #[cfg(feature = $feature)]
+        impl<$key, $value> SchemaWrite for $target<$key, $value>
+        where
+            $key: SchemaWrite,
+            $key::Src: Sized,
+            $value: SchemaWrite,
+            $value::Src: Sized,
+        {
+            type Src = $target<$key::Src, $value::Src>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> Result<usize> {
+                Ok(<BincodeLen>::bytes_needed(src.len())?
+                    + src
+                        .iter()
+                        .try_fold(
+                            0,
+                            |acc, (k, v)|
+                                Ok::<_, crate::Error>(acc + $key::size_of(k)? + $value::size_of(v)?)
+                        )?
+                    )
+            }
+
+            #[inline]
+            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+                <BincodeLen>::encode_len(writer, src.len())?;
+                for (k, v) in src.iter() {
+                    $key::write(writer, k)?;
+                    $value::write(writer, v)?;
+                }
+                Ok(())
+            }
+        }
+
+        #[cfg(feature = $feature)]
+        impl<'de, $key, $value> SchemaRead<'de> for $target<$key, $value>
+        where
+            $key: SchemaRead<'de>,
+            $value: SchemaRead<'de>
+            $(,$key::Dst: $constraint+)*,
+        {
+            type Dst = $target<$key::Dst, $value::Dst>;
+
+            #[inline]
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                let len = <BincodeLen>::size_hint_cautious::<($key::Dst, $value::Dst)>(reader)?;
+                let map = (0..len)
+                    .map(|_| {
+                        let k = $key::get(reader)?;
+                        let v = $value::get(reader)?;
+                        Ok::<_, crate::Error>((k, v))
+                    })
+                    .collect::<Result<_>>()?;
+
+                dst.write(map);
+                Ok(())
+            }
+        }
+    };
+
+    ($feature: literal, $target: ident <$key: ident : $($constraint:path)|*>) => {
+        #[cfg(feature = $feature)]
+        impl<$key: SchemaWrite> SchemaWrite for $target<$key>
+        where
+            $key::Src: Sized,
+        {
+            type Src = $target<$key::Src>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> Result<usize> {
+                size_of_elem_iter::<$key, BincodeLen>(src.iter())
+            }
+
+            #[inline]
+            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+                write_elem_iter::<$key, BincodeLen>(writer, src.iter())
+            }
+        }
+
+        #[cfg(feature = $feature)]
+        impl<'de, $key> SchemaRead<'de> for $target<$key>
+        where
+            $key: SchemaRead<'de>
+            $(,$key::Dst: $constraint+)*,
+        {
+            type Dst = $target<$key::Dst>;
+
+            #[inline]
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                let len = <BincodeLen>::size_hint_cautious::<$key::Dst>(reader)?;
+                let map = (0..len)
+                    .map(|_| $key::get(reader))
+                    .collect::<Result<_>>()?;
+
+                dst.write(map);
+                Ok(())
+            }
+        }
+    };
+}
+
+impl_seq! { "alloc", BTreeMap<K: Ord, V> }
+impl_seq! { "std", HashMap<K: Hash | Eq, V> }
+impl_seq! { "alloc", BTreeSet<K: Ord> }
+impl_seq! { "std", HashSet<K: Hash | Eq> }
+impl_seq! { "alloc", LinkedList<K:> }
+
+#[cfg(feature = "alloc")]
+impl<T> SchemaWrite for BinaryHeap<T>
+where
+    T: SchemaWrite,
+    T::Src: Sized,
+{
+    type Src = BinaryHeap<T::Src>;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        <containers::BinaryHeap<Elem<T>, BincodeLen>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        <containers::BinaryHeap<Elem<T>, BincodeLen>>::write(writer, src)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T> SchemaRead<'de> for BinaryHeap<T>
+where
+    T: SchemaRead<'de>,
+    T::Dst: Ord,
+{
+    type Dst = BinaryHeap<T::Dst>;
+
+    #[inline]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        <containers::BinaryHeap<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
 
