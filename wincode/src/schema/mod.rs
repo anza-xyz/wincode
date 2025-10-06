@@ -40,7 +40,7 @@
 //! ```
 use {
     crate::{
-        error::{Error, Result},
+        error::{size_of_overflow, Result},
         io::*,
         len::SeqLen,
     },
@@ -86,9 +86,9 @@ where
     T: SchemaWrite + 'a,
 {
     Ok(Len::bytes_needed(value.len())?
-        + value
-            .map(T::size_of)
-            .try_fold(0, |acc, x| Ok::<_, Error>(acc + x?))?)
+        + value.map(T::size_of).try_fold(0usize, |acc, x| {
+            acc.checked_add(x?).ok_or_else(size_of_overflow)
+        })?)
 }
 
 #[inline(always)]

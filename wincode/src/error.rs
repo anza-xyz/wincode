@@ -24,51 +24,65 @@ pub enum Error {
     WriterTrailingBytes(usize),
     #[error(transparent)]
     InvalidUtf8Encoding(#[from] Utf8Error),
+    #[error("Computing size of type would overflow usize::MAX")]
+    SizeOfOverflow,
+    #[error("Buffer length would overflow usize::MAX (needed {0})")]
+    BufferLengthOverflow(usize),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
 
 #[cold]
-pub fn read_size_limit(len: usize) -> Error {
+pub const fn read_size_limit(len: usize) -> Error {
     Error::ReadSizeLimit(len)
 }
 
 #[cold]
-pub fn write_size_limit(len: usize) -> Error {
+pub const fn write_size_limit(len: usize) -> Error {
     Error::WriteSizeLimit(len)
 }
 
 #[cold]
-pub fn preallocation_size_limit(needed: usize, limit: usize) -> Error {
+pub const fn preallocation_size_limit(needed: usize, limit: usize) -> Error {
     Error::PreallocationSizeLimit { needed, limit }
 }
 
 #[cold]
-pub fn size_hint_overflow(max_length: &'static str) -> Error {
+pub const fn size_hint_overflow(max_length: &'static str) -> Error {
     Error::SizeHintOverflow(max_length)
 }
 
 #[cold]
-pub fn pointer_sized_decode_error() -> Error {
+pub const fn pointer_sized_decode_error() -> Error {
     Error::PointerSizedDecodeError
 }
 
 #[cold]
-pub fn invalid_bool_encoding(byte: u8) -> Error {
+pub const fn invalid_bool_encoding(byte: u8) -> Error {
     Error::InvalidBoolEncoding(byte)
 }
 
 #[cold]
-pub fn invalid_tag_encoding(tag: usize) -> Error {
+pub const fn invalid_tag_encoding(tag: usize) -> Error {
     Error::InvalidTagEncoding(tag)
 }
 
 #[cold]
-pub fn writer_trailing_bytes(bytes: usize) -> Error {
+pub const fn writer_trailing_bytes(bytes: usize) -> Error {
     Error::WriterTrailingBytes(bytes)
 }
 
 #[cold]
-pub fn invalid_utf8_encoding(error: Utf8Error) -> Error {
+pub const fn invalid_utf8_encoding(error: Utf8Error) -> Error {
     Error::InvalidUtf8Encoding(error)
+}
+
+#[cold]
+pub const fn size_of_overflow() -> Error {
+    Error::SizeOfOverflow
+}
+
+#[cold]
+pub const fn buffer_length_overflow(len: usize) -> Error {
+    Error::BufferLengthOverflow(len)
 }

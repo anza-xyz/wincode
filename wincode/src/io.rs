@@ -2,7 +2,9 @@
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use {
-    crate::error::{read_size_limit, write_size_limit, writer_trailing_bytes, Result},
+    crate::error::{
+        buffer_length_overflow, read_size_limit, write_size_limit, writer_trailing_bytes, Result,
+    },
     core::{mem::MaybeUninit, ptr, slice},
 };
 
@@ -170,12 +172,16 @@ impl<'a> Writer<'a> {
     where
         F: FnOnce(&mut [MaybeUninit<u8>]) -> Result<()>,
     {
+        let upper_bound = self
+            .pos
+            .checked_add(len)
+            .ok_or_else(|| buffer_length_overflow(len))?;
         let dst = self
             .buffer
-            .get_mut(self.pos..self.pos + len)
+            .get_mut(self.pos..upper_bound)
             .ok_or_else(|| write_size_limit(len))?;
         write(dst)?;
-        self.pos += len;
+        self.pos = upper_bound;
         Ok(())
     }
 

@@ -31,7 +31,7 @@ use {
     crate::{
         error::{
             invalid_bool_encoding, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, Error, Result,
+            pointer_sized_decode_error, size_of_overflow, Result,
         },
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
@@ -332,10 +332,9 @@ where
 
     #[inline]
     fn size_of(value: &Self::Src) -> Result<usize> {
-        value
-            .iter()
-            .map(T::size_of)
-            .try_fold(0, |acc, x| Ok::<_, Error>(acc + x?))
+        value.iter().map(T::size_of).try_fold(0usize, |acc, x| {
+            acc.checked_add(x?).ok_or_else(size_of_overflow)
+        })
     }
 
     #[inline]

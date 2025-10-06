@@ -1,6 +1,6 @@
 //! Support for heterogenous sequence length encoding.
 use crate::{
-    error::{preallocation_size_limit, size_hint_overflow, Result},
+    error::{pointer_sized_decode_error, preallocation_size_limit, size_hint_overflow, Result},
     io::{Reader, Writer},
     schema::{SchemaRead, SchemaWrite},
 };
@@ -42,7 +42,8 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     /// Bincode's default fixint encoding writes lengths as `u64`.
     #[inline(always)]
     fn size_hint(reader: &mut Reader) -> Result<usize> {
-        u64::get(reader).map(|len| len as usize)
+        u64::get(reader)
+            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))
     }
 
     #[inline(always)]
