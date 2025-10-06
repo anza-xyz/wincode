@@ -21,7 +21,9 @@ use {
     alloc::{
         boxed::Box,
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+        rc::Rc,
         string::String,
+        sync::Arc,
         vec::Vec,
     },
 };
@@ -419,23 +421,54 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
-impl<T> SchemaWrite for Box<T>
-where
-    T: SchemaWrite,
-{
-    type Src = Box<T::Src>;
+macro_rules! impl_heap_container {
+    ($container:ident) => {
+        #[cfg(feature = "alloc")]
+        impl<T> SchemaWrite for $container<T>
+        where
+            T: SchemaWrite,
+        {
+            type Src = $container<T::Src>;
 
-    #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
-        T::size_of(src)
-    }
+            #[inline]
+            fn size_of(src: &Self::Src) -> Result<usize> {
+                T::size_of(src)
+            }
 
-    #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
-        T::write(writer, value)
-    }
+            #[inline]
+            fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+                T::write(writer, value)
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<'de, T> SchemaRead<'de> for $container<T>
+        where
+            T: SchemaRead<'de>,
+        {
+            type Dst = $container<T::Dst>;
+
+            #[inline]
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                let mem: $container<MaybeUninit<T::Dst>> = $container::new_uninit();
+                let ptr = $container::into_raw(mem) as *mut MaybeUninit<T::Dst>;
+                if let Err(e) = T::read(reader, unsafe { &mut *ptr }) {
+                    drop(unsafe { $container::from_raw(ptr) });
+                    return Err(e);
+                }
+                unsafe {
+                    // SAFETY: `T::read` must properly initialize the `T::Dst`.
+                    dst.write($container::from_raw(ptr).assume_init());
+                }
+                Ok(())
+            }
+        }
+    };
 }
+
+impl_heap_container!(Box);
+impl_heap_container!(Rc);
+impl_heap_container!(Arc);
 
 #[cfg(feature = "alloc")]
 impl<T> SchemaWrite for Box<[T]>
@@ -457,21 +490,40 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T> SchemaRead<'de> for Box<T>
+impl<T> SchemaWrite for Rc<[T]>
 where
-    T: SchemaRead<'de>,
+    T: SchemaWrite,
+    T::Src: Sized,
 {
-    type Dst = Box<T::Dst>;
+    type Src = Rc<[T::Src]>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut mem = Box::new_uninit();
-        T::read(reader, &mut mem)?;
-        unsafe {
-            // SAFETY: `T::read` must properly initialize the `T::Dst`.
-            dst.write(mem.assume_init());
-        }
-        Ok(())
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        <containers::RcSlice<Elem<T>, BincodeLen>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+        <containers::RcSlice<Elem<T>, BincodeLen>>::write(writer, value)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T> SchemaWrite for Arc<[T]>
+where
+    T: SchemaWrite,
+    T::Src: Sized,
+{
+    type Src = Arc<[T::Src]>;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        <containers::ArcSlice<Elem<T>, BincodeLen>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+        <containers::ArcSlice<Elem<T>, BincodeLen>>::write(writer, value)
     }
 }
 
@@ -485,6 +537,32 @@ where
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T> SchemaRead<'de> for Rc<[T]>
+where
+    T: SchemaRead<'de>,
+{
+    type Dst = Rc<[T::Dst]>;
+
+    #[inline]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        <containers::RcSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T> SchemaRead<'de> for Arc<[T]>
+where
+    T: SchemaRead<'de>,
+{
+    type Dst = Arc<[T::Dst]>;
+
+    #[inline]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        <containers::ArcSlice<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
 

@@ -123,7 +123,9 @@ mod tests {
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
+            rc::Rc,
             result::Result,
+            sync::Arc,
         },
     };
 
@@ -450,6 +452,30 @@ mod tests {
     }
 
     #[test]
+    fn test_rc_slice_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Rc::from))| {
+            let serialized = serialize(&slice).unwrap();
+            let deserialized = <Rc<[DropCountedMaybeError]>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(slice, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_arc_slice_handles_partial_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Arc::from))| {
+            let serialized = serialize(&slice).unwrap();
+            let deserialized = <Arc<[DropCountedMaybeError]>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(slice, deserialized);
+            }
+        });
+    }
+
+    #[test]
     fn test_array_handles_partial_drop() {
         let _guard = TLDropGuard::new();
 
@@ -705,6 +731,30 @@ mod tests {
             prop_assert_eq!(&data, &bincode_deserialized);
             prop_assert_eq!(&data, &schema_deserialized);
             prop_assert_eq!(&data, &schema_pod_deserialized);
+        }
+
+        #[test]
+        fn test_rc(ar in any::<SomeStruct>()) {
+            let data = Rc::new(ar);
+            let bincode_serialized = bincode::serialize(&data).unwrap();
+            let schema_serialized = serialize(&data).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: Rc<SomeStruct> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Rc<SomeStruct> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&data, &bincode_deserialized);
+            prop_assert_eq!(&data, &schema_deserialized);
+        }
+
+        #[test]
+        fn test_arc(ar in any::<SomeStruct>()) {
+            let data = Arc::new(ar);
+            let bincode_serialized = bincode::serialize(&data).unwrap();
+            let schema_serialized = serialize(&data).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: Arc<SomeStruct> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Arc<SomeStruct> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&data, &bincode_deserialized);
+            prop_assert_eq!(&data, &schema_deserialized);
         }
 
         #[test]

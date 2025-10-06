@@ -91,7 +91,8 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter},
     },
-    core::slice,
+    alloc::{boxed::Box as AllocBox, collections, rc::Rc, sync::Arc, vec},
+    core::{ptr, slice},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
@@ -135,6 +136,14 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 /// ```
 #[cfg(feature = "alloc")]
 pub struct BoxedSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+
+#[cfg(feature = "alloc")]
+/// Like [`BoxedSlice`], for [`Rc`].
+pub struct RcSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+
+#[cfg(feature = "alloc")]
+/// Like [`BoxedSlice`], for [`Arc`].
+pub struct ArcSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
 ///
@@ -209,7 +218,7 @@ where
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = alloc::vec::Vec<T::Src>;
+    type Src = vec::Vec<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -228,7 +237,7 @@ where
     Len: SeqLen,
     T: SchemaRead<'de>,
 {
-    type Dst = alloc::vec::Vec<T::Dst>;
+    type Dst = vec::Vec<T::Dst>;
 
     /// Read a sequence of `T::Dst`s from `reader` into `dst`.
     ///
@@ -242,13 +251,12 @@ where
     /// - `T::read` must properly initialize elements.
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T::Dst>(reader)?;
-        let mut vec = alloc::vec::Vec::with_capacity(len);
+        let mut vec = vec::Vec::with_capacity(len);
         // Get a raw pointer to the Vec memory to facilitate in-place writing.
-        let vec_ptr = vec.spare_capacity_mut();
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..len {
+        let capacity = vec.spare_capacity_mut();
+        for (i, slot) in capacity.iter_mut().enumerate() {
             // Yield the current slot to the caller.
-            if let Err(e) = T::read(reader, &mut vec_ptr[i]) {
+            if let Err(e) = T::read(reader, slot) {
                 // SAFETY: we've read at least `i` elements.
                 unsafe { vec.set_len(i) };
                 return Err(e);
@@ -266,7 +274,7 @@ impl<T, Len> SchemaWrite for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = alloc::vec::Vec<T>;
+    type Src = vec::Vec<T>;
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -286,7 +294,7 @@ impl<T, Len> SchemaRead<'_> for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Dst = alloc::vec::Vec<T>;
+    type Dst = vec::Vec<T>;
 
     /// Read a sequence of bytes or a sequence of fixed length byte arrays from the reader into `dst`.
     ///
@@ -299,7 +307,7 @@ where
     /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T>(reader)?;
-        let mut vec = alloc::vec::Vec::with_capacity(len);
+        let mut vec = vec::Vec::with_capacity(len);
         let spare_capacity = vec.spare_capacity_mut();
         let slice = unsafe {
             slice::from_raw_parts_mut(
@@ -315,89 +323,118 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for BoxedSlice<Pod<T>, Len>
-where
-    Len: SeqLen,
-{
-    type Src = alloc::boxed::Box<[T]>;
+macro_rules! impl_heap_slice {
+    ($container:ident => $target:ident) => {
+        #[cfg(feature = "alloc")]
+        impl<T, Len> SchemaWrite for $container<Pod<T>, Len>
+        where
+            Len: SeqLen,
+        {
+            type Src = $target<[T]>;
 
-    #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
-        Ok(Len::bytes_needed(src.len())? + size_of_val(&src[..]))
-    }
+            #[inline]
+            fn size_of(src: &Self::Src) -> Result<usize> {
+                Ok(Len::bytes_needed(src.len())? + size_of_val(&src[..]))
+            }
 
-    #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        Len::encode_len(writer, src.len())?;
-        // SAFETY: Caller ensures `T` is plain ol' data.
-        unsafe { writer.write_slice_t(&src[..]) }
-    }
+            #[inline]
+            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+                Len::encode_len(writer, src.len())?;
+                // SAFETY: Caller ensures `T` is plain ol' data.
+                unsafe { writer.write_slice_t(&src[..]) }
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<T, Len> SchemaRead<'_> for $container<Pod<T>, Len>
+        where
+            Len: SeqLen,
+        {
+            type Dst = $target<[T]>;
+
+            #[inline(always)]
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                let len = Len::size_hint_cautious::<T>(reader)?;
+                let mem = <$target<[T]>>::new_uninit_slice(len);
+                let ptr = $target::into_raw(mem) as *mut [MaybeUninit<T>];
+
+                unsafe {
+                    if let Err(e) = reader.read_slice_t(&mut *ptr) {
+                        drop($target::from_raw(ptr));
+                        return Err(e);
+                    }
+                }
+
+                // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
+                unsafe { dst.write($target::from_raw(ptr).assume_init()) };
+                Ok(())
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<T, Len> SchemaWrite for $container<Elem<T>, Len>
+        where
+            Len: SeqLen,
+            T: SchemaWrite,
+            T::Src: Sized,
+        {
+            type Src = $target<[T::Src]>;
+
+            #[inline(always)]
+            fn size_of(src: &Self::Src) -> Result<usize> {
+                size_of_elem_iter::<T, Len>(src.iter())
+            }
+
+            #[inline(always)]
+            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+                write_elem_iter::<T, Len>(writer, src.iter())
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<'de, T, Len> SchemaRead<'de> for $container<Elem<T>, Len>
+        where
+            Len: SeqLen,
+            T: SchemaRead<'de>,
+        {
+            type Dst = $target<[T::Dst]>;
+
+            #[inline(always)]
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                let len = Len::size_hint_cautious::<T::Dst>(reader)?;
+                let mem = <$target<[T::Dst]>>::new_uninit_slice(len);
+                let ptr = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
+
+                for (i, slot) in unsafe { &mut (*ptr) }.iter_mut().enumerate() {
+                    if let Err(e) = T::read(reader, slot) {
+                        // SAFETY: we've read and initialized at least `i` elements.
+                        unsafe {
+                            // use drop for [T::Dst]
+                            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                                ptr.cast::<T::Dst>(),
+                                i,
+                            ));
+                        }
+                        return Err(e);
+                    }
+                }
+                unsafe { dst.write($target::from_raw(ptr).assume_init()) };
+                Ok(())
+            }
+        }
+    };
 }
 
-#[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead<'_> for BoxedSlice<Pod<T>, Len>
-where
-    Len: SeqLen,
-{
-    type Dst = alloc::boxed::Box<[T]>;
-
-    #[inline(always)]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut vec = MaybeUninit::uninit();
-        // Leverage drop safety of the Vec impl.
-        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
-
-        // SAFETY: The given `SchemaRead` must properly initialize the dst.
-        unsafe { dst.write(vec.assume_init().into_boxed_slice()) };
-        Ok(())
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for BoxedSlice<Elem<T>, Len>
-where
-    Len: SeqLen,
-    T: SchemaWrite,
-    T::Src: Sized,
-{
-    type Src = alloc::boxed::Box<[T::Src]>;
-
-    #[inline(always)]
-    fn size_of(src: &Self::Src) -> Result<usize> {
-        size_of_elem_iter::<T, Len>(src.iter())
-    }
-
-    #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        write_elem_iter::<T, Len>(writer, src.iter())
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for BoxedSlice<Elem<T>, Len>
-where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
-{
-    type Dst = alloc::boxed::Box<[T::Dst]>;
-
-    #[inline(always)]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut v = MaybeUninit::uninit();
-        <Vec<Elem<T>, Len>>::read(reader, &mut v)?;
-        // SAFETY: The given `SchemaRead` must properly initialize the dst.
-        unsafe { dst.write(v.assume_init().into_boxed_slice()) };
-        Ok(())
-    }
-}
+impl_heap_slice!(BoxedSlice => AllocBox);
+impl_heap_slice!(RcSlice => Rc);
+impl_heap_slice!(ArcSlice => Arc);
 
 #[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = alloc::collections::VecDeque<T>;
+    type Src = collections::VecDeque<T>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -424,7 +461,7 @@ impl<T, Len> SchemaRead<'_> for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Dst = alloc::collections::VecDeque<T>;
+    type Dst = collections::VecDeque<T>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -446,7 +483,7 @@ where
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = alloc::collections::VecDeque<T::Src>;
+    type Src = collections::VecDeque<T::Src>;
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> Result<usize> {
@@ -465,7 +502,7 @@ where
     Len: SeqLen,
     T: SchemaRead<'de>,
 {
-    type Dst = alloc::collections::VecDeque<T::Dst>;
+    type Dst = collections::VecDeque<T::Dst>;
 
     #[inline(always)]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -493,7 +530,7 @@ where
     T: SchemaWrite,
     T::Src: Sized,
 {
-    type Src = alloc::collections::BinaryHeap<T::Src>;
+    type Src = collections::BinaryHeap<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -513,16 +550,14 @@ where
     T: SchemaRead<'de>,
     T::Dst: Ord,
 {
-    type Dst = alloc::collections::BinaryHeap<T::Dst>;
+    type Dst = collections::BinaryHeap<T::Dst>;
 
     #[inline(always)]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
         // Leverage the vec impl.
         <Vec<Elem<T>, Len>>::read(reader, &mut vec)?;
-        dst.write(alloc::collections::BinaryHeap::from(unsafe {
-            vec.assume_init()
-        }));
+        dst.write(collections::BinaryHeap::from(unsafe { vec.assume_init() }));
         Ok(())
     }
 }
@@ -532,7 +567,7 @@ impl<T, Len> SchemaWrite for BinaryHeap<Pod<T>, Len>
 where
     Len: SeqLen,
 {
-    type Src = alloc::collections::BinaryHeap<T>;
+    type Src = collections::BinaryHeap<T>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
@@ -554,16 +589,14 @@ where
     Len: SeqLen,
     T: Ord,
 {
-    type Dst = alloc::collections::BinaryHeap<T>;
+    type Dst = collections::BinaryHeap<T>;
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let mut vec = MaybeUninit::uninit();
         // Leverage the vec impl.
         <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
-        dst.write(alloc::collections::BinaryHeap::from(unsafe {
-            vec.assume_init()
-        }));
+        dst.write(collections::BinaryHeap::from(unsafe { vec.assume_init() }));
         Ok(())
     }
 }
