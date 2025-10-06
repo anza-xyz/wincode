@@ -652,9 +652,11 @@ macro_rules! impl_seq {
                     + src
                         .iter()
                         .try_fold(
-                            0,
+                            0usize,
                             |acc, (k, v)|
-                                Ok::<_, crate::Error>(acc + $key::size_of(k)? + $value::size_of(v)?)
+                                acc
+                                    .checked_add($key::size_of(k)?).ok_or_else(size_of_overflow)?
+                                    .checked_add($value::size_of(v)?).ok_or_else(size_of_overflow)
                         )?
                     )
             }
