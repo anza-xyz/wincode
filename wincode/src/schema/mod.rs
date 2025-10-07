@@ -85,10 +85,11 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
-    Ok(Len::bytes_needed(value.len())?
-        + value.map(T::size_of).try_fold(0usize, |acc, x| {
+    Len::bytes_needed(value.len())?
+        .checked_add(value.map(T::size_of).try_fold(0usize, |acc, x| {
             acc.checked_add(x?).ok_or_else(size_of_overflow)
         })?)
+        .ok_or_else(size_of_overflow)
 }
 
 #[inline(always)]

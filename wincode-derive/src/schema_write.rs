@@ -16,11 +16,8 @@ fn impl_struct(fields: &Fields<Field>) -> (TokenStream, TokenStream) {
         return (quote! {Ok(0)}, quote! {Ok(())});
     }
 
-    let sizes = fields.iter().enumerate().map(|(i, field)| {
-        let ident = field.struct_member_ident(i);
-        let target = field.target();
-        quote! { <#target as SchemaWrite>::size_of(&src.#ident)? }
-    });
+    let target = fields.iter().map(|field| field.target());
+    let ident = Field::struct_member_ident_iter(fields);
 
     let writes = fields.iter().enumerate().map(|(i, field)| {
         let ident = field.struct_member_ident(i);
@@ -30,8 +27,11 @@ fn impl_struct(fields: &Fields<Field>) -> (TokenStream, TokenStream) {
 
     (
         quote! {
-            #[allow(clippy::needless_question_mark)]
-            Ok(#(#sizes)+*)
+            let mut total = 0usize;
+            #(
+                total = total.checked_add(<#target as SchemaWrite>::size_of(&src.#ident)?).ok_or_else(size_of_overflow)?;
+            )*
+            Ok(total)
         },
         quote! {
             #(#writes)*
@@ -61,37 +61,33 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStre
 
         let (size, write) = match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
-                let idents = Field::enum_member_ident_iter(fields);
-                let size = fields.iter().zip(idents.clone()).map(|(field, ident)| {
-                    let target = field.target();
-                    quote! {
-                        <#target as SchemaWrite>::size_of(#ident)?
-                    }
-                });
-
-                let write = fields.iter().zip(idents.clone()).map(|(field, ident)| {
+                let target = fields.iter().map(|field| field.target());
+                let ident = Field::enum_member_ident_iter(fields);
+                let write = fields.iter().zip(ident.clone()).map(|(field, ident)| {
                     let target = field.target();
                     quote! {
                         <#target as SchemaWrite>::write(writer, #ident)?;
                     }
                 });
+                let ident_destructure = ident.clone();
                 let match_case = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#idents),*}
+                        #enum_ident::#variant_ident{#(#ident_destructure),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#idents),*)
+                        #enum_ident::#variant_ident(#(#ident_destructure),*)
                     }
                 };
 
                 (
                     quote! {
                         #match_case => {
-                            Ok(
-                                #size_of_discriminant +
-                                #(#size)+*
-                            )
+                            let mut total = #size_of_discriminant;
+                            #(
+                                total = total.checked_add(<#target as SchemaWrite>::size_of(#ident)?).ok_or_else(size_of_overflow)?;
+                            )*
+                            Ok(total)
                         }
                     },
                     quote! {
@@ -158,7 +154,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, Result, io::Writer};
+            use #crate_name::{SchemaWrite, Result, error::size_of_overflow, io::Writer};
             impl #impl_generics #crate_name::SchemaWrite for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 

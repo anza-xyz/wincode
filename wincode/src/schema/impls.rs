@@ -648,17 +648,18 @@ macro_rules! impl_seq {
 
             #[inline]
             fn size_of(src: &Self::Src) -> Result<usize> {
-                Ok(<BincodeLen>::bytes_needed(src.len())?
-                    + src
-                        .iter()
-                        .try_fold(
-                            0usize,
-                            |acc, (k, v)|
-                                acc
-                                    .checked_add($key::size_of(k)?).ok_or_else(size_of_overflow)?
-                                    .checked_add($value::size_of(v)?).ok_or_else(size_of_overflow)
-                        )?
-                    )
+                <BincodeLen>::bytes_needed(src.len())?
+                .checked_add(src
+                    .iter()
+                    .try_fold(
+                        0usize,
+                        |acc, (k, v)|
+                            acc
+                                .checked_add($key::size_of(k)?).ok_or_else(size_of_overflow)?
+                                .checked_add($value::size_of(v)?).ok_or_else(size_of_overflow)
+                    )?)
+                .ok_or_else(size_of_overflow)
+
             }
 
             #[inline]
