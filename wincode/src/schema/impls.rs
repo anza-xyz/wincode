@@ -879,21 +879,18 @@ where
 }
 
 // Recursively drop the given initialized fields in reverse order.
-#[macro_export]
-#[doc(hidden)]
 macro_rules! __drop_rev {
     // Done
     ($dst_ptr:expr,) => {};
     ($dst_ptr:expr, $head:tt $($rest:tt)*) => {
         unsafe { core::ptr::drop_in_place(&mut (*$dst_ptr).$head); }
-        $crate::__drop_rev!($dst_ptr, $($rest)*);
+        __drop_rev!($dst_ptr, $($rest)*);
     };
 }
 
 /// Recursive read of struct / tuple fields in order, accumulating a list of initialized fields on step.
 /// This allows us to expand out to code that will drop the fields that have been initialized successfully
 /// when a subsequent `read` encounters an error.
-#[macro_export]
 #[doc(hidden)]
 macro_rules! __read_fields_with_drop {
     // Done
@@ -911,11 +908,11 @@ macro_rules! __read_fields_with_drop {
             unsafe { &mut *(&raw mut (*$dst_ptr).$field).cast() },
         ) {
             // Drop the fields that have been initialized successfully.
-            $crate::__drop_rev!($dst_ptr, $($done)*);
+            __drop_rev!($dst_ptr, $($done)*);
             return Err(e);
         }
         // Recurse.
-        $crate::__read_fields_with_drop!($dst_ptr, $reader; [$field $($done)*] ; $( $rest_field : $rest_schema ),* );
+        __read_fields_with_drop!($dst_ptr, $reader; [$field $($done)*] ; $( $rest_field : $rest_schema ),* );
     };
 }
 
@@ -949,7 +946,7 @@ macro_rules! impl_tuple {
             #[inline]
             fn read(reader: &mut $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
                 let dst_ptr = dst.as_mut_ptr();
-                $crate::__read_fields_with_drop!(dst_ptr, reader; [] ; $($field: $schema),+);
+                __read_fields_with_drop!(dst_ptr, reader; [] ; $($field: $schema),+);
                 Ok(())
             }
         }
