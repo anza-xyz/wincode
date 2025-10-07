@@ -92,7 +92,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc, sync::Arc, vec},
-    core::{ptr, slice},
+    core::ptr,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
@@ -309,13 +309,7 @@ where
         let len = Len::size_hint_cautious::<T>(reader)?;
         let mut vec = vec::Vec::with_capacity(len);
         let spare_capacity = vec.spare_capacity_mut();
-        let slice = unsafe {
-            slice::from_raw_parts_mut(
-                spare_capacity.as_mut_ptr().cast(),
-                size_of_val(spare_capacity),
-            )
-        };
-        reader.read_exact(slice)?;
+        unsafe { reader.read_slice_t(spare_capacity)? };
         // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
         unsafe { vec.set_len(len) }
         dst.write(vec);
