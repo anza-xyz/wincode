@@ -83,7 +83,7 @@ use {
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    core::{marker::PhantomData, mem::MaybeUninit},
+    core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };
 #[cfg(feature = "alloc")]
 use {
@@ -92,7 +92,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc, sync::Arc, vec},
-    core::ptr,
+    core::mem::{self, ManuallyDrop},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
@@ -251,19 +251,16 @@ where
     /// - `T::read` must properly initialize elements.
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         let len = Len::size_hint_cautious::<T::Dst>(reader)?;
-        let mut vec = vec::Vec::with_capacity(len);
-        // Get a raw pointer to the Vec memory to facilitate in-place writing.
-        let capacity = vec.spare_capacity_mut();
-        for (i, slot) in capacity.iter_mut().enumerate() {
-            // Yield the current slot to the caller.
-            if let Err(e) = T::read(reader, slot) {
-                // SAFETY: we've read at least `i` elements.
-                unsafe { vec.set_len(i) };
-                return Err(e);
+        let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
+        let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
+        for i in 0..len {
+            T::read(reader, unsafe { &mut *ptr })?;
+            unsafe {
+                ptr = ptr.add(1);
+                vec.set_len(i + 1);
             }
         }
-        // SAFETY: Caller ensures `T::read` properly initializes elements.
-        unsafe { vec.set_len(len) }
+
         dst.write(vec);
         Ok(())
     }
@@ -317,6 +314,37 @@ where
     }
 }
 
+pub(crate) struct SliceDropGuard<T> {
+    ptr: *mut MaybeUninit<T>,
+    initialized_len: usize,
+}
+
+impl<T> SliceDropGuard<T> {
+    pub(crate) fn new(ptr: *mut MaybeUninit<T>) -> Self {
+        Self {
+            ptr,
+            initialized_len: 0,
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn inc_len(&mut self) {
+        self.initialized_len += 1;
+    }
+}
+
+impl<T> Drop for SliceDropGuard<T> {
+    #[inline(always)]
+    fn drop(&mut self) {
+        unsafe {
+            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                self.ptr.cast::<T>(),
+                self.initialized_len,
+            ));
+        }
+    }
+}
+
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident) => {
         #[cfg(feature = "alloc")]
@@ -348,16 +376,23 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                struct DropGuard<T>(*mut [MaybeUninit<T>]);
+                impl<T> Drop for DropGuard<T> {
+                    fn drop(&mut self) {
+                        drop(unsafe { $target::from_raw(self.0) });
+                    }
+                }
+
                 let len = Len::size_hint_cautious::<T>(reader)?;
                 let mem = <$target<[T]>>::new_uninit_slice(len);
                 let ptr = $target::into_raw(mem) as *mut [MaybeUninit<T>];
+                let guard = DropGuard(ptr);
 
                 unsafe {
-                    if let Err(e) = reader.read_slice_t(&mut *ptr) {
-                        drop($target::from_raw(ptr));
-                        return Err(e);
-                    }
+                    reader.read_slice_t(&mut *ptr)?;
                 }
+
+                mem::forget(guard);
 
                 // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
                 unsafe { dst.write($target::from_raw(ptr).assume_init()) };
@@ -395,23 +430,50 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-                let len = Len::size_hint_cautious::<T::Dst>(reader)?;
-                let mem = <$target<[T::Dst]>>::new_uninit_slice(len);
-                let ptr = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
+                struct DropGuard<T> {
+                    inner: ManuallyDrop<SliceDropGuard<T>>,
+                    fat: *mut [MaybeUninit<T>],
+                }
 
-                for (i, slot) in unsafe { &mut (*ptr) }.iter_mut().enumerate() {
-                    if let Err(e) = T::read(reader, slot) {
-                        // SAFETY: we've read and initialized at least `i` elements.
-                        unsafe {
-                            // use drop for [T::Dst]
-                            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
-                                ptr.cast::<T::Dst>(),
-                                i,
-                            ));
+                impl<T> DropGuard<T> {
+                    #[inline(always)]
+                    fn new(fat: *mut [MaybeUninit<T>]) -> Self {
+                        // Extract data pointer from fat pointer.
+                        // `SliceDropGuard` builds a slice from the raw pointer
+                        // using the initialized length.
+                        let raw = unsafe { (*fat).as_mut_ptr() };
+                        Self {
+                            inner: ManuallyDrop::new(SliceDropGuard::new(raw)),
+                            // We need to store the fat pointer to deallocate the container.
+                            fat,
                         }
-                        return Err(e);
                     }
                 }
+
+                impl<T> Drop for DropGuard<T> {
+                    #[inline]
+                    fn drop(&mut self) {
+                        unsafe {
+                            // Drop the initialized elements first.
+                            ManuallyDrop::drop(&mut self.inner);
+                            // Deallocate the container last.
+                            drop($target::from_raw(self.fat));
+                        }
+                    }
+                }
+
+                let len = Len::size_hint_cautious::<T::Dst>(reader)?;
+                let mem = $target::<[T::Dst]>::new_uninit_slice(len);
+                let ptr = $target::into_raw(mem) as *mut _;
+                let mut guard: DropGuard<T::Dst> = DropGuard::new(ptr);
+
+                for slot in unsafe { &mut (*ptr) }.iter_mut() {
+                    T::read(reader, slot)?;
+                    guard.inner.inc_len();
+                }
+
+                mem::forget(guard);
+
                 unsafe { dst.write($target::from_raw(ptr).assume_init()) };
                 Ok(())
             }

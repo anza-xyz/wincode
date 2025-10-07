@@ -29,6 +29,7 @@ use {
 };
 use {
     crate::{
+        containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
             pointer_sized_decode_error, size_of_overflow, Result,
@@ -37,10 +38,7 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
-    core::{
-        mem::{transmute, MaybeUninit},
-        ptr,
-    },
+    core::mem::{self, transmute, MaybeUninit},
 };
 
 macro_rules! impl_int {
@@ -356,20 +354,12 @@ where
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
-
-        for (i, slot) in dst.iter_mut().enumerate() {
-            if let Err(e) = T::read(reader, slot) {
-                // SAFETY: we've read at least `i` elements and assume T::read properly initializes the elements.
-                unsafe {
-                    // use drop for [T::Dst]
-                    ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
-                        dst.as_mut_ptr().cast::<T::Dst>(),
-                        i,
-                    ));
-                }
-                return Err(e);
-            }
+        let mut guard = SliceDropGuard::<T::Dst>::new(dst.as_mut_ptr());
+        for slot in dst.iter_mut() {
+            T::read(reader, slot)?;
+            guard.inc_len();
         }
+        mem::forget(guard);
         Ok(())
     }
 }
@@ -500,12 +490,21 @@ macro_rules! impl_heap_container {
 
             #[inline]
             fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-                let mem: $container<MaybeUninit<T::Dst>> = $container::new_uninit();
-                let ptr = $container::into_raw(mem) as *mut MaybeUninit<T::Dst>;
-                if let Err(e) = T::read(reader, unsafe { &mut *ptr }) {
-                    drop(unsafe { $container::from_raw(ptr) });
-                    return Err(e);
+                struct DropGuard<T>(*mut MaybeUninit<T>);
+                impl<T> Drop for DropGuard<T> {
+                    #[inline]
+                    fn drop(&mut self) {
+                        drop(unsafe { $container::from_raw(self.0) });
+                    }
                 }
+
+                let mem = $container::<T::Dst>::new_uninit();
+                let ptr = $container::into_raw(mem) as *mut _;
+                let guard: DropGuard<T::Dst> = DropGuard(ptr);
+                T::read(reader, unsafe { &mut *ptr })?;
+
+                mem::forget(guard);
+
                 unsafe {
                     // SAFETY: `T::read` must properly initialize the `T::Dst`.
                     dst.write($container::from_raw(ptr).assume_init());
