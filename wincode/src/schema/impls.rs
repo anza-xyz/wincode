@@ -30,7 +30,7 @@ use {
 use {
     crate::{
         error::{
-            invalid_bool_encoding, invalid_tag_encoding, invalid_utf8_encoding,
+            invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
             pointer_sized_decode_error, size_of_overflow, Result,
         },
         io::{Reader, Writer},
@@ -208,6 +208,57 @@ impl SchemaRead<'_> for bool {
             }
             _ => return Err(invalid_bool_encoding(byte)),
         }
+        Ok(())
+    }
+}
+
+impl SchemaWrite for char {
+    type Src = char;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> Result<usize> {
+        let mut buf = [0; 4];
+        let str = src.encode_utf8(&mut buf);
+        Ok(str.len())
+    }
+
+    #[inline]
+    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+        let mut buf = [0; 4];
+        let str = src.encode_utf8(&mut buf);
+        writer.write_exact(str.as_bytes())
+    }
+}
+
+impl SchemaRead<'_> for char {
+    type Dst = char;
+
+    #[inline]
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        let b0 = *reader.peek()?;
+
+        let len = match b0 {
+            0x00..=0x7F => 1,
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF4 => 4,
+            _ => return Err(invalid_char_lead(b0)),
+        };
+
+        if len == 1 {
+            reader.consume_unchecked(1);
+            dst.write(b0 as char);
+            return Ok(());
+        }
+
+        let buf = reader.read_borrowed(len)?;
+        // TODO: Could implement a manual decoder that avoids UTF-8 validate + chars()
+        // and instead performs the UTF-8 validity checks and produces a `char` directly.
+        // Some quick micro-benchmarking revealed a roughly 2x speedup is possible,
+        // but this is on the order of a 1-2ns/byte delta.
+        let str = core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+        let c = str.chars().next().unwrap();
+        dst.write(c);
         Ok(())
     }
 }

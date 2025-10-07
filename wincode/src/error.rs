@@ -28,6 +28,8 @@ pub enum Error {
     SizeOfOverflow,
     #[error("Buffer length would overflow usize::MAX (needed {0})")]
     BufferLengthOverflow(usize),
+    #[error("Invalid char lead: {0}")]
+    InvalidCharLead(u8),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
@@ -85,4 +87,9 @@ pub const fn size_of_overflow() -> Error {
 #[cold]
 pub const fn buffer_length_overflow(len: usize) -> Error {
     Error::BufferLengthOverflow(len)
+}
+
+#[cold]
+pub const fn invalid_char_lead(val: u8) -> Error {
+    Error::InvalidCharLead(val)
 }

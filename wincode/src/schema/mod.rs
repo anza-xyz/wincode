@@ -542,6 +542,18 @@ mod tests {
 
     proptest! {
         #[test]
+        fn test_char(val in any::<char>()) {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            prop_assert_eq!(char::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
+            let bincode_deserialized: char = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: char = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(val, bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        }
+
+        #[test]
         fn test_vec_elem(vec in proptest::collection::vec(any::<SomeStruct>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             type Target = containers::Vec<Elem<SomeStruct>, BincodeLen>;

@@ -19,6 +19,11 @@ impl<'a> Reader<'a> {
         Self { cursor: bytes }
     }
 
+    #[inline]
+    pub fn peek(&self) -> Result<&u8> {
+        self.cursor.first().ok_or_else(|| read_size_limit(0))
+    }
+
     /// Copy exactly `dst.len()` bytes from the [`Reader`] into `dst`.
     #[inline]
     pub fn read_exact(&mut self, dst: &mut [MaybeUninit<u8>]) -> Result<()> {
