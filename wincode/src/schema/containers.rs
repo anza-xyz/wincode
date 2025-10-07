@@ -521,13 +521,10 @@ where
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut vec = MaybeUninit::uninit();
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
-        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
-
-        // SAFETY: The given `SchemaRead` must properly initialize the dst.
-        unsafe { dst.write(vec.assume_init().into()) };
+        let vec = <Vec<Pod<T>, Len>>::get(reader)?;
+        dst.write(vec.into());
         Ok(())
     }
 }
@@ -562,14 +559,10 @@ where
 
     #[inline(always)]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut vec = MaybeUninit::uninit();
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
-        <Vec<Elem<T>, Len>>::read(reader, &mut vec)?;
-
-        // SAFETY: The given `SchemaRead` must properly initialize the dst.
-        unsafe { dst.write(vec.assume_init().into()) };
-
+        let vec = <Vec<Elem<T>, Len>>::get(reader)?;
+        dst.write(vec.into());
         Ok(())
     }
 }
@@ -610,10 +603,9 @@ where
 
     #[inline(always)]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut vec = MaybeUninit::uninit();
+        let vec = <Vec<Elem<T>, Len>>::get(reader)?;
         // Leverage the vec impl.
-        <Vec<Elem<T>, Len>>::read(reader, &mut vec)?;
-        dst.write(collections::BinaryHeap::from(unsafe { vec.assume_init() }));
+        dst.write(collections::BinaryHeap::from(vec));
         Ok(())
     }
 }
@@ -649,10 +641,9 @@ where
 
     #[inline(always)]
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let mut vec = MaybeUninit::uninit();
+        let vec = <Vec<Pod<T>, Len>>::get(reader)?;
         // Leverage the vec impl.
-        <Vec<Pod<T>, Len>>::read(reader, &mut vec)?;
-        dst.write(collections::BinaryHeap::from(unsafe { vec.assume_init() }));
+        dst.write(collections::BinaryHeap::from(vec));
         Ok(())
     }
 }
