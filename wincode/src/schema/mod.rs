@@ -119,6 +119,7 @@ mod tests {
             len::BincodeLen,
             serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
+        core::marker::PhantomData,
         proptest::prelude::*,
         std::{
             cell::Cell,
@@ -538,6 +539,35 @@ mod tests {
             let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(deserialized, bincode_deserialized);
         });
+    }
+
+    #[test]
+    fn test_phantom_data() {
+        let val = PhantomData::<SomeStruct>;
+        let serialized = serialize(&val).unwrap();
+        let bincode_serialized = bincode::serialize(&val).unwrap();
+        assert_eq!(&serialized, &bincode_serialized);
+        assert_eq!(
+            PhantomData::<SomeStruct>::size_of(&val).unwrap(),
+            bincode::serialized_size(&val).unwrap() as usize
+        );
+        let deserialized: PhantomData<SomeStruct> = deserialize(&serialized).unwrap();
+        let bincode_deserialized: PhantomData<SomeStruct> =
+            bincode::deserialize(&bincode_serialized).unwrap();
+        assert_eq!(deserialized, bincode_deserialized);
+    }
+
+    #[test]
+    fn test_unit() {
+        let serialized = serialize(&()).unwrap();
+        let bincode_serialized = bincode::serialize(&()).unwrap();
+        assert_eq!(&serialized, &bincode_serialized);
+        assert_eq!(
+            <()>::size_of(&()).unwrap(),
+            bincode::serialized_size(&()).unwrap() as usize
+        );
+        assert!(deserialize::<()>(&serialized).is_ok());
+        assert!(bincode::deserialize::<()>(&bincode_serialized).is_ok());
     }
 
     proptest! {

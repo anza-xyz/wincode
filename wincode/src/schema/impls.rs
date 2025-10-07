@@ -38,7 +38,10 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
     },
-    core::mem::{self, transmute, MaybeUninit},
+    core::{
+        marker::PhantomData,
+        mem::{self, transmute, MaybeUninit},
+    },
 };
 
 macro_rules! impl_int {
@@ -257,6 +260,52 @@ impl SchemaRead<'_> for char {
         let str = core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
         let c = str.chars().next().unwrap();
         dst.write(c);
+        Ok(())
+    }
+}
+
+impl<T> SchemaWrite for PhantomData<T> {
+    type Src = PhantomData<T>;
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> Result<usize> {
+        Ok(0)
+    }
+
+    #[inline]
+    fn write(_writer: &mut Writer, _src: &Self::Src) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl<T> SchemaRead<'_> for PhantomData<T> {
+    type Dst = PhantomData<T>;
+
+    #[inline]
+    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl SchemaWrite for () {
+    type Src = ();
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> Result<usize> {
+        Ok(0)
+    }
+
+    #[inline]
+    fn write(_writer: &mut Writer, _src: &Self::Src) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl SchemaRead<'_> for () {
+    type Dst = ();
+
+    #[inline]
+    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
         Ok(())
     }
 }
