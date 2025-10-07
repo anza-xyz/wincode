@@ -207,7 +207,7 @@
 //!         // This avoids having to do a big ugly cast like we had to do for payload above.
 //!         //
 //!         // Project a mutable `MaybeUninit<Header>` from the `MaybeUninit<Payload>`.
-//!         let header = Payload::get_uninit_header_mut(payload);
+//!         let header = Payload::uninit_header_mut(payload);
 //!         // Similarly, `Header::read_num_required_signatures` is generated
 //!         // by `#[wincode(struct_extensions)]`.
 //!         //
@@ -240,7 +240,7 @@
 //! ```
 //!
 //! `#[wincode(struct_extensions)]` generates three methods per field:
-//! - `get_uninit_<field_name>_mut`
+//! - `uninit_<field_name>_mut`
 //!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
 //! - `read_<field_name>`
 //!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).

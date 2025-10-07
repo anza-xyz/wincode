@@ -154,7 +154,7 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
         let target = override_ref_lifetime(field.target());
         let ident = field.struct_member_ident(i);
         let ident_string = field.struct_member_ident_to_string(i);
-        let get_uninit_mut_ident = format_ident!("get_uninit_{}_mut", ident_string);
+        let uninit_mut_ident = format_ident!("uninit_{}_mut", ident_string);
         let read_field_ident = format_ident!("read_{}", ident_string);
         let write_uninit_field_ident = format_ident!("write_uninit_{}", ident_string);
         let field_projection_type = if args.from.is_some() {
@@ -168,18 +168,18 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
         };
         quote! {
             #[inline(always)]
-            #vis fn #get_uninit_mut_ident(dst: &mut MaybeUninit<#dst>) -> &mut MaybeUninit<#field_projection_type> {
+            #vis fn #uninit_mut_ident(dst: &mut MaybeUninit<#dst>) -> &mut MaybeUninit<#field_projection_type> {
                 unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).#ident).cast() }
             }
 
             #[inline(always)]
             #vis fn #read_field_ident(reader: &mut Reader<'de>, dst: &mut MaybeUninit<#dst>) -> Result<()> {
-                <#target as SchemaRead<'de>>::read(reader, Self::#get_uninit_mut_ident(dst))
+                <#target as SchemaRead<'de>>::read(reader, Self::#uninit_mut_ident(dst))
             }
 
             #[inline(always)]
             #vis fn #write_uninit_field_ident(val: #field_projection_type, dst: &mut MaybeUninit<#dst>) {
-                Self::#get_uninit_mut_ident(dst).write(val);
+                Self::#uninit_mut_ident(dst).write(val);
             }
         }
     });
