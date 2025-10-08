@@ -162,7 +162,10 @@ pub mod short_vec {
     mod tests {
         use {
             super::*,
-            crate::containers::{self, Pod},
+            crate::{
+                containers::{self, Pod},
+                proptest_config::proptest_cfg,
+            },
             alloc::vec::Vec,
             proptest::prelude::*,
             solana_short_vec::ShortU16,
@@ -201,6 +204,8 @@ pub mod short_vec {
         }
 
         proptest! {
+            #![proptest_config(proptest_cfg())]
+
             #[test]
             fn encode_u16_equivalence(len in 0..=u16::MAX) {
                 let our = our_short_u16_encode(len);

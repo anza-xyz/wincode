@@ -117,6 +117,7 @@ mod tests {
             error::invalid_tag_encoding,
             io::{Reader, Writer},
             len::BincodeLen,
+            proptest_config::proptest_cfg,
             serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
         },
         core::marker::PhantomData,
@@ -368,7 +369,7 @@ mod tests {
         }
 
         let _guard = TLDropGuard::new();
-        proptest!(|(could_leak: CouldLeak)| {
+        proptest!(proptest_cfg(), |(could_leak: CouldLeak)| {
             let serialized = serialize(&could_leak).unwrap();
             let deserialized = CouldLeak::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -399,7 +400,7 @@ mod tests {
         }
 
         let _guard = TLDropGuard::new();
-        proptest!(|(could_leak: CouldLeak)| {
+        proptest!(proptest_cfg(), |(could_leak: CouldLeak)| {
             let serialized = serialize(&could_leak).unwrap();
             let deserialized = CouldLeak::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -420,7 +421,7 @@ mod tests {
     #[test]
     fn test_vec_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(vec in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100))| {
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100))| {
             let serialized = serialize(&vec).unwrap();
             let deserialized = <Vec<DropCountedMaybeError>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -432,7 +433,7 @@ mod tests {
     #[test]
     fn test_vec_deque_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(vec in proptest::collection::vec_deque(any::<DropCountedMaybeError>(), 0..100))| {
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec_deque(any::<DropCountedMaybeError>(), 0..100))| {
             let serialized = serialize(&vec).unwrap();
             let deserialized = <VecDeque<DropCountedMaybeError>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -444,7 +445,7 @@ mod tests {
     #[test]
     fn test_boxed_slice_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(|vec| vec.into_boxed_slice()))| {
+        proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(|vec| vec.into_boxed_slice()))| {
             let serialized = serialize(&slice).unwrap();
             let deserialized = <Box<[DropCountedMaybeError]>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -456,7 +457,7 @@ mod tests {
     #[test]
     fn test_rc_slice_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Rc::from))| {
+        proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Rc::from))| {
             let serialized = serialize(&slice).unwrap();
             let deserialized = <Rc<[DropCountedMaybeError]>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -468,7 +469,7 @@ mod tests {
     #[test]
     fn test_arc_slice_handles_partial_drop() {
         let _guard = TLDropGuard::new();
-        proptest!(|(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Arc::from))| {
+        proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..100).prop_map(Arc::from))| {
             let serialized = serialize(&slice).unwrap();
             let deserialized = <Arc<[DropCountedMaybeError]>>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -481,7 +482,7 @@ mod tests {
     fn test_array_handles_partial_drop() {
         let _guard = TLDropGuard::new();
 
-        proptest!(|(array in proptest::array::uniform32(any::<DropCountedMaybeError>()))| {
+        proptest!(proptest_cfg(), |(array in proptest::array::uniform32(any::<DropCountedMaybeError>()))| {
             let serialized = serialize(&array).unwrap();
             let deserialized = <[DropCountedMaybeError; 32]>::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
@@ -501,7 +502,7 @@ mod tests {
             id: u64,
         }
 
-        proptest!(|(s in any::<String>(), id in any::<u64>())| {
+        proptest!(proptest_cfg(), |(s in any::<String>(), id in any::<u64>())| {
             let serialized = serialize(&WithReference { data: &s, id }).unwrap();
             let bincode_serialized = bincode::serialize(&WithReference { data: &s, id }).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
@@ -531,7 +532,7 @@ mod tests {
             C,
         }
 
-        proptest!(|(e: Enum)| {
+        proptest!(proptest_cfg(), |(e: Enum)| {
             let serialized = serialize(&e).unwrap();
             let bincode_serialized = bincode::serialize(&e).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
@@ -571,6 +572,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(proptest_cfg())]
+
         #[test]
         fn test_char(val in any::<char>()) {
             let bincode_serialized = bincode::serialize(&val).unwrap();
