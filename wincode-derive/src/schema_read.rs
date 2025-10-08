@@ -1,6 +1,7 @@
 use {
     crate::common::{
-        get_crate_name, get_src_dst, suppress_unused_fields, Field, SchemaArgs, Variant,
+        get_crate_name, get_src_dst, get_src_dst_fully_qualified, suppress_unused_fields, Field,
+        SchemaArgs, Variant,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -34,25 +35,15 @@ fn override_ref_lifetime(target: &Type) -> Type {
     target
 }
 
-fn impl_struct(fields: &Fields<Field>) -> TokenStream {
+fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
     if fields.is_empty() {
         return quote! {};
     }
 
+    let num_fields = fields.len();
     let read_impl = fields.iter().enumerate().map(|(i, field)| {
         let ident = field.struct_member_ident(i);
         let target = override_ref_lifetime(field.target());
-        // Generate code to drop already initialized fields in reverse order.
-        let drop = fields.fields[..i]
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(j, field)| {
-                let ident = field.struct_member_ident(i - 1 - j);
-                quote! {
-                    unsafe { ptr::drop_in_place(&mut (*dst_ptr).#ident); }
-                }
-            });
         let hint = if field.with.is_some() {
             // Fields annotated with `with` may need help determining the pointer cast.
             //
@@ -68,23 +59,75 @@ fn impl_struct(fields: &Fields<Field>) -> TokenStream {
         } else {
             quote! { MaybeUninit<_> }
         };
+        let init_count = if i == num_fields - 1 {
+            quote! {}
+        } else {
+            quote! { *init_count += 1; }
+        };
         quote! {
-            // Clippy will warn about using `?` on the first `read` because it doesn't have any fields to drop,
-            // and its block will just contain `return Err(e)`.
-            #[allow(clippy::question_mark)]
-            if let Err(e) = <#target as SchemaRead<'de>>::read(
+            <#target as SchemaRead<'de>>::read(
                 reader,
                 unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
-            ) {
-                #(#drop)*
-                return Err(e);
+            )?;
+            #init_count
+        }
+    });
+
+    let drop_guard = (0..fields.len()).map(|i| {
+        // Generate code to drop already initialized fields in reverse order.
+        let drop = fields.fields[..i]
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(j, field)| {
+                let ident = field.struct_member_ident(i - 1 - j);
+                quote! {
+                    ptr::drop_in_place(&raw mut (*dst_ptr).#ident);
+                }
+            });
+        let cnt = i as u8;
+        if i == 0 {
+            quote! {
+                0 => {}
+            }
+        } else {
+            quote! {
+                #cnt => {
+                    unsafe { #(#drop)* }
+                }
             }
         }
     });
 
+    let dst = get_src_dst_fully_qualified(args);
+    let (impl_generics, ty_generics, _) = args.generics.split_for_impl();
     quote! {
         let dst_ptr = dst.as_mut_ptr();
+        struct DropGuard #impl_generics {
+            init_count: u8,
+            dst_ptr: *mut #dst,
+        }
+        let mut guard = DropGuard {
+            init_count: 0,
+            dst_ptr,
+        };
+        let init_count = &mut guard.init_count;
+
+        impl #impl_generics Drop for DropGuard #ty_generics {
+            #[cold]
+            fn drop(&mut self) {
+                let dst_ptr = self.dst_ptr;
+                let init_count = self.init_count;
+                match init_count {
+                    #(#drop_guard)*
+                    // Impossible, given the `init_count` is bounded by the number of fields.
+                    _ => { debug_assert!(false, "init_count out of bounds"); },
+                }
+            }
+        }
+
         #(#read_impl)*
+        mem::forget(guard);
     }
 }
 
@@ -299,7 +342,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let struct_extensions = impl_struct_extensions(&args)?;
 
     let read_impl = match &args.data {
-        Data::Struct(fields) => impl_struct(fields),
+        Data::Struct(fields) => impl_struct(&args, fields),
         Data::Enum(v) => {
             let enum_ident = match &args.from {
                 Some(from) => from,
@@ -311,7 +354,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use core::{ptr, mem::MaybeUninit};
+            use core::{ptr, mem::{self, MaybeUninit}, hint::unreachable_unchecked};
             use #crate_name::{SchemaRead, Result, io::Reader, error};
             impl #impl_generics #crate_name::SchemaRead<'de> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;

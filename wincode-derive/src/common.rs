@@ -170,6 +170,20 @@ pub(crate) fn get_src_dst(args: &SchemaArgs) -> Cow<'_, Type> {
     }
 }
 
+/// Get the fully qualified target `Src` or `Dst` type for a `SchemaRead` or `SchemaWrite` implementation.
+///
+/// Like [`Self::get_src_dst`], but rather than producing `Self` when implementing a local type,
+/// we return the fully qualified type.
+pub(crate) fn get_src_dst_fully_qualified(args: &SchemaArgs) -> Cow<'_, Type> {
+    if let Some(from) = args.from.as_ref() {
+        Cow::Borrowed(from)
+    } else {
+        let ident = &args.ident;
+        let (_, ty_generics, _) = args.generics.split_for_impl();
+        Cow::Owned(parse_quote!(#ident #ty_generics))
+    }
+}
+
 #[derive(FromDeriveInput)]
 #[darling(attributes(wincode), forward_attrs)]
 pub(crate) struct SchemaArgs {
