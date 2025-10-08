@@ -603,6 +603,13 @@ mod tests {
         }
 
         #[test]
+        fn test_serialize_slice(slice in proptest::collection::vec(any::<SomeStruct>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(slice.as_slice()).unwrap();
+            let schema_serialized = serialize(slice.as_slice()).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+        }
+
+        #[test]
         fn test_vec_pod(vec in proptest::collection::vec(any::<[u8; 32]>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             type Target = containers::Vec<Pod<[u8; 32]>, BincodeLen>;
