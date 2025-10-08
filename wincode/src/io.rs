@@ -1,6 +1,4 @@
 //! [`Reader`] and [`Writer`] implementations.
-#[cfg(feature = "alloc")]
-use alloc::vec::Vec;
 use {
     crate::error::{
         buffer_length_overflow, read_size_limit, write_size_limit, writer_trailing_bytes, Result,
@@ -118,14 +116,6 @@ pub struct Writer<'a> {
 impl<'a> Writer<'a> {
     pub fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { buffer, pos: 0 }
-    }
-
-    #[cfg(feature = "alloc")]
-    pub fn from_vec(buffer: &'a mut Vec<u8>) -> Self {
-        Self {
-            pos: buffer.len(),
-            buffer: buffer.spare_capacity_mut(),
-        }
     }
 
     /// Get the number of bytes written to the buffer.
