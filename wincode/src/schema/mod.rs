@@ -817,7 +817,7 @@ mod tests {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
             type Target = Box<[u8]>;
-            type TargetPod = containers::BoxedSlice<Pod<u8>>;
+            type TargetPod = containers::Box<[Pod<u8>]>;
             let schema_serialized = Target::serialize(&data).unwrap();
             let schema_pod_serialized = TargetPod::serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);

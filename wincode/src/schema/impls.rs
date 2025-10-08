@@ -584,12 +584,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        <containers::BoxedSlice<Elem<T>, BincodeLen>>::size_of(src)
+        <containers::Box<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
-        <containers::BoxedSlice<Elem<T>, BincodeLen>>::write(writer, value)
+        <containers::Box<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -603,12 +603,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        <containers::RcSlice<Elem<T>, BincodeLen>>::size_of(src)
+        <containers::Rc<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
-        <containers::RcSlice<Elem<T>, BincodeLen>>::write(writer, value)
+        <containers::Rc<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -622,12 +622,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        <containers::ArcSlice<Elem<T>, BincodeLen>>::size_of(src)
+        <containers::Arc<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
-        <containers::ArcSlice<Elem<T>, BincodeLen>>::write(writer, value)
+        <containers::Arc<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -640,7 +640,7 @@ where
 
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        <containers::BoxedSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::Box<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -653,7 +653,7 @@ where
 
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        <containers::RcSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::Rc<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -666,7 +666,7 @@ where
 
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        <containers::ArcSlice<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::Arc<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
 

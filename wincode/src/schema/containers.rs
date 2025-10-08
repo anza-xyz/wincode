@@ -91,7 +91,7 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_iter, write_elem_iter},
     },
-    alloc::{boxed::Box as AllocBox, collections, rc::Rc, sync::Arc, vec},
+    alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
     core::mem::{self, ManuallyDrop},
 };
 
@@ -112,7 +112,7 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 ///
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
-/// # use wincode::{containers::{self, BoxedSlice, Pod}};
+/// # use wincode::{containers::{self, Pod}};
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
@@ -122,7 +122,7 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 ///
 /// #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead)]
 /// struct MyStruct {
-///     #[wincode(with = "containers::BoxedSlice<Pod<Address>>")]
+///     #[wincode(with = "containers::Box<[Pod<Address>]>")]
 ///     address: Box<[Address]>
 /// }
 ///
@@ -135,15 +135,15 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 /// # }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct BoxedSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+pub struct Box<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
-/// Like [`BoxedSlice`], for [`Rc`].
-pub struct RcSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+/// Like [`Box`], for [`Rc`].
+pub struct Rc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
-/// Like [`BoxedSlice`], for [`Arc`].
-pub struct ArcSlice<T, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+/// Like [`Box`], for [`Arc`].
+pub struct Arc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
 ///
@@ -356,7 +356,7 @@ impl<T> Drop for SliceDropGuard<T> {
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident) => {
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaWrite for $container<Pod<T>, Len>
+        impl<T, Len> SchemaWrite for $container<[Pod<T>], Len>
         where
             Len: SeqLen,
             T: Copy + 'static,
@@ -377,7 +377,7 @@ macro_rules! impl_heap_slice {
         }
 
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaRead<'_> for $container<Pod<T>, Len>
+        impl<T, Len> SchemaRead<'_> for $container<[Pod<T>], Len>
         where
             Len: SeqLen,
             T: Copy + 'static,
@@ -411,7 +411,7 @@ macro_rules! impl_heap_slice {
         }
 
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaWrite for $container<Elem<T>, Len>
+        impl<T, Len> SchemaWrite for $container<[Elem<T>], Len>
         where
             Len: SeqLen,
             T: SchemaWrite,
@@ -431,7 +431,7 @@ macro_rules! impl_heap_slice {
         }
 
         #[cfg(feature = "alloc")]
-        impl<'de, T, Len> SchemaRead<'de> for $container<Elem<T>, Len>
+        impl<'de, T, Len> SchemaRead<'de> for $container<[Elem<T>], Len>
         where
             Len: SeqLen,
             T: SchemaRead<'de>,
@@ -492,9 +492,9 @@ macro_rules! impl_heap_slice {
     };
 }
 
-impl_heap_slice!(BoxedSlice => AllocBox);
-impl_heap_slice!(RcSlice => Rc);
-impl_heap_slice!(ArcSlice => Arc);
+impl_heap_slice!(Box => AllocBox);
+impl_heap_slice!(Rc => AllocRc);
+impl_heap_slice!(Arc => AllocArc);
 
 #[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for VecDeque<Pod<T>, Len>
