@@ -11,9 +11,11 @@
 //!
 //! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 //! #[repr(transparent)]
+//! #[derive(Clone, Copy)]
 //! struct Signature([u8; 32]);
 //! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 //! #[repr(transparent)]
+//! #[derive(Clone, Copy)]
 //! struct Address([u8; 32]);
 //!
 //! # #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]

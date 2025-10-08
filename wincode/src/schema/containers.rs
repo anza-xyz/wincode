@@ -167,7 +167,7 @@ pub struct Elem<T>(PhantomData<T>);
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
-/// #[derive(Serialize, Deserialize)]
+/// #[derive(Serialize, Deserialize, Clone, Copy)]
 /// #[repr(transparent)]
 /// struct Address([u8; 32]);
 ///
@@ -185,9 +185,12 @@ pub struct Elem<T>(PhantomData<T>);
 /// assert_eq!(wincode_bytes, bincode_bytes);
 /// # }
 /// ```
-pub struct Pod<T>(PhantomData<T>);
+pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 
-impl<T> SchemaWrite for Pod<T> {
+impl<T> SchemaWrite for Pod<T>
+where
+    T: Copy + 'static,
+{
     type Src = T;
 
     #[inline]
@@ -202,7 +205,10 @@ impl<T> SchemaWrite for Pod<T> {
     }
 }
 
-impl<T> SchemaRead<'_> for Pod<T> {
+impl<T> SchemaRead<'_> for Pod<T>
+where
+    T: Copy + 'static,
+{
     type Dst = T;
 
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
@@ -270,6 +276,7 @@ where
 impl<T, Len> SchemaWrite for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
+    T: Copy + 'static,
 {
     type Src = vec::Vec<T>;
 
@@ -290,6 +297,7 @@ where
 impl<T, Len> SchemaRead<'_> for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
+    T: Copy + 'static,
 {
     type Dst = vec::Vec<T>;
 
@@ -351,6 +359,7 @@ macro_rules! impl_heap_slice {
         impl<T, Len> SchemaWrite for $container<Pod<T>, Len>
         where
             Len: SeqLen,
+            T: Copy + 'static,
         {
             type Src = $target<[T]>;
 
@@ -371,6 +380,7 @@ macro_rules! impl_heap_slice {
         impl<T, Len> SchemaRead<'_> for $container<Pod<T>, Len>
         where
             Len: SeqLen,
+            T: Copy + 'static,
         {
             type Dst = $target<[T]>;
 
@@ -490,6 +500,7 @@ impl_heap_slice!(ArcSlice => Arc);
 impl<T, Len> SchemaWrite for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
+    T: Copy + 'static,
 {
     type Src = collections::VecDeque<T>;
 
@@ -517,6 +528,7 @@ where
 impl<T, Len> SchemaRead<'_> for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
+    T: Copy + 'static,
 {
     type Dst = collections::VecDeque<T>;
 
@@ -614,6 +626,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T, Len> SchemaWrite for BinaryHeap<Pod<T>, Len>
 where
+    T: Copy + 'static,
     Len: SeqLen,
 {
     type Src = collections::BinaryHeap<T>;
@@ -636,7 +649,7 @@ where
 impl<T, Len> SchemaRead<'_> for BinaryHeap<Pod<T>, Len>
 where
     Len: SeqLen,
-    T: Ord,
+    T: Ord + Copy + 'static,
 {
     type Dst = collections::BinaryHeap<T>;
 
