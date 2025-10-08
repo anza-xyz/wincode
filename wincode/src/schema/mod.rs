@@ -481,6 +481,42 @@ mod tests {
     }
 
     #[test]
+    fn test_arc_handles_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(proptest_cfg(), |(data in any::<DropCountedMaybeError>().prop_map(Rc::from))| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(data, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_rc_handles_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(proptest_cfg(), |(data in any::<DropCountedMaybeError>().prop_map(Rc::from))| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(data, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn test_box_handles_drop() {
+        let _guard = TLDropGuard::new();
+        proptest!(proptest_cfg(), |(data in any::<DropCountedMaybeError>().prop_map(Box::new))| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(data, deserialized);
+            }
+        });
+    }
+
+    #[test]
     fn test_array_handles_partial_drop() {
         let _guard = TLDropGuard::new();
 
