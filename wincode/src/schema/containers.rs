@@ -256,7 +256,7 @@ where
     ///
     /// - `T::read` must properly initialize elements.
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let len = Len::size_hint_cautious::<T::Dst>(reader)?;
+        let len = Len::read::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
         let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
         for i in 0..len {
@@ -282,12 +282,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        Ok(Len::bytes_needed(src.len())? + size_of_val(src.as_slice()))
+        Ok(Len::write_bytes_needed(src.len())? + size_of_val(src.as_slice()))
     }
 
     #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        Len::encode_len(writer, src.len())?;
+        Len::write(writer, src.len())?;
         // SAFETY: Caller ensures `src` is plain ol' data.
         unsafe { writer.write_slice_t(src.as_slice()) }
     }
@@ -311,7 +311,7 @@ where
     ///
     /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let len = Len::size_hint_cautious::<T>(reader)?;
+        let len = Len::read::<T>(reader)?;
         let mut vec = vec::Vec::with_capacity(len);
         let spare_capacity = vec.spare_capacity_mut();
         unsafe { reader.read_slice_t(spare_capacity)? };
@@ -365,12 +365,12 @@ macro_rules! impl_heap_slice {
 
             #[inline]
             fn size_of(src: &Self::Src) -> Result<usize> {
-                Ok(Len::bytes_needed(src.len())? + size_of_val(&src[..]))
+                Ok(Len::write_bytes_needed(src.len())? + size_of_val(&src[..]))
             }
 
             #[inline]
             fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-                Len::encode_len(writer, src.len())?;
+                Len::write(writer, src.len())?;
                 // SAFETY: Caller ensures `T` is plain ol' data.
                 unsafe { writer.write_slice_t(&src[..]) }
             }
@@ -393,7 +393,7 @@ macro_rules! impl_heap_slice {
                     }
                 }
 
-                let len = Len::size_hint_cautious::<T>(reader)?;
+                let len = Len::read::<T>(reader)?;
                 let mem = <$target<[T]>>::new_uninit_slice(len);
                 let ptr = $target::into_raw(mem) as *mut [MaybeUninit<T>];
                 let guard = DropGuard(ptr);
@@ -468,7 +468,7 @@ macro_rules! impl_heap_slice {
                     }
                 }
 
-                let len = Len::size_hint_cautious::<T::Dst>(reader)?;
+                let len = Len::read::<T::Dst>(reader)?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
                 let mut raw_base = unsafe { (*fat).as_mut_ptr() };
@@ -506,12 +506,12 @@ where
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        Ok(Len::bytes_needed(src.len())? + size_of::<T>() * src.len())
+        Ok(Len::write_bytes_needed(src.len())? + size_of::<T>() * src.len())
     }
 
     #[inline(always)]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        Len::encode_len(writer, src.len())?;
+        Len::write(writer, src.len())?;
         let (front, back) = src.as_slices();
         unsafe {
             // SAFETY:
@@ -633,12 +633,12 @@ where
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        Ok(Len::bytes_needed(src.len())? + size_of_val(src.as_slice()))
+        Ok(Len::write_bytes_needed(src.len())? + size_of_val(src.as_slice()))
     }
 
     #[inline(always)]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        Len::encode_len(writer, src.len())?;
+        Len::write(writer, src.len())?;
         // SAFETY: Caller ensures `T` is plain ol' data.
         unsafe { writer.write_slice_t(src.as_slice())? }
         Ok(())

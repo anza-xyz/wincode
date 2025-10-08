@@ -87,7 +87,7 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
-    Len::bytes_needed(value.len())?
+    Len::write_bytes_needed(value.len())?
         .checked_add(value.map(T::size_of).try_fold(0usize, |acc, x| {
             acc.checked_add(x?).ok_or_else(size_of_overflow)
         })?)
@@ -103,7 +103,7 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
-    Len::encode_len(writer, src.len())?;
+    Len::write(writer, src.len())?;
     for item in src {
         T::write(writer, item)?;
     }

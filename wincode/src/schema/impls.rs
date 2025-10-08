@@ -675,12 +675,12 @@ impl SchemaWrite for str {
 
     #[inline]
     fn size_of(src: &Self::Src) -> Result<usize> {
-        Ok(<BincodeLen>::bytes_needed(src.len())? + src.len())
+        Ok(<BincodeLen>::write_bytes_needed(src.len())? + src.len())
     }
 
     #[inline]
     fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        <BincodeLen>::encode_len(writer, src.len())?;
+        <BincodeLen>::write(writer, src.len())?;
         writer.write_exact(src.as_bytes())
     }
 }
@@ -705,7 +705,7 @@ impl<'de> SchemaRead<'de> for &'de str {
 
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let len = <BincodeLen>::size_hint_cautious::<u8>(reader)?;
+        let len = <BincodeLen>::read::<u8>(reader)?;
         let bytes = reader.read_borrowed(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
@@ -723,7 +723,7 @@ impl SchemaRead<'_> for String {
 
     #[inline]
     fn read(reader: &mut Reader<'_>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-        let len = <BincodeLen>::size_hint_cautious::<u8>(reader)?;
+        let len = <BincodeLen>::read::<u8>(reader)?;
         match String::from_utf8(reader.read_borrowed(len)?.to_vec()) {
             Ok(s) => {
                 dst.write(s);
@@ -753,7 +753,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn size_of(src: &Self::Src) -> Result<usize> {
-                <BincodeLen>::bytes_needed(src.len())?
+                <BincodeLen>::write_bytes_needed(src.len())?
                 .checked_add(src
                     .iter()
                     .try_fold(
@@ -769,7 +769,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-                <BincodeLen>::encode_len(writer, src.len())?;
+                <BincodeLen>::write(writer, src.len())?;
                 for (k, v) in src.iter() {
                     $key::write(writer, k)?;
                     $value::write(writer, v)?;
@@ -789,7 +789,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-                let len = <BincodeLen>::size_hint_cautious::<($key::Dst, $value::Dst)>(reader)?;
+                let len = <BincodeLen>::read::<($key::Dst, $value::Dst)>(reader)?;
                 let map = (0..len)
                     .map(|_| {
                         let k = $key::get(reader)?;
@@ -833,7 +833,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
-                let len = <BincodeLen>::size_hint_cautious::<$key::Dst>(reader)?;
+                let len = <BincodeLen>::read::<$key::Dst>(reader)?;
                 let map = (0..len)
                     .map(|_| $key::get(reader))
                     .collect::<Result<_>>()?;

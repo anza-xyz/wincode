@@ -11,21 +11,19 @@ use crate::{
 /// This trait abstracts over that possibility, allowing users to specify
 /// the length encoding scheme for a sequence.
 pub trait SeqLen {
-    /// Read the length of a sequence from the reader.
-    fn size_hint(reader: &mut Reader) -> Result<usize>;
-    /// Get the length of a sequence from the reader, potentially
-    /// returning an error if some length condition is not met
+    /// Read the length of a sequence from the reader, where
+    /// `T` is the type of the sequence elements. This can be used to
+    /// enforce size constraints for preallocations.
+    ///
+    /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
-    #[inline(always)]
-    fn size_hint_cautious<T>(reader: &mut Reader) -> Result<usize> {
-        Self::size_hint(reader)
-    }
+    fn read<T>(reader: &mut Reader) -> Result<usize>;
     /// Write the length of a sequence to the writer.
-    fn encode_len(writer: &mut Writer, len: usize) -> Result<()>;
-    /// Calculate the number of bytes needed to encode the given length.
+    fn write(writer: &mut Writer, len: usize) -> Result<()>;
+    /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
-    fn bytes_needed(len: usize) -> Result<usize>;
+    fn write_bytes_needed(len: usize) -> Result<usize>;
 }
 
 const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
@@ -39,16 +37,11 @@ const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
 pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
 
 impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
-    /// Bincode's default fixint encoding writes lengths as `u64`.
     #[inline(always)]
-    fn size_hint(reader: &mut Reader) -> Result<usize> {
-        u64::get(reader)
-            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))
-    }
-
-    #[inline(always)]
-    fn size_hint_cautious<T>(reader: &mut Reader) -> Result<usize> {
-        let len = Self::size_hint(reader)?;
+    fn read<T>(reader: &mut Reader) -> Result<usize> {
+        // Bincode's default fixint encoding writes lengths as `u64`.
+        let len = u64::get(reader)
+            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
         let needed = len
             .checked_mul(size_of::<T>())
             .ok_or_else(|| size_hint_overflow("isize::MAX"))?;
@@ -59,12 +52,12 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     }
 
     #[inline(always)]
-    fn encode_len(writer: &mut Writer, len: usize) -> Result<()> {
+    fn write(writer: &mut Writer, len: usize) -> Result<()> {
         u64::write(writer, &(len as u64))
     }
 
     #[inline(always)]
-    fn bytes_needed(_len: usize) -> Result<usize> {
+    fn write_bytes_needed(_len: usize) -> Result<usize> {
         Ok(size_of::<u64>())
     }
 }
@@ -124,7 +117,7 @@ pub mod short_vec {
 
     impl SeqLen for ShortU16Len {
         #[inline(always)]
-        fn size_hint(reader: &mut Reader) -> Result<usize> {
+        fn read<T>(reader: &mut Reader) -> Result<usize> {
             let Ok((len, read)) = decode_shortu16_len(reader.as_slice()) else {
                 return Err(size_hint_overflow("u16::MAX"));
             };
@@ -134,7 +127,7 @@ pub mod short_vec {
         }
 
         #[inline(always)]
-        fn encode_len(writer: &mut Writer, len: usize) -> Result<()> {
+        fn write(writer: &mut Writer, len: usize) -> Result<()> {
             if len > u16::MAX as usize {
                 return Err(size_hint_overflow("u16::MAX"));
             }
@@ -153,7 +146,7 @@ pub mod short_vec {
         }
 
         #[inline(always)]
-        fn bytes_needed(len: usize) -> Result<usize> {
+        fn write_bytes_needed(len: usize) -> Result<usize> {
             try_short_u16_bytes_needed(len)
         }
     }
