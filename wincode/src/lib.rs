@@ -266,12 +266,5 @@ mod schema;
 pub use schema::*;
 mod serde;
 pub use serde::*;
-
-#[doc(hidden)]
-pub mod __private {
-    #[doc(hidden)]
-    pub use paste::paste;
-}
-
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
