@@ -403,10 +403,16 @@ where
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
-        let mut guard = SliceDropGuard::<T::Dst>::new(dst.as_mut_ptr());
-        for slot in dst.iter_mut() {
+        let mut base = dst.as_mut_ptr();
+        let mut guard = SliceDropGuard::<T::Dst>::new(base);
+        // Avoid slice reborrow of `dst` (triggered by `dst.iter_mut()`)
+        for _ in 0..N {
+            let slot = unsafe { &mut *base };
             T::read(reader, slot)?;
             guard.inc_len();
+            unsafe {
+                base = base.add(1);
+            }
         }
         mem::forget(guard);
         Ok(())

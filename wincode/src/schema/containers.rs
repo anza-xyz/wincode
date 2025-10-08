@@ -437,11 +437,7 @@ macro_rules! impl_heap_slice {
 
                 impl<T> DropGuard<T> {
                     #[inline(always)]
-                    fn new(fat: *mut [MaybeUninit<T>]) -> Self {
-                        // Extract data pointer from fat pointer.
-                        // `SliceDropGuard` builds a slice from the raw pointer
-                        // using the initialized length.
-                        let raw = unsafe { (*fat).as_mut_ptr() };
+                    fn new(fat: *mut [MaybeUninit<T>], raw: *mut MaybeUninit<T>) -> Self {
                         Self {
                             inner: ManuallyDrop::new(SliceDropGuard::new(raw)),
                             // We need to store the fat pointer to deallocate the container.
@@ -464,17 +460,22 @@ macro_rules! impl_heap_slice {
 
                 let len = Len::size_hint_cautious::<T::Dst>(reader)?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
-                let ptr = $target::into_raw(mem) as *mut _;
-                let mut guard: DropGuard<T::Dst> = DropGuard::new(ptr);
+                let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
+                let mut raw_base = unsafe { (*fat).as_mut_ptr() };
+                let mut guard: DropGuard<T::Dst> = DropGuard::new(fat, raw_base);
 
-                for slot in unsafe { &mut (*ptr) }.iter_mut() {
+                for _ in 0..len {
+                    let slot = unsafe { &mut *raw_base };
                     T::read(reader, slot)?;
                     guard.inner.inc_len();
+                    unsafe {
+                        raw_base = raw_base.add(1);
+                    }
                 }
 
                 mem::forget(guard);
 
-                unsafe { dst.write($target::from_raw(ptr).assume_init()) };
+                unsafe { dst.write($target::from_raw(fat).assume_init()) };
                 Ok(())
             }
         }
