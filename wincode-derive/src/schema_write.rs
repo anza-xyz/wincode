@@ -154,17 +154,17 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, Result, error::size_of_overflow, io::Writer};
+            use #crate_name::{SchemaWrite, WriteResult, error::size_of_overflow, io::Writer};
             impl #impl_generics #crate_name::SchemaWrite for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 
                 #[inline]
-                fn size_of(src: &Self::Src) -> Result<usize> {
+                fn size_of(src: &Self::Src) -> WriteResult<usize> {
                     #size_of_impl
                 }
 
                 #[inline]
-                fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+                fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                     #write_impl
                 }
             }

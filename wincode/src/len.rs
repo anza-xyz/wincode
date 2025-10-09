@@ -1,6 +1,9 @@
 //! Support for heterogenous sequence length encoding.
 use crate::{
-    error::{pointer_sized_decode_error, preallocation_size_limit, size_hint_overflow, Result},
+    error::{
+        pointer_sized_decode_error, preallocation_size_limit, read_length_encoding_overflow,
+        write_length_encoding_overflow, ReadResult, WriteResult,
+    },
     io::{Reader, Writer},
     schema::{SchemaRead, SchemaWrite},
 };
@@ -17,13 +20,13 @@ pub trait SeqLen {
     ///
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
-    fn read<T>(reader: &mut Reader) -> Result<usize>;
+    fn read<T>(reader: &mut Reader) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
-    fn write(writer: &mut Writer, len: usize) -> Result<()>;
+    fn write(writer: &mut Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
-    fn write_bytes_needed(len: usize) -> Result<usize>;
+    fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
 const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
@@ -38,13 +41,13 @@ pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
 
 impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     #[inline(always)]
-    fn read<T>(reader: &mut Reader) -> Result<usize> {
+    fn read<T>(reader: &mut Reader) -> ReadResult<usize> {
         // Bincode's default fixint encoding writes lengths as `u64`.
         let len = u64::get(reader)
             .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
         let needed = len
             .checked_mul(size_of::<T>())
-            .ok_or_else(|| size_hint_overflow("isize::MAX"))?;
+            .ok_or_else(|| preallocation_size_limit(usize::MAX, MAX_SIZE))?;
         if needed > MAX_SIZE {
             return Err(preallocation_size_limit(needed, MAX_SIZE));
         }
@@ -52,12 +55,12 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, len: usize) -> Result<()> {
+    fn write(writer: &mut Writer, len: usize) -> WriteResult<()> {
         u64::write(writer, &(len as u64))
     }
 
     #[inline(always)]
-    fn write_bytes_needed(_len: usize) -> Result<usize> {
+    fn write_bytes_needed(_len: usize) -> WriteResult<usize> {
         Ok(size_of::<u64>())
     }
 }
@@ -76,10 +79,10 @@ pub mod short_vec {
     }
 
     #[inline(always)]
-    fn try_short_u16_bytes_needed<T: TryInto<u16>>(len: T) -> Result<usize> {
+    fn try_short_u16_bytes_needed<T: TryInto<u16>>(len: T) -> WriteResult<usize> {
         match len.try_into() {
             Ok(len) => Ok(short_u16_bytes_needed(len)),
-            Err(_) => Err(size_hint_overflow("u16::MAX")),
+            Err(_) => Err(write_length_encoding_overflow("u16::MAX")),
         }
     }
 
@@ -117,9 +120,9 @@ pub mod short_vec {
 
     impl SeqLen for ShortU16Len {
         #[inline(always)]
-        fn read<T>(reader: &mut Reader) -> Result<usize> {
+        fn read<T>(reader: &mut Reader) -> ReadResult<usize> {
             let Ok((len, read)) = decode_shortu16_len(reader.as_slice()) else {
-                return Err(size_hint_overflow("u16::MAX"));
+                return Err(read_length_encoding_overflow("u16::MAX"));
             };
             // `decode_shortu16_len` successfully read `read` bytes.
             reader.consume_unchecked(read);
@@ -127,9 +130,9 @@ pub mod short_vec {
         }
 
         #[inline(always)]
-        fn write(writer: &mut Writer, len: usize) -> Result<()> {
+        fn write(writer: &mut Writer, len: usize) -> WriteResult<()> {
             if len > u16::MAX as usize {
-                return Err(size_hint_overflow("u16::MAX"));
+                return Err(write_length_encoding_overflow("u16::MAX"));
             }
 
             let len = len as u16;
@@ -146,7 +149,7 @@ pub mod short_vec {
         }
 
         #[inline(always)]
-        fn write_bytes_needed(len: usize) -> Result<usize> {
+        fn write_bytes_needed(len: usize) -> WriteResult<usize> {
             try_short_u16_bytes_needed(len)
         }
     }

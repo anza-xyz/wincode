@@ -1,95 +1,94 @@
 //! Error types and helpers.
-use {core::str::Utf8Error, thiserror::Error};
+use {crate::io, core::str::Utf8Error, thiserror::Error};
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Error {
-    #[error("Attempting to read {0} bytes")]
-    ReadSizeLimit(usize),
-    #[error("Attempting to write {0} bytes")]
-    WriteSizeLimit(usize),
+    #[error(transparent)]
+    WriteError(#[from] WriteError),
+    #[error(transparent)]
+    ReadError(#[from] ReadError),
+}
+
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WriteError {
+    #[error(transparent)]
+    Io(#[from] io::WriteError),
+    #[error("Computing size of type would overflow usize::MAX")]
+    SizeOfOverflow,
+    #[error(transparent)]
+    InvalidUtf8Encoding(#[from] Utf8Error),
+    #[error("Sequence length would overflow length encoding scheme: {0}")]
+    LengthEncodingOverflow(&'static str),
+}
+
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ReadError {
+    #[error(transparent)]
+    Io(#[from] io::ReadError),
+    #[error(transparent)]
+    InvalidUtf8Encoding(#[from] Utf8Error),
+    #[error("Could not cast integer type to pointer sized type")]
+    PointerSizedReadError,
     #[error(
         "Encoded sequence length exceeded preallocation limit of {limit} bytes (needed {needed} \
          bytes)"
     )]
     PreallocationSizeLimit { needed: usize, limit: usize },
-    #[error("Encoded sequence length would overflow {0}")]
-    SizeHintOverflow(&'static str),
-    #[error("Could not cast integer type to pointer sized type")]
-    PointerSizedDecodeError,
-    #[error("Invalid bool encoding: {0}")]
-    InvalidBoolEncoding(u8),
     #[error("Invalid tag encoding: {0}")]
     InvalidTagEncoding(usize),
-    #[error("Writer has trailing bytes: {0}")]
-    WriterTrailingBytes(usize),
-    #[error(transparent)]
-    InvalidUtf8Encoding(#[from] Utf8Error),
-    #[error("Computing size of type would overflow usize::MAX")]
-    SizeOfOverflow,
-    #[error("Buffer length would overflow usize::MAX (needed {0})")]
-    BufferLengthOverflow(usize),
+    #[error("Invalid bool encoding: {0}")]
+    InvalidBoolEncoding(u8),
+    #[error("Sequence length would overflow length encoding scheme: {0}")]
+    LengthEncodingOverflow(&'static str),
     #[error("Invalid char lead: {0}")]
     InvalidCharLead(u8),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
+pub type WriteResult<T> = core::result::Result<T, WriteError>;
+pub type ReadResult<T> = core::result::Result<T, ReadError>;
 
 #[cold]
-pub const fn read_size_limit(len: usize) -> Error {
-    Error::ReadSizeLimit(len)
+pub const fn preallocation_size_limit(needed: usize, limit: usize) -> ReadError {
+    ReadError::PreallocationSizeLimit { needed, limit }
 }
 
 #[cold]
-pub const fn write_size_limit(len: usize) -> Error {
-    Error::WriteSizeLimit(len)
+pub const fn read_length_encoding_overflow(max_length: &'static str) -> ReadError {
+    ReadError::LengthEncodingOverflow(max_length)
 }
 
 #[cold]
-pub const fn preallocation_size_limit(needed: usize, limit: usize) -> Error {
-    Error::PreallocationSizeLimit { needed, limit }
+pub const fn write_length_encoding_overflow(max_length: &'static str) -> WriteError {
+    WriteError::LengthEncodingOverflow(max_length)
 }
 
 #[cold]
-pub const fn size_hint_overflow(max_length: &'static str) -> Error {
-    Error::SizeHintOverflow(max_length)
+pub const fn pointer_sized_decode_error() -> ReadError {
+    ReadError::PointerSizedReadError
 }
 
 #[cold]
-pub const fn pointer_sized_decode_error() -> Error {
-    Error::PointerSizedDecodeError
+pub const fn invalid_bool_encoding(byte: u8) -> ReadError {
+    ReadError::InvalidBoolEncoding(byte)
 }
 
 #[cold]
-pub const fn invalid_bool_encoding(byte: u8) -> Error {
-    Error::InvalidBoolEncoding(byte)
+pub const fn invalid_tag_encoding(tag: usize) -> ReadError {
+    ReadError::InvalidTagEncoding(tag)
 }
 
 #[cold]
-pub const fn invalid_tag_encoding(tag: usize) -> Error {
-    Error::InvalidTagEncoding(tag)
+pub const fn invalid_utf8_encoding(error: Utf8Error) -> ReadError {
+    ReadError::InvalidUtf8Encoding(error)
 }
 
 #[cold]
-pub const fn writer_trailing_bytes(bytes: usize) -> Error {
-    Error::WriterTrailingBytes(bytes)
+pub const fn size_of_overflow() -> WriteError {
+    WriteError::SizeOfOverflow
 }
 
 #[cold]
-pub const fn invalid_utf8_encoding(error: Utf8Error) -> Error {
-    Error::InvalidUtf8Encoding(error)
-}
-
-#[cold]
-pub const fn size_of_overflow() -> Error {
-    Error::SizeOfOverflow
-}
-
-#[cold]
-pub const fn buffer_length_overflow(len: usize) -> Error {
-    Error::BufferLengthOverflow(len)
-}
-
-#[cold]
-pub const fn invalid_char_lead(val: u8) -> Error {
-    Error::InvalidCharLead(val)
+pub const fn invalid_char_lead(val: u8) -> ReadError {
+    ReadError::InvalidCharLead(val)
 }

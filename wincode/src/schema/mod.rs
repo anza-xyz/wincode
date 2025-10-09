@@ -42,7 +42,7 @@
 //! ```
 use {
     crate::{
-        error::{size_of_overflow, Result},
+        error::{size_of_overflow, ReadResult, WriteResult},
         io::*,
         len::SeqLen,
     },
@@ -56,9 +56,9 @@ mod impls;
 pub trait SchemaWrite {
     type Src: ?Sized;
     /// Get the serialized size of `Self::Src`.
-    fn size_of(src: &Self::Src) -> Result<usize>;
+    fn size_of(src: &Self::Src) -> WriteResult<usize>;
     /// Write `Self::Src` to `writer`.
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()>;
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a byte buffer.
@@ -69,11 +69,11 @@ pub trait SchemaRead<'de> {
     /// # Safety
     ///
     /// - Implementation must properly initialize the `Self::Dst`.
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()>;
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut Reader<'de>) -> Result<Self::Dst> {
+    fn get(reader: &mut Reader<'de>) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
@@ -82,7 +82,9 @@ pub trait SchemaRead<'de> {
 }
 
 #[inline(always)]
-fn size_of_elem_iter<'a, T, Len>(value: impl ExactSizeIterator<Item = &'a T::Src>) -> Result<usize>
+fn size_of_elem_iter<'a, T, Len>(
+    value: impl ExactSizeIterator<Item = &'a T::Src>,
+) -> WriteResult<usize>
 where
     Len: SeqLen,
     T: SchemaWrite + 'a,
@@ -98,7 +100,7 @@ where
 fn write_elem_iter<'a, T, Len>(
     writer: &mut Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
-) -> Result<()>
+) -> WriteResult<()>
 where
     Len: SeqLen,
     T: SchemaWrite + 'a,
@@ -116,11 +118,11 @@ mod tests {
         crate::{
             containers::{self, Elem, Pod},
             deserialize,
-            error::invalid_tag_encoding,
+            error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
             len::BincodeLen,
             proptest_config::proptest_cfg,
-            serialize, Deserialize, SchemaRead, SchemaWrite, Serialize,
+            serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, WriteResult,
         },
         core::marker::PhantomData,
         proptest::prelude::*,
@@ -242,10 +244,10 @@ mod tests {
 
     impl SchemaWrite for DropCounted {
         type Src = Self;
-        fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+        fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
-        fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+        fn write(writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
             u8::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
@@ -254,7 +256,7 @@ mod tests {
     impl SchemaRead<'_> for DropCounted {
         type Dst = Self;
 
-        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             // This will increment the counter.
             dst.write(DropCounted::new());
@@ -273,11 +275,11 @@ mod tests {
     impl SchemaWrite for ErrorsOnRead {
         type Src = Self;
 
-        fn size_of(_src: &Self::Src) -> crate::Result<usize> {
+        fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
 
-        fn write(writer: &mut Writer, _src: &Self::Src) -> crate::Result<()> {
+        fn write(writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
             u8::write(writer, &Self::TAG_BYTE)
         }
     }
@@ -285,9 +287,9 @@ mod tests {
     impl SchemaRead<'_> for ErrorsOnRead {
         type Dst = Self;
 
-        fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+        fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
-            Err(crate::error::Error::PointerSizedDecodeError)
+            Err(error::ReadError::PointerSizedReadError)
         }
     }
 
@@ -300,14 +302,14 @@ mod tests {
     impl SchemaWrite for DropCountedMaybeError {
         type Src = Self;
 
-        fn size_of(src: &Self::Src) -> crate::Result<usize> {
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => DropCounted::size_of(v),
                 DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::size_of(v),
             }
         }
 
-        fn write(writer: &mut Writer, src: &Self::Src) -> crate::Result<()> {
+        fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => DropCounted::write(writer, v),
                 DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::write(writer, v),
@@ -317,14 +319,14 @@ mod tests {
 
     impl SchemaRead<'_> for DropCountedMaybeError {
         type Dst = Self;
-        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> crate::Result<()> {
+        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = u8::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {
                     dst.write(DropCountedMaybeError::DropCounted(DropCounted::new()));
                     Ok(())
                 }
-                ErrorsOnRead::TAG_BYTE => Err(crate::error::Error::PointerSizedDecodeError),
+                ErrorsOnRead::TAG_BYTE => Err(error::ReadError::PointerSizedReadError),
                 _ => Err(invalid_tag_encoding(byte as usize)),
             }
         }
@@ -354,7 +356,7 @@ mod tests {
             ])
             .unwrap()
         };
-        let _deserialized: crate::Result<[DropCountedMaybeError; 2]> = deserialize(&serialized);
+        let _deserialized: ReadResult<[DropCountedMaybeError; 2]> = deserialize(&serialized);
     }
 
     /// Test that the derive macro handles drops of initialized fields on partially initialized structs.

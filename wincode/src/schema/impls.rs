@@ -32,7 +32,7 @@ use {
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, size_of_overflow, Result,
+            pointer_sized_decode_error, size_of_overflow, ReadResult, WriteResult,
         },
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
@@ -50,12 +50,12 @@ macro_rules! impl_int {
             type Src = $type;
 
             #[inline(always)]
-            fn size_of(_src: &Self::Src) -> Result<usize> {
+            fn size_of(_src: &Self::Src) -> WriteResult<usize> {
                 Ok(size_of::<$type>())
             }
 
             #[inline(always)]
-            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                 #[cfg(target_endian = "little")]
                 {
                     // SAFETY: int is plain ol' data.
@@ -75,7 +75,7 @@ macro_rules! impl_int {
             type Dst = $type;
 
             #[inline(always)]
-            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 #[cfg(target_endian = "little")]
                 {
                     // SAFETY: integer is plain ol' data.
@@ -98,12 +98,12 @@ macro_rules! impl_int {
             type Src = $type;
 
             #[inline]
-            fn size_of(_src: &Self::Src) -> Result<usize> {
+            fn size_of(_src: &Self::Src) -> WriteResult<usize> {
                 Ok(size_of::<$cast>())
             }
 
             #[inline]
-            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                 let src = *src as $cast;
                 // bincode defaults to little endian encoding.
                 // noop on LE machines.
@@ -119,7 +119,7 @@ macro_rules! impl_int {
             type Dst = $type;
 
             #[inline]
-            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 // SAFETY: integer is plain ol' data.
                 let casted = unsafe { reader.get_t::<$cast>() }?;
                 let val = <$type>::from_le(
@@ -153,14 +153,14 @@ macro_rules! impl_pod {
             type Src = $type;
 
             #[inline]
-            fn size_of(_src: &Self::Src) -> Result<usize> {
+            fn size_of(_src: &Self::Src) -> WriteResult<usize> {
                 Ok(size_of::<$type>())
             }
 
             #[inline(always)]
-            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                 // SAFETY: `$type` is plain ol' data.
-                unsafe { writer.write_t(src) }
+                unsafe { Ok(writer.write_t(src)?) }
             }
         }
 
@@ -168,9 +168,9 @@ macro_rules! impl_pod {
             type Dst = $type;
 
             #[inline]
-            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 // SAFETY: `$type` is plain ol' data.
-                unsafe { reader.read_t(dst) }
+                unsafe { Ok(reader.read_t(dst)?) }
             }
         }
     };
@@ -183,13 +183,13 @@ impl SchemaWrite for bool {
     type Src = bool;
 
     #[inline]
-    fn size_of(_src: &Self::Src) -> Result<usize> {
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
         Ok(size_of::<u8>())
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
-        unsafe { writer.write_t(&(*src as u8)) }
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+        unsafe { Ok(writer.write_t(&(*src as u8))?) }
     }
 }
 
@@ -197,7 +197,7 @@ impl SchemaRead<'_> for bool {
     type Dst = bool;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: u8 is plain ol' data.
         let byte = unsafe { reader.get_t::<u8>() }?;
         match byte {
@@ -217,17 +217,18 @@ impl SchemaWrite for char {
     type Src = char;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         let mut buf = [0; 4];
         let str = src.encode_utf8(&mut buf);
         Ok(str.len())
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
         let mut buf = [0; 4];
         let str = src.encode_utf8(&mut buf);
-        writer.write_exact(str.as_bytes())
+        writer.write_exact(str.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -235,7 +236,7 @@ impl SchemaRead<'_> for char {
     type Dst = char;
 
     #[inline]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let b0 = *reader.peek()?;
 
         let len = match b0 {
@@ -268,12 +269,12 @@ impl<T> SchemaWrite for PhantomData<T> {
     type Src = PhantomData<T>;
 
     #[inline]
-    fn size_of(_src: &Self::Src) -> Result<usize> {
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
         Ok(0)
     }
 
     #[inline]
-    fn write(_writer: &mut Writer, _src: &Self::Src) -> Result<()> {
+    fn write(_writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -282,7 +283,7 @@ impl<T> SchemaRead<'_> for PhantomData<T> {
     type Dst = PhantomData<T>;
 
     #[inline]
-    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         Ok(())
     }
 }
@@ -291,12 +292,12 @@ impl SchemaWrite for () {
     type Src = ();
 
     #[inline]
-    fn size_of(_src: &Self::Src) -> Result<usize> {
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
         Ok(0)
     }
 
     #[inline]
-    fn write(_writer: &mut Writer, _src: &Self::Src) -> Result<()> {
+    fn write(_writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -305,7 +306,7 @@ impl SchemaRead<'_> for () {
     type Dst = ();
 
     #[inline]
-    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(_reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         Ok(())
     }
 }
@@ -319,12 +320,12 @@ where
     type Src = Vec<T::Src>;
 
     #[inline]
-    fn size_of(value: &Self::Src) -> Result<usize> {
+    fn size_of(value: &Self::Src) -> WriteResult<usize> {
         <containers::Vec<Elem<T>, BincodeLen>>::size_of(value)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::write(writer, value)
     }
 }
@@ -337,7 +338,7 @@ where
     type Dst = Vec<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Vec<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -351,12 +352,12 @@ where
     type Src = VecDeque<T::Src>;
 
     #[inline]
-    fn size_of(value: &Self::Src) -> Result<usize> {
+    fn size_of(value: &Self::Src) -> WriteResult<usize> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::size_of(value)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::write(writer, value)
     }
 }
@@ -369,7 +370,7 @@ where
     type Dst = VecDeque<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::VecDeque<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -382,12 +383,12 @@ where
     type Src = [T::Src];
 
     #[inline]
-    fn size_of(value: &Self::Src) -> Result<usize> {
+    fn size_of(value: &Self::Src) -> WriteResult<usize> {
         size_of_elem_iter::<T, BincodeLen>(value.iter())
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         write_elem_iter::<T, BincodeLen>(writer, value.iter())
     }
 }
@@ -399,7 +400,7 @@ where
     type Dst = [T::Dst; N];
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
@@ -427,14 +428,14 @@ where
     type Src = [T::Src; N];
 
     #[inline]
-    fn size_of(value: &Self::Src) -> Result<usize> {
+    fn size_of(value: &Self::Src) -> WriteResult<usize> {
         value.iter().map(T::size_of).try_fold(0usize, |acc, x| {
             acc.checked_add(x?).ok_or_else(size_of_overflow)
         })
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         for item in value {
             T::write(writer, item)?;
         }
@@ -449,7 +450,7 @@ where
     type Dst = Option<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = u8::get(reader)?;
         match variant {
             0 => {
@@ -479,7 +480,7 @@ where
     type Src = Option<T::Src>;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
             Option::Some(value) => Ok(1 + T::size_of(value)?),
             Option::None => Ok(1),
@@ -487,7 +488,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Option::Some(value) => {
                 u8::write(writer, &1)?;
@@ -506,12 +507,12 @@ where
     type Src = &'a T::Src;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         T::size_of(*src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         T::write(writer, *value)
     }
 }
@@ -526,12 +527,12 @@ macro_rules! impl_heap_container {
             type Src = $container<T::Src>;
 
             #[inline]
-            fn size_of(src: &Self::Src) -> Result<usize> {
+            fn size_of(src: &Self::Src) -> WriteResult<usize> {
                 T::size_of(src)
             }
 
             #[inline]
-            fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
                 T::write(writer, value)
             }
         }
@@ -544,7 +545,7 @@ macro_rules! impl_heap_container {
             type Dst = $container<T::Dst>;
 
             #[inline]
-            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 struct DropGuard<T>(*mut MaybeUninit<T>);
                 impl<T> Drop for DropGuard<T> {
                     #[inline]
@@ -583,12 +584,12 @@ where
     type Src = Box<[T::Src]>;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <containers::Box<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Box<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
@@ -602,12 +603,12 @@ where
     type Src = Rc<[T::Src]>;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <containers::Rc<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Rc<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
@@ -621,12 +622,12 @@ where
     type Src = Arc<[T::Src]>;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <containers::Arc<[Elem<T>], BincodeLen>>::size_of(src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, value: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Arc<[Elem<T>], BincodeLen>>::write(writer, value)
     }
 }
@@ -639,7 +640,7 @@ where
     type Dst = Box<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Box<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
@@ -652,7 +653,7 @@ where
     type Dst = Rc<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Rc<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
@@ -665,7 +666,7 @@ where
     type Dst = Arc<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Arc<[Elem<T>], BincodeLen>>::read(reader, dst)
     }
 }
@@ -674,14 +675,15 @@ impl SchemaWrite for str {
     type Src = str;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         Ok(<BincodeLen>::write_bytes_needed(src.len())? + src.len())
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
         <BincodeLen>::write(writer, src.len())?;
-        writer.write_exact(src.as_bytes())
+        writer.write_exact(src.as_bytes())?;
+        Ok(())
     }
 }
 
@@ -690,12 +692,12 @@ impl SchemaWrite for String {
     type Src = String;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <str>::size_of(src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
         <str>::write(writer, src)
     }
 }
@@ -704,7 +706,7 @@ impl<'de> SchemaRead<'de> for &'de str {
     type Dst = &'de str;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
         let bytes = reader.read_borrowed(len)?;
         match core::str::from_utf8(bytes) {
@@ -722,7 +724,7 @@ impl SchemaRead<'_> for String {
     type Dst = String;
 
     #[inline]
-    fn read(reader: &mut Reader<'_>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'_>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
         match String::from_utf8(reader.read_borrowed(len)?.to_vec()) {
             Ok(s) => {
@@ -752,7 +754,7 @@ macro_rules! impl_seq {
             type Src = $target<$key::Src, $value::Src>;
 
             #[inline]
-            fn size_of(src: &Self::Src) -> Result<usize> {
+            fn size_of(src: &Self::Src) -> WriteResult<usize> {
                 <BincodeLen>::write_bytes_needed(src.len())?
                 .checked_add(src
                     .iter()
@@ -768,7 +770,7 @@ macro_rules! impl_seq {
             }
 
             #[inline]
-            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                 <BincodeLen>::write(writer, src.len())?;
                 for (k, v) in src.iter() {
                     $key::write(writer, k)?;
@@ -788,15 +790,15 @@ macro_rules! impl_seq {
             type Dst = $target<$key::Dst, $value::Dst>;
 
             #[inline]
-            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = <BincodeLen>::read::<($key::Dst, $value::Dst)>(reader)?;
                 let map = (0..len)
                     .map(|_| {
                         let k = $key::get(reader)?;
                         let v = $value::get(reader)?;
-                        Ok::<_, crate::Error>((k, v))
+                        Ok::<_, crate::ReadError>((k, v))
                     })
-                    .collect::<Result<_>>()?;
+                    .collect::<ReadResult<_>>()?;
 
                 dst.write(map);
                 Ok(())
@@ -813,12 +815,12 @@ macro_rules! impl_seq {
             type Src = $target<$key::Src>;
 
             #[inline]
-            fn size_of(src: &Self::Src) -> Result<usize> {
+            fn size_of(src: &Self::Src) -> WriteResult<usize> {
                 size_of_elem_iter::<$key, BincodeLen>(src.iter())
             }
 
             #[inline]
-            fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
                 write_elem_iter::<$key, BincodeLen>(writer, src.iter())
             }
         }
@@ -832,11 +834,11 @@ macro_rules! impl_seq {
             type Dst = $target<$key::Dst>;
 
             #[inline]
-            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = <BincodeLen>::read::<$key::Dst>(reader)?;
                 let map = (0..len)
                     .map(|_| $key::get(reader))
-                    .collect::<Result<_>>()?;
+                    .collect::<ReadResult<_>>()?;
 
                 dst.write(map);
                 Ok(())
@@ -860,12 +862,12 @@ where
     type Src = BinaryHeap<T::Src>;
 
     #[inline]
-    fn size_of(src: &Self::Src) -> Result<usize> {
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
         <containers::BinaryHeap<Elem<T>, BincodeLen>>::size_of(src)
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> Result<()> {
+    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
         <containers::BinaryHeap<Elem<T>, BincodeLen>>::write(writer, src)
     }
 }
@@ -879,7 +881,7 @@ where
     type Dst = BinaryHeap<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::BinaryHeap<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
@@ -932,12 +934,12 @@ macro_rules! impl_tuple {
             type Src = ($($schema::Src),+);
 
             #[inline]
-            fn size_of(value: &Self::Src) -> $crate::error::Result<usize> {
+            fn size_of(value: &Self::Src) -> $crate::error::WriteResult<usize> {
                 Ok(0 $(+ <$schema as $crate::SchemaWrite>::size_of(&value.$field)?)+)
             }
 
             #[inline]
-            fn write(writer: &mut $crate::io::Writer, value: &Self::Src) -> $crate::error::Result<()> {
+            fn write(writer: &mut $crate::io::Writer, value: &Self::Src) -> $crate::error::WriteResult<()> {
                 $(<$schema as $crate::SchemaWrite>::write(writer, &value.$field)?;)+
                 Ok(())
             }
@@ -950,7 +952,7 @@ macro_rules! impl_tuple {
             type Dst = ($($schema::Dst),+);
 
             #[inline]
-            fn read(reader: &mut $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::Result<()> {
+            fn read(reader: &mut $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
                 let dst_ptr = dst.as_mut_ptr();
                 __read_fields_with_drop!(dst_ptr, reader; [] ; $($field: $schema),+);
                 Ok(())

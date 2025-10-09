@@ -216,7 +216,7 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
             }
 
             #[inline(always)]
-            #vis fn #read_field_ident(reader: &mut Reader<'de>, dst: &mut MaybeUninit<#dst>) -> Result<()> {
+            #vis fn #read_field_ident(reader: &mut Reader<'de>, dst: &mut MaybeUninit<#dst>) -> ReadResult<()> {
                 <#target as SchemaRead<'de>>::read(reader, Self::#uninit_mut_ident(dst))
             }
 
@@ -355,12 +355,12 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}, hint::unreachable_unchecked};
-            use #crate_name::{SchemaRead, Result, io::Reader, error};
+            use #crate_name::{SchemaRead, ReadResult, io::Reader, error};
             impl #impl_generics #crate_name::SchemaRead<'de> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;
 
                 #[inline]
-                fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+                fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                     #read_impl
                     Ok(())
                 }

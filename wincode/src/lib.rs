@@ -168,7 +168,7 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::Result};
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult};
 //! # use serde::{Serialize, Deserialize};
 //! # use core::mem::MaybeUninit;
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -198,7 +198,7 @@
 //! impl SchemaRead<'_> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+//!     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 //!         // We have to do a big ugly cast like this to get a mutable MaybeUninit<Payload>.
 //!         let mut payload = unsafe {
 //!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
@@ -259,7 +259,7 @@
 extern crate alloc;
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{Error, ReadError, ReadResult, Result, WriteError, WriteResult};
 pub mod io;
 pub mod len;
 mod schema;

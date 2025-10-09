@@ -1,9 +1,7 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
-    crate::error::{
-        buffer_length_overflow, read_size_limit, write_size_limit, writer_trailing_bytes, Result,
-    },
     core::{mem::MaybeUninit, ptr, slice},
+    thiserror::Error,
 };
 
 /// In-memory reader that allows direct reads from the source buffer
@@ -12,19 +10,32 @@ pub struct Reader<'a> {
     cursor: &'a [u8],
 }
 
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ReadError {
+    #[error("Attempting to read {0} bytes")]
+    ReadSizeLimit(usize),
+}
+
+pub type ReadResult<T> = core::result::Result<T, ReadError>;
+
+#[cold]
+fn read_size_limit(len: usize) -> ReadError {
+    ReadError::ReadSizeLimit(len)
+}
+
 impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { cursor: bytes }
     }
 
     #[inline]
-    pub fn peek(&self) -> Result<&u8> {
+    pub fn peek(&self) -> ReadResult<&u8> {
         self.cursor.first().ok_or_else(|| read_size_limit(0))
     }
 
     /// Copy exactly `dst.len()` bytes from the [`Reader`] into `dst`.
     #[inline]
-    pub fn read_exact(&mut self, dst: &mut [MaybeUninit<u8>]) -> Result<()> {
+    pub fn read_exact(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         let Some((src, rest)) = self.cursor.split_at_checked(dst.len()) else {
             return Err(read_size_limit(dst.len()));
         };
@@ -44,7 +55,7 @@ impl<'a> Reader<'a> {
     ///
     /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline]
-    pub unsafe fn read_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> Result<()> {
+    pub unsafe fn read_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
         self.read_slice_t(slice::from_mut(dst))
     }
 
@@ -54,7 +65,7 @@ impl<'a> Reader<'a> {
     ///
     /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline]
-    pub unsafe fn read_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> Result<()> {
+    pub unsafe fn read_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
         let slice = unsafe {
             slice::from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of_val(dst))
         };
@@ -64,7 +75,7 @@ impl<'a> Reader<'a> {
 
     /// Read exactly `len` bytes from the cursor into a slice.
     #[inline]
-    pub fn read_borrowed(&mut self, len: usize) -> Result<&'a [u8]> {
+    pub fn read_borrowed(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         let Some((src, rest)) = self.cursor.split_at_checked(len) else {
             return Err(read_size_limit(len));
         };
@@ -78,7 +89,7 @@ impl<'a> Reader<'a> {
     ///
     /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
     #[inline(always)]
-    pub unsafe fn get_t<T>(&mut self) -> Result<T> {
+    pub unsafe fn get_t<T>(&mut self) -> ReadResult<T> {
         let mut val = MaybeUninit::<T>::uninit();
         self.read_t(&mut val)?;
         Ok(val.assume_init())
@@ -97,7 +108,7 @@ impl<'a> Reader<'a> {
 
     /// Advance `amt` bytes from the reader and discard them.
     #[inline]
-    pub fn consume(&mut self, amt: usize) -> Result<()> {
+    pub fn consume(&mut self, amt: usize) -> ReadResult<()> {
         if self.cursor.len() < amt {
             return Err(read_size_limit(amt));
         };
@@ -113,6 +124,26 @@ pub struct Writer<'a> {
     pos: usize,
 }
 
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum WriteError {
+    #[error("Attempting to write {0} bytes")]
+    WriteSizeLimit(usize),
+    #[error("Writer has trailing bytes: {0}")]
+    WriterTrailingBytes(usize),
+}
+
+#[cold]
+fn write_size_limit(len: usize) -> WriteError {
+    WriteError::WriteSizeLimit(len)
+}
+
+#[cold]
+fn writer_trailing_bytes(bytes: usize) -> WriteError {
+    WriteError::WriterTrailingBytes(bytes)
+}
+
+pub type WriteResult<T> = core::result::Result<T, WriteError>;
+
 impl<'a> Writer<'a> {
     pub fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { buffer, pos: 0 }
@@ -125,7 +156,7 @@ impl<'a> Writer<'a> {
     }
 
     /// Get the number of bytes written to the buffer, and error if there are trailing bytes.
-    pub fn finish_disallow_trailing_bytes(self) -> Result<usize> {
+    pub fn finish_disallow_trailing_bytes(self) -> WriteResult<usize> {
         if self.pos != self.buffer.len() {
             return Err(writer_trailing_bytes(
                 self.buffer.len().saturating_sub(self.pos),
@@ -136,7 +167,7 @@ impl<'a> Writer<'a> {
 
     /// Write exactly `src.len()` bytes from the given `src` into the internal buffer.
     #[inline]
-    pub fn write_exact(&mut self, src: &[u8]) -> Result<()> {
+    pub fn write_exact(&mut self, src: &[u8]) -> WriteResult<()> {
         if self.buffer.len().saturating_sub(self.pos) < src.len() {
             return Err(write_size_limit(src.len()));
         }
@@ -163,14 +194,14 @@ impl<'a> Writer<'a> {
     /// # Safety
     ///
     /// - `write` must write EXACTLY `len` bytes into the given buffer.
-    pub unsafe fn write_with<F>(&mut self, len: usize, write: F) -> Result<()>
+    pub unsafe fn write_with<F>(&mut self, len: usize, write: F) -> WriteResult<()>
     where
-        F: FnOnce(&mut [MaybeUninit<u8>]) -> Result<()>,
+        F: FnOnce(&mut [MaybeUninit<u8>]) -> WriteResult<()>,
     {
         let upper_bound = self
             .pos
             .checked_add(len)
-            .ok_or_else(|| buffer_length_overflow(len))?;
+            .ok_or_else(|| write_size_limit(len))?;
         let dst = self
             .buffer
             .get_mut(self.pos..upper_bound)
@@ -186,7 +217,7 @@ impl<'a> Writer<'a> {
     ///
     /// - `T` must be plain ol' data.
     #[inline]
-    pub unsafe fn write_t<T>(&mut self, value: &T) -> Result<()> {
+    pub unsafe fn write_t<T>(&mut self, value: &T) -> WriteResult<()> {
         self.write_slice_t(slice::from_ref(value))
     }
 
@@ -196,7 +227,7 @@ impl<'a> Writer<'a> {
     ///
     /// - `T` must be plain ol' data.
     #[inline]
-    pub unsafe fn write_slice_t<T>(&mut self, value: &[T]) -> Result<()> {
+    pub unsafe fn write_slice_t<T>(&mut self, value: &[T]) -> WriteResult<()> {
         unsafe {
             self.write_exact(slice::from_raw_parts(
                 value.as_ptr().cast(),
