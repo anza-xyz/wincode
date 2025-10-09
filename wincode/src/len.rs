@@ -1,9 +1,6 @@
 //! Support for heterogenous sequence length encoding.
 use crate::{
-    error::{
-        pointer_sized_decode_error, preallocation_size_limit, read_length_encoding_overflow,
-        write_length_encoding_overflow, ReadResult, WriteResult,
-    },
+    error::{pointer_sized_decode_error, preallocation_size_limit, ReadResult, WriteResult},
     io::{Reader, Writer},
     schema::{SchemaRead, SchemaWrite},
 };
@@ -67,7 +64,12 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
-    use {super::*, core::ptr, solana_short_vec::decode_shortu16_len};
+    use {
+        super::*,
+        crate::error::{read_length_encoding_overflow, write_length_encoding_overflow},
+        core::ptr,
+        solana_short_vec::decode_shortu16_len,
+    };
     pub struct ShortU16Len;
 
     /// Branchless computation of the number of bytes needed to encode a short u16.
@@ -155,7 +157,7 @@ pub mod short_vec {
         }
     }
 
-    #[cfg(all(test, feature = "alloc"))]
+    #[cfg(all(test, feature = "alloc", feature = "derive"))]
     mod tests {
         use {
             super::*,
