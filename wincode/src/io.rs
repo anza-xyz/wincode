@@ -236,3 +236,163 @@ impl<'a> Writer<'a> {
         }
     }
 }
+
+#[cfg(all(test, feature = "alloc"))]
+mod tests {
+    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+
+    #[test]
+    fn test_reader_peek() {
+        let reader = Reader::new(b"hello");
+        assert_eq!(reader.peek(), Ok(&b'h'));
+    }
+
+    #[test]
+    fn test_reader_peek_empty() {
+        let reader = Reader::new(b"");
+        assert_eq!(reader.peek(), Err(ReadError::ReadSizeLimit(0)));
+    }
+
+    proptest! {
+        #![proptest_config(proptest_cfg())]
+
+        #[test]
+        fn test_reader_read_exact(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            let mut vec = Vec::with_capacity(bytes.len());
+            let dst = vec.spare_capacity_mut();
+            reader.read_exact(dst).unwrap();
+            unsafe { vec.set_len(bytes.len()) };
+            assert_eq!(&vec, &bytes);
+        }
+
+        #[test]
+        fn test_reader_read_borrowed(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            let read = reader.read_borrowed(bytes.len()).unwrap();
+            assert_eq!(&read, &bytes);
+        }
+
+        #[test]
+        fn test_reader_read_borrowed_input_too_large(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            assert_eq!(reader.read_borrowed(bytes.len() + 1), Err(ReadError::ReadSizeLimit(bytes.len() + 1)));
+        }
+
+        #[test]
+        fn test_reader_read_exact_input_too_large(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            let mut vec = Vec::with_capacity(bytes.len() + 1);
+            let dst = vec.spare_capacity_mut();
+            assert_eq!(reader.read_exact(dst), Err(ReadError::ReadSizeLimit(bytes.len() + 1)));
+        }
+
+        #[test]
+        fn test_reader_consume(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            reader.consume(bytes.len()).unwrap();
+            assert_eq!(reader.as_slice(), &[]);
+        }
+
+        #[test]
+        fn test_reader_consume_input_too_large(bytes in any::<Vec<u8>>()) {
+            let mut reader = Reader::new(&bytes);
+            assert_eq!(reader.consume(bytes.len() + 1), Err(ReadError::ReadSizeLimit(bytes.len() + 1)));
+        }
+
+        #[test]
+        fn test_read_t(ints in proptest::collection::vec(any::<u64>(), 1..=100)) {
+            let bytes = ints.iter().flat_map(|int| int.to_le_bytes()).collect::<Vec<u8>>();
+            let mut reader = Reader::new(&bytes);
+            for int in ints {
+                let mut val = MaybeUninit::<u64>::uninit();
+                unsafe { reader.read_t(&mut val).unwrap() };
+                unsafe { assert_eq!(val.assume_init(), int) };
+            }
+        }
+
+        #[test]
+        fn test_read_slice_t(ints in proptest::collection::vec(any::<u64>(), 1..=100)) {
+            let bytes = ints.iter().flat_map(|int| int.to_le_bytes()).collect::<Vec<u8>>();
+            let mut reader = Reader::new(&bytes);
+            let mut vals: Vec<u64> = Vec::with_capacity(ints.len());
+            let dst = vals.spare_capacity_mut();
+            unsafe { reader.read_slice_t(dst).unwrap() };
+            unsafe { vals.set_len(ints.len()) };
+            assert_eq!(&vals, &ints);
+        }
+
+        #[test]
+        fn test_writer_write_exact(bytes in any::<Vec<u8>>()) {
+            let mut buffer = Vec::with_capacity(bytes.len());
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            writer.write_exact(&bytes).unwrap();
+            let written = writer.finish_disallow_trailing_bytes().unwrap();
+            unsafe { buffer.set_len(written) };
+            assert_eq!(&buffer, &bytes);
+        }
+
+        #[test]
+        fn test_writer_write_exact_input_too_large(bytes in proptest::collection::vec(any::<u8>(), 1..=100)) {
+            let mut buffer = Vec::with_capacity(bytes.len() - 1);
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            assert_eq!(writer.write_exact(&bytes), Err(WriteError::WriteSizeLimit(bytes.len())));
+        }
+
+
+        #[test]
+        fn test_writer_finish_disallow_trailing_bytes_error(bytes in proptest::collection::vec(any::<u8>(), 1..=100)) {
+            let mut buffer = Vec::with_capacity(bytes.len());
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            writer.write_exact(&bytes[..bytes.len() - 1]).unwrap();
+            assert_eq!(writer.finish_disallow_trailing_bytes(), Err(WriteError::WriterTrailingBytes(1)));
+        }
+
+        #[test]
+        fn test_writer_finish_disallow_trailing_bytes_success(bytes in proptest::collection::vec(any::<u8>(), 1..=100)) {
+            let mut buffer = Vec::with_capacity(bytes.len());
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            writer.write_exact(&bytes).unwrap();
+            assert_eq!(writer.finish_disallow_trailing_bytes(), Ok(bytes.len()));
+        }
+
+        #[test]
+        fn test_writer_write_slice_t(ints in proptest::collection::vec(any::<u64>(), 1..=100)) {
+            let bytes = ints.iter().flat_map(|int| int.to_le_bytes()).collect::<Vec<u8>>();
+            let mut buffer = Vec::with_capacity(bytes.len());
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            unsafe { writer.write_slice_t(&ints).unwrap() };
+            let written = writer.finish_disallow_trailing_bytes().unwrap();
+            unsafe { buffer.set_len(written) };
+            assert_eq!(&buffer, &bytes);
+        }
+
+        #[test]
+        fn test_writer_write_with(int in any::<u64>()) {
+            let mut buffer = Vec::with_capacity(8);
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            unsafe {
+                writer.write_with(8, |dst| {
+                    ptr::copy_nonoverlapping(int.to_le_bytes().as_ptr(), dst.as_mut_ptr().cast(), 8);
+                    Ok(())
+                })
+                .unwrap();
+            }
+            let written = writer.finish_disallow_trailing_bytes().unwrap();
+            unsafe { buffer.set_len(written) };
+            assert_eq!(&buffer, &int.to_le_bytes());
+        }
+
+        #[test]
+        fn test_writer_write_with_input_too_large(cap in 1..=100usize) {
+            let mut buffer = Vec::with_capacity(cap);
+            let mut writer = Writer::new(buffer.spare_capacity_mut());
+            let result = unsafe {
+                writer.write_with(cap + 1, |_| {
+                    Ok(())
+                })
+            };
+            assert_eq!(result, Err(WriteError::WriteSizeLimit(cap + 1)));
+        }
+    }
+}
