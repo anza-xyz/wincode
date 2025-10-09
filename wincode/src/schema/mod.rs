@@ -42,7 +42,7 @@
 //! ```
 use {
     crate::{
-        error::{size_of_overflow, ReadResult, WriteResult},
+        error::{ReadResult, WriteResult},
         io::*,
         len::SeqLen,
     },
@@ -82,6 +82,7 @@ pub trait SchemaRead<'de> {
 }
 
 #[inline(always)]
+#[allow(clippy::arithmetic_side_effects)]
 fn size_of_elem_iter<'a, T, Len>(
     value: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<usize>
@@ -89,11 +90,11 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
-    Len::write_bytes_needed(value.len())?
-        .checked_add(value.map(T::size_of).try_fold(0usize, |acc, x| {
-            acc.checked_add(x?).ok_or_else(size_of_overflow)
-        })?)
-        .ok_or_else(size_of_overflow)
+    // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
+    Ok(Len::write_bytes_needed(value.len())?
+        + (value
+            .map(T::size_of)
+            .try_fold(0usize, |acc, x| x.map(|x| acc + x))?))
 }
 
 #[inline(always)]

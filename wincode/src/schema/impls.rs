@@ -32,7 +32,7 @@ use {
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, size_of_overflow, ReadResult, WriteResult,
+            pointer_sized_decode_error, ReadResult, WriteError, WriteResult,
         },
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
@@ -428,10 +428,13 @@ where
     type Src = [T::Src; N];
 
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        value.iter().map(T::size_of).try_fold(0usize, |acc, x| {
-            acc.checked_add(x?).ok_or_else(size_of_overflow)
-        })
+        // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
+        value
+            .iter()
+            .map(T::size_of)
+            .try_fold(0usize, |acc, x| x.map(|x| acc + x))
     }
 
     #[inline]
@@ -758,19 +761,21 @@ macro_rules! impl_seq {
             type Src = $target<$key::Src, $value::Src>;
 
             #[inline]
+            #[allow(clippy::arithmetic_side_effects)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                <BincodeLen>::write_bytes_needed(src.len())?
-                .checked_add(src
-                    .iter()
-                    .try_fold(
-                        0usize,
-                        |acc, (k, v)|
-                            acc
-                                .checked_add($key::size_of(k)?).ok_or_else(size_of_overflow)?
-                                .checked_add($value::size_of(v)?).ok_or_else(size_of_overflow)
-                    )?)
-                .ok_or_else(size_of_overflow)
-
+                Ok(<BincodeLen>::write_bytes_needed(src.len())? +
+                    src
+                        .iter()
+                        .try_fold(
+                            0usize,
+                            |acc, (k, v)|
+                            Ok::<_, WriteError>(
+                                acc
+                                + $key::size_of(k)?
+                                + $value::size_of(v)?
+                            )
+                    )?
+                )
             }
 
             #[inline]

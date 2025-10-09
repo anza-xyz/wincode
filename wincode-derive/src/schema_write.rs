@@ -29,7 +29,7 @@ fn impl_struct(fields: &Fields<Field>) -> (TokenStream, TokenStream) {
         quote! {
             let mut total = 0usize;
             #(
-                total = total.checked_add(<#target as SchemaWrite>::size_of(&src.#ident)?).ok_or_else(size_of_overflow)?;
+                total += <#target as SchemaWrite>::size_of(&src.#ident)?;
             )*
             Ok(total)
         },
@@ -85,7 +85,7 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStre
                         #match_case => {
                             let mut total = #size_of_discriminant;
                             #(
-                                total = total.checked_add(<#target as SchemaWrite>::size_of(#ident)?).ok_or_else(size_of_overflow)?;
+                                total += <#target as SchemaWrite>::size_of(#ident)?;
                             )*
                             Ok(total)
                         }
@@ -154,7 +154,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, WriteResult, error::size_of_overflow, io::Writer};
+            use #crate_name::{SchemaWrite, WriteResult, io::Writer};
             impl #impl_generics #crate_name::SchemaWrite for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 

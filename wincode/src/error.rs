@@ -13,8 +13,6 @@ pub enum Error {
 pub enum WriteError {
     #[error(transparent)]
     Io(#[from] io::WriteError),
-    #[error("Computing size of type would overflow usize::MAX")]
-    SizeOfOverflow,
     #[error(transparent)]
     InvalidUtf8Encoding(#[from] Utf8Error),
     #[error("Sequence length would overflow length encoding scheme: {0}")]
@@ -81,11 +79,6 @@ pub const fn invalid_tag_encoding(tag: usize) -> ReadError {
 #[cold]
 pub const fn invalid_utf8_encoding(error: Utf8Error) -> ReadError {
     ReadError::InvalidUtf8Encoding(error)
-}
-
-#[cold]
-pub const fn size_of_overflow() -> WriteError {
-    WriteError::SizeOfOverflow
 }
 
 #[cold]
