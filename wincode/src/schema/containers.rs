@@ -478,16 +478,13 @@ macro_rules! impl_heap_slice {
                 let len = Len::read::<T::Dst>(reader)?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
-                let mut raw_base = unsafe { (*fat).as_mut_ptr() };
+                let raw_base = unsafe { (*fat).as_mut_ptr() };
                 let mut guard: DropGuard<T::Dst> = DropGuard::new(fat, raw_base);
 
-                for _ in 0..len {
-                    let slot = unsafe { &mut *raw_base };
+                for i in 0..len {
+                    let slot = unsafe { &mut *raw_base.add(i) };
                     T::read(reader, slot)?;
                     guard.inner.inc_len();
-                    unsafe {
-                        raw_base = raw_base.add(1);
-                    }
                 }
 
                 mem::forget(guard);
