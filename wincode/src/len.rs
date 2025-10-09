@@ -74,6 +74,7 @@ pub mod short_vec {
     ///
     /// See [`solana_short_vec::ShortU16`] for more details.
     #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
     fn short_u16_bytes_needed(len: u16) -> usize {
         1 + (len >= 0x80) as usize + (len >= 0x4000) as usize
     }

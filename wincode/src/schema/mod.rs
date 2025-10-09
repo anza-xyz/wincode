@@ -114,6 +114,8 @@ where
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
 mod tests {
+    #![allow(clippy::arithmetic_side_effects)]
+
     use {
         crate::{
             containers::{self, Elem, Pod},

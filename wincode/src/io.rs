@@ -182,7 +182,11 @@ impl<'a> Writer<'a> {
                 src.len(),
             );
         }
-        self.pos += src.len();
+        #[allow(clippy::arithmetic_side_effects)]
+        {
+            // We just checked that self.pos + src.len() <= self.buffer.len()
+            self.pos += src.len();
+        }
         Ok(())
     }
 
@@ -239,6 +243,7 @@ impl<'a> Writer<'a> {
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
+    #![allow(clippy::arithmetic_side_effects)]
     use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
 
     #[test]

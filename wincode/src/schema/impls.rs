@@ -480,8 +480,10 @@ where
     type Src = Option<T::Src>;
 
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
+            // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
             Option::Some(value) => Ok(1 + T::size_of(value)?),
             Option::None => Ok(1),
         }
@@ -675,7 +677,9 @@ impl SchemaWrite for str {
     type Src = str;
 
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         Ok(<BincodeLen>::write_bytes_needed(src.len())? + src.len())
     }
 
@@ -934,7 +938,9 @@ macro_rules! impl_tuple {
             type Src = ($($schema::Src),+);
 
             #[inline]
+            #[allow(clippy::arithmetic_side_effects)]
             fn size_of(value: &Self::Src) -> $crate::error::WriteResult<usize> {
+                // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
                 Ok(0 $(+ <$schema as $crate::SchemaWrite>::size_of(&value.$field)?)+)
             }
 

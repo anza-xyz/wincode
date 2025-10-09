@@ -263,6 +263,8 @@ where
             T::read(reader, unsafe { &mut *ptr })?;
             unsafe {
                 ptr = ptr.add(1);
+                #[allow(clippy::arithmetic_side_effects)]
+                // i <= len
                 vec.set_len(i + 1);
             }
         }
@@ -281,7 +283,9 @@ where
     type Src = vec::Vec<T>;
 
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         Ok(Len::write_bytes_needed(src.len())? + size_of_val(src.as_slice()))
     }
 
@@ -336,6 +340,7 @@ impl<T> SliceDropGuard<T> {
     }
 
     #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn inc_len(&mut self) {
         self.initialized_len += 1;
     }
@@ -364,7 +369,9 @@ macro_rules! impl_heap_slice {
             type Src = $target<[T]>;
 
             #[inline]
+            #[allow(clippy::arithmetic_side_effects)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
                 Ok(Len::write_bytes_needed(src.len())? + size_of_val(&src[..]))
             }
 
@@ -505,7 +512,9 @@ where
     type Src = collections::VecDeque<T>;
 
     #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         Ok(Len::write_bytes_needed(src.len())? + size_of::<T>() * src.len())
     }
 
@@ -632,7 +641,9 @@ where
     type Src = collections::BinaryHeap<T>;
 
     #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         Ok(Len::write_bytes_needed(src.len())? + size_of_val(src.as_slice()))
     }
 
