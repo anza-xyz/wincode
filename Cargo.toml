@@ -12,7 +12,6 @@ arithmetic_side_effects = "deny"
 warnings = "deny"
 
 [workspace.package]
-version = "0.1.0"
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/wincode"
 homepage = "https://anza.xyz/"
