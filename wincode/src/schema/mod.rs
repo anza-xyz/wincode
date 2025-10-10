@@ -45,8 +45,9 @@ use {
         error::{ReadResult, WriteResult},
         io::*,
         len::SeqLen,
+        util::type_equal,
     },
-    core::mem::MaybeUninit,
+    core::mem::{transmute, MaybeUninit},
 };
 
 pub mod containers;
@@ -98,6 +99,22 @@ where
 }
 
 #[inline(always)]
+#[allow(clippy::arithmetic_side_effects)]
+/// Variant of [`size_of_elem_iter`] specialized for slices, which can opt into
+/// an optimized implementation for bytes (`u8`s).
+fn size_of_elem_slice<T, Len>(value: &[T::Src]) -> WriteResult<usize>
+where
+    Len: SeqLen,
+    T: SchemaWrite,
+    T::Src: Sized,
+{
+    if type_equal::<T::Src, u8>() {
+        return Ok(Len::write_bytes_needed(value.len())? + value.len());
+    }
+    size_of_elem_iter::<T, Len>(value.iter())
+}
+
+#[inline(always)]
 fn write_elem_iter<'a, T, Len>(
     writer: &mut Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
@@ -111,6 +128,24 @@ where
         T::write(writer, item)?;
     }
     Ok(())
+}
+
+#[inline(always)]
+#[allow(clippy::arithmetic_side_effects)]
+/// Variant of [`write_elem_iter`] specialized for slices, which can opt into
+/// an optimized implementation for bytes (`u8`s).
+fn write_elem_slice<T, Len>(writer: &mut Writer, src: &[T::Src]) -> WriteResult<()>
+where
+    Len: SeqLen,
+    T: SchemaWrite,
+    T::Src: Sized,
+{
+    if type_equal::<T::Src, u8>() {
+        Len::write(writer, src.len())?;
+        writer.write_exact(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
+        return Ok(());
+    }
+    write_elem_iter::<T, Len>(writer, src.iter())
 }
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
@@ -644,6 +679,20 @@ mod tests {
         }
 
         #[test]
+        fn test_vec_elem_bytes(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&vec).unwrap();
+            type Target = containers::Vec<Elem<u8>, BincodeLen>;
+            let schema_serialized = Target::serialize(&vec).unwrap();
+
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Vec<u8> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&vec, &bincode_deserialized);
+            prop_assert_eq!(vec, schema_deserialized);
+        }
+
+        #[test]
         fn test_serialize_slice(slice in proptest::collection::vec(any::<SomeStruct>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(slice.as_slice()).unwrap();
             let schema_serialized = serialize(slice.as_slice()).unwrap();
@@ -673,6 +722,18 @@ mod tests {
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: VecDeque<SomeStruct> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&vec, &bincode_deserialized);
+            prop_assert_eq!(vec, schema_deserialized);
+        }
+
+        #[test]
+        fn test_vec_deque_elem_bytes(vec in proptest::collection::vec_deque(any::<u8>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&vec).unwrap();
+            type Target = containers::VecDeque<Elem<u8>, BincodeLen>;
+            let schema_serialized = Target::serialize(&vec).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: VecDeque<u8> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
@@ -736,13 +797,18 @@ mod tests {
         #[test]
         fn test_binary_heap_pod(heap in proptest::collection::binary_heap(any::<[u8; 32]>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&heap).unwrap();
-            type Target = containers::BinaryHeap<Pod<[u8; 32]>>;
+            type TargetPod = containers::BinaryHeap<Pod<[u8; 32]>>;
+            type Target = containers::BinaryHeap<Elem<[u8; 32]>>;
+            let schema_serialized_pod = TargetPod::serialize(&heap).unwrap();
             let schema_serialized = Target::serialize(&heap).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized_pod);
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
             let bincode_deserialized: BinaryHeap<[u8; 32]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized_pod = TargetPod::deserialize(&schema_serialized_pod).unwrap();
             let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
             prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
+            prop_assert_eq!(heap.as_slice(), schema_deserialized_pod.as_slice());
         }
 
         #[test]
@@ -757,13 +823,25 @@ mod tests {
         }
 
         #[test]
-        fn test_array(array in any::<[u8; 32]>()) {
+        fn test_array_bytes(array in any::<[u8; 32]>()) {
             let bincode_serialized = bincode::serialize(&array).unwrap();
             type Target = [u8; 32];
             let schema_serialized = Target::serialize(&array).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
             let bincode_deserialized: [u8; 32] = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: [u8; 32] = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&array, &bincode_deserialized);
+            prop_assert_eq!(array, schema_deserialized);
+        }
+
+        #[test]
+        fn test_array(array in any::<[u64; 32]>()) {
+            let bincode_serialized = bincode::serialize(&array).unwrap();
+            type Target = [u64; 32];
+            let schema_serialized = Target::serialize(&array).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: Target = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Target = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&array, &bincode_deserialized);
             prop_assert_eq!(array, schema_deserialized);
         }
@@ -854,7 +932,7 @@ mod tests {
         }
 
         #[test]
-        fn test_boxed_slice(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
+        fn test_boxed_slice_bytes(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
             type Target = Box<[u8]>;
@@ -869,6 +947,19 @@ mod tests {
             prop_assert_eq!(&data, &bincode_deserialized);
             prop_assert_eq!(&data, &schema_deserialized);
             prop_assert_eq!(&data, &schema_pod_deserialized);
+        }
+
+        #[test]
+        fn test_boxed_slice(vec in proptest::collection::vec(any::<u64>(), 0..=100)) {
+            let data = vec.into_boxed_slice();
+            let bincode_serialized = bincode::serialize(&data).unwrap();
+            type Target = Box<[u64]>;
+            let schema_serialized = serialize(&data).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: Target = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Target = Target::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&data, &bincode_deserialized);
+            prop_assert_eq!(&data, &schema_deserialized);
         }
 
         #[test]

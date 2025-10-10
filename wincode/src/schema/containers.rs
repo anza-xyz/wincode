@@ -89,10 +89,11 @@ use {
 use {
     crate::{
         len::{BincodeLen, SeqLen},
-        schema::{size_of_elem_iter, write_elem_iter},
+        schema::{size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice},
+        util::type_equal,
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
-    core::mem::{self, ManuallyDrop},
+    core::mem::{self, transmute, ManuallyDrop},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding and optimized
@@ -228,12 +229,12 @@ where
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len>(src.iter())
+        size_of_elem_slice::<T, Len>(src)
     }
 
     #[inline(always)]
     fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_iter::<T, Len>(writer, src.iter())
+        write_elem_slice::<T, Len>(writer, src)
     }
 }
 
@@ -256,6 +257,12 @@ where
     ///
     /// - `T::read` must properly initialize elements.
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        if type_equal::<T::Dst, u8>() {
+            return <Vec<Pod<u8>, Len>>::read(reader, unsafe {
+                transmute::<&mut MaybeUninit<vec::Vec<T::Dst>>, &mut MaybeUninit<vec::Vec<u8>>>(dst)
+            });
+        }
+
         let len = Len::read::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
         let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
@@ -428,12 +435,12 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                size_of_elem_iter::<T, Len>(src.iter())
+                size_of_elem_slice::<T, Len>(src)
             }
 
             #[inline(always)]
             fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_iter::<T, Len>(writer, src.iter())
+                write_elem_slice::<T, Len>(writer, src)
             }
         }
 
@@ -447,6 +454,15 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                if type_equal::<T::Dst, u8>() {
+                    return <$container<[Pod<u8>], Len>>::read(reader, unsafe {
+                        transmute::<
+                            &mut MaybeUninit<$target<[T::Dst]>>,
+                            &mut MaybeUninit<$target<[u8]>>,
+                        >(dst)
+                    });
+                }
+
                 struct DropGuard<T> {
                     inner: ManuallyDrop<SliceDropGuard<T>>,
                     fat: *mut [MaybeUninit<T>],
@@ -559,11 +575,21 @@ where
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
+        if type_equal::<T::Src, u8>() {
+            return <VecDeque<Pod<u8>, Len>>::size_of(unsafe {
+                transmute::<&collections::VecDeque<T::Src>, &collections::VecDeque<u8>>(value)
+            });
+        }
         size_of_elem_iter::<T, Len>(value.iter())
     }
 
     #[inline(always)]
     fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+        if type_equal::<T::Src, u8>() {
+            return <VecDeque<Pod<u8>, Len>>::write(writer, unsafe {
+                transmute::<&collections::VecDeque<T::Src>, &collections::VecDeque<u8>>(src)
+            });
+        }
         write_elem_iter::<T, Len>(writer, src.iter())
     }
 }
@@ -602,12 +628,12 @@ where
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len>(src.iter())
+        size_of_elem_slice::<T, Len>(src.as_slice())
     }
 
     #[inline(always)]
     fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_iter::<T, Len>(writer, src.iter())
+        write_elem_slice::<T, Len>(writer, src.as_slice())
     }
 }
 

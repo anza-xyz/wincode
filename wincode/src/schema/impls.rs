@@ -15,9 +15,30 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
 };
+use {
+    crate::{
+        containers::SliceDropGuard,
+        error::{
+            invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
+            pointer_sized_decode_error, ReadResult, WriteResult,
+        },
+        io::{Reader, Writer},
+        len::{BincodeLen, SeqLen},
+        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
+        util::type_equal,
+    },
+    core::{
+        marker::PhantomData,
+        mem::{self, transmute, MaybeUninit},
+    },
+};
 #[cfg(feature = "alloc")]
 use {
-    crate::containers::{self, Elem},
+    crate::{
+        containers::{self, Elem},
+        error::WriteError,
+        schema::{size_of_elem_iter, write_elem_iter},
+    },
     alloc::{
         boxed::Box,
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
@@ -25,22 +46,6 @@ use {
         string::String,
         sync::Arc,
         vec::Vec,
-    },
-};
-use {
-    crate::{
-        containers::SliceDropGuard,
-        error::{
-            invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, ReadResult, WriteError, WriteResult,
-        },
-        io::{Reader, Writer},
-        len::{BincodeLen, SeqLen},
-        schema::{size_of_elem_iter, write_elem_iter, SchemaRead, SchemaWrite},
-    },
-    core::{
-        marker::PhantomData,
-        mem::{self, transmute, MaybeUninit},
     },
 };
 
@@ -384,12 +389,12 @@ where
 
     #[inline]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, BincodeLen>(value.iter())
+        size_of_elem_slice::<T, BincodeLen>(value)
     }
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
-        write_elem_iter::<T, BincodeLen>(writer, value.iter())
+        write_elem_slice::<T, BincodeLen>(writer, value)
     }
 }
 
@@ -401,6 +406,15 @@ where
 
     #[inline]
     fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        if type_equal::<T::Dst, u8>() {
+            unsafe {
+                reader.read_exact(transmute::<
+                    &mut MaybeUninit<[T::Dst; N]>,
+                    &mut [MaybeUninit<u8>; N],
+                >(dst))?
+            };
+            return Ok(());
+        }
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
@@ -427,6 +441,9 @@ where
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
+        if type_equal::<T::Src, u8>() {
+            return Ok(N);
+        }
         // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         value
             .iter()
@@ -436,6 +453,10 @@ where
 
     #[inline]
     fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()> {
+        if type_equal::<T::Src, u8>() {
+            unsafe { writer.write_exact(transmute::<&[T::Src; N], &[u8; N]>(value))? };
+            return Ok(());
+        }
         for item in value {
             T::write(writer, item)?;
         }

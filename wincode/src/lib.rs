@@ -268,5 +268,6 @@ mod serde;
 pub use serde::*;
 #[cfg(test)]
 mod proptest_config;
+mod util;
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
