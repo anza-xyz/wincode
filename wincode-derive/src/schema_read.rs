@@ -9,7 +9,13 @@ use {
     },
     proc_macro2::TokenStream,
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Ident, Type},
+    syn::{
+        parse_quote,
+        spanned::Spanned,
+        visit_mut::{self, VisitMut},
+        DeriveInput, GenericArgument, GenericParam, Generics, Ident, Lifetime, Type, TypeImplTrait,
+        TypeParamBound, TypeReference, TypeTraitObject,
+    },
 };
 
 /// Ensure target reference types are tied to the `'de` lifetime.
@@ -27,12 +33,55 @@ use {
 /// We ensure that `'de` extends to all type parameters via [`append_de_lifetime`].
 fn override_ref_lifetime(target: &Type) -> Type {
     let mut target = target.clone();
-    if let Type::Reference(reference) = &mut target {
-        if let Some(lifetime) = &mut reference.lifetime {
-            lifetime.ident = Ident::new("de", lifetime.span());
-        }
-    }
+    ReplaceLifetimes.visit_type_mut(&mut target);
     target
+}
+
+/// Visitor to recursively replace a given type's lifetimes with `'de`.
+struct ReplaceLifetimes;
+
+impl ReplaceLifetimes {
+    /// Replace the lifetime with `'de`, preserving the span.
+    fn replace(&self, t: &mut Lifetime) {
+        t.ident = Ident::new("de", t.ident.span());
+    }
+}
+
+impl VisitMut for ReplaceLifetimes {
+    fn visit_type_reference_mut(&mut self, t: &mut TypeReference) {
+        match &mut t.lifetime {
+            Some(l) => self.replace(l),
+            // Lifetime may be elided. Prefer being explicit, as the implicit lifetime
+            // may refer to a lifetime that is not `'de` (e.g., 'a on some type `Foo<'a>`).
+            None => t.lifetime = Some(Lifetime::new("'de", t.and_token.span())),
+        }
+        visit_mut::visit_type_reference_mut(self, t);
+    }
+
+    fn visit_generic_argument_mut(&mut self, ga: &mut GenericArgument) {
+        if let GenericArgument::Lifetime(l) = ga {
+            self.replace(l);
+        }
+        visit_mut::visit_generic_argument_mut(self, ga);
+    }
+
+    fn visit_type_trait_object_mut(&mut self, t: &mut TypeTraitObject) {
+        for bd in &mut t.bounds {
+            if let TypeParamBound::Lifetime(l) = bd {
+                self.replace(l);
+            }
+        }
+        visit_mut::visit_type_trait_object_mut(self, t);
+    }
+
+    fn visit_type_impl_trait_mut(&mut self, t: &mut TypeImplTrait) {
+        for bd in &mut t.bounds {
+            if let TypeParamBound::Lifetime(l) = bd {
+                self.replace(l);
+            }
+        }
+        visit_mut::visit_type_impl_trait_mut(self, t);
+    }
 }
 
 fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
@@ -54,7 +103,7 @@ fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
             //     x: [u8; u64],
             // }
             // ```
-            let ty = &field.ty;
+            let ty = override_ref_lifetime(&field.ty);
             quote! { MaybeUninit<#ty> }
         } else {
             quote! { MaybeUninit<_> }
@@ -312,7 +361,7 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> TokenStream {
 /// }
 /// ```
 ///
-/// We must ensure `'a` lives at least as long as the underlying source buffer bytes (`'de`).
+/// We must ensure `'de` outlives all other lifetimes in the generics.
 fn append_de_lifetime(generics: &Generics) -> Generics {
     let mut generics = generics.clone();
     if generics.lifetimes().next().is_none() {
@@ -323,7 +372,7 @@ fn append_de_lifetime(generics: &Generics) -> Generics {
     }
 
     let lifetimes = generics.lifetimes();
-    // Extend `'de` to all lifetimes in the generics.
+    // Ensure `'de` outlives other lifetimes in the generics.
     generics
         .params
         .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
