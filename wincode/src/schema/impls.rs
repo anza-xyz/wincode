@@ -393,6 +393,17 @@ where
     }
 }
 
+impl<'de> SchemaRead<'de> for &'de [u8] {
+    type Dst = &'de [u8];
+
+    #[inline]
+    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = <BincodeLen>::read::<u8>(reader)?;
+        dst.write(reader.read_borrowed(len)?);
+        Ok(())
+    }
+}
+
 impl<'de, T, const N: usize> SchemaRead<'de> for [T; N]
 where
     T: SchemaRead<'de>,

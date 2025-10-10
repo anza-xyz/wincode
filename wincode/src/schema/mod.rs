@@ -614,6 +614,28 @@ mod tests {
         assert!(bincode::deserialize::<()>(&bincode_serialized).is_ok());
     }
 
+    #[test]
+    fn test_borrowed_bytes() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct BorrowedBytes<'a> {
+            bytes: &'a [u8],
+        }
+
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 0..=100))| {
+            let val = BorrowedBytes { bytes: &bytes };
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: BorrowedBytes = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: BorrowedBytes = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&val, &bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
     proptest! {
         #![proptest_config(proptest_cfg())]
 
