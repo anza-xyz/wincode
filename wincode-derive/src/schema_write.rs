@@ -1,6 +1,7 @@
 use {
     crate::common::{
-        get_crate_name, get_src_dst, suppress_unused_fields, Field, SchemaArgs, Variant,
+        ensure_not_repr_packed, get_crate_name, get_src_dst, suppress_unused_fields, Field,
+        SchemaArgs, Variant,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -134,6 +135,7 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStre
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
+    ensure_not_repr_packed(&input, "SchemaWrite")?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let ident = &args.ident;

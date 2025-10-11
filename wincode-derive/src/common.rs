@@ -1,12 +1,15 @@
 use {
     darling::{
         ast::{Data, Fields},
-        FromDeriveInput, FromField, FromVariant,
+        Error, FromDeriveInput, FromField, FromVariant, Result,
     },
     proc_macro2::TokenStream,
     quote::quote,
     std::borrow::Cow,
-    syn::{parse_quote, spanned::Spanned, Generics, Ident, Member, Path, Type, Visibility},
+    syn::{
+        parse_quote, punctuated::Punctuated, spanned::Spanned, DeriveInput, Generics, Ident,
+        Member, Meta, Path, Token, Type, Visibility,
+    },
 };
 
 #[derive(FromField)]
@@ -211,4 +214,33 @@ pub(crate) struct SchemaArgs {
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
+}
+
+/// Reject deriving on `#[repr(packed)]` types, as this is UB.
+pub(crate) fn ensure_not_repr_packed(input: &DeriveInput, trait_name: &str) -> Result<()> {
+    for attr in &input.attrs {
+        if !attr.path().is_ident("repr") {
+            continue;
+        }
+
+        // Parse #[repr(C, packed)] and #[repr(packed(2))] etc.
+        let Ok(items) = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        else {
+            continue;
+        };
+
+        let has_packed = items.iter().any(|m| match m {
+            Meta::Path(p) => p.is_ident("packed"), // #[repr(packed)]
+            Meta::List(list) => list.path.is_ident("packed"), // #[repr(packed(2))]
+            _ => false,
+        });
+
+        if has_packed {
+            return Err(Error::custom(format!(
+                "`{trait_name}` cannot be derived for types annotated with `#[repr(packed)]`",
+            ))
+            .with_span(attr));
+        }
+    }
+    Ok(())
 }

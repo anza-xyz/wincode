@@ -1,7 +1,7 @@
 use {
     crate::common::{
-        get_crate_name, get_src_dst, get_src_dst_fully_qualified, suppress_unused_fields, Field,
-        SchemaArgs, Variant,
+        ensure_not_repr_packed, get_crate_name, get_src_dst, get_src_dst_fully_qualified,
+        suppress_unused_fields, Field, SchemaArgs, Variant,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -380,6 +380,7 @@ fn append_de_lifetime(generics: &Generics) -> Generics {
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
+    ensure_not_repr_packed(&input, "SchemaRead")?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let appended_generics = append_de_lifetime(&args.generics);
     let (impl_generics, _, _) = appended_generics.split_for_impl();
