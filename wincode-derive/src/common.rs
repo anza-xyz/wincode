@@ -1,14 +1,13 @@
 use {
     darling::{
         ast::{Data, Fields},
-        Error, FromDeriveInput, FromField, FromVariant, Result,
+        FromDeriveInput, FromField, FromVariant, Result,
     },
     proc_macro2::TokenStream,
     quote::quote,
     std::borrow::Cow,
     syn::{
-        parse_quote, punctuated::Punctuated, spanned::Spanned, DeriveInput, Generics, Ident,
-        Member, Meta, Path, Token, Type, Visibility,
+        parse_quote, spanned::Spanned, DeriveInput, Generics, Ident, Member, Path, Type, Visibility,
     },
 };
 
