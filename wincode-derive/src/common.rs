@@ -223,24 +223,19 @@ pub(crate) fn ensure_not_repr_packed(input: &DeriveInput, trait_name: &str) -> R
             continue;
         }
 
-        // Parse #[repr(C, packed)] and #[repr(packed(2))] etc.
-        let Ok(items) = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-        else {
-            continue;
-        };
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("packed") {
+                return Err(meta.error(format!(
+                    "`{trait_name}` cannot be derived for types annotated with \
+                     `#[repr(packed)]` or `#[repr(packed(n))]`"
+                )));
+            }
 
-        let has_packed = items.iter().any(|m| match m {
-            Meta::Path(p) => p.is_ident("packed"), // #[repr(packed)]
-            Meta::List(list) => list.path.is_ident("packed"), // #[repr(packed(2))]
-            _ => false,
-        });
+            // Don't leave unparsed input behind
+            let _ = meta.input.parse::<TokenStream>();
 
-        if has_packed {
-            return Err(Error::custom(format!(
-                "`{trait_name}` cannot be derived for types annotated with `#[repr(packed)]`",
-            ))
-            .with_span(attr));
-        }
+            Ok(())
+        })?;
     }
     Ok(())
 }
