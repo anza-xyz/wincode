@@ -923,5 +923,3 @@ where
         <containers::BinaryHeap<Elem<T>, BincodeLen>>::read(reader, dst)
     }
 }
-
-crate::impl_tuple_schema!(16);

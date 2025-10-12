@@ -1,40 +1,17 @@
 use {
     core::str,
-    proc_macro::TokenStream,
-    proc_macro2::Span,
+    proc_macro2::{Ident, Literal, Span},
     quote::quote,
-    syn::{
-        parse::{Parse, ParseStream},
-        parse_macro_input, Error, Ident, Index, LitInt, Result,
-    },
+    std::io::{Result, Write},
 };
 
-/// The maximum tuple arity to generate implementations for.
-///
-/// ```ignore
-/// impl_tuple_schema!(16) -> (A,..=P)
-/// ```
-struct TupleArity(usize);
-
-impl Parse for TupleArity {
-    fn parse(input: ParseStream) -> Result<Self> {
-        if input.is_empty() {
-            return Err(Error::new(
-                input.span(),
-                "must specify a maximum tuple arity",
-            ));
-        }
-        let lit: LitInt = input.parse()?;
-        Ok(TupleArity(lit.base10_parse()?))
-    }
-}
-
-pub fn generate(input: TokenStream) -> TokenStream {
-    let TupleArity(arity) = parse_macro_input!(input as TupleArity);
+/// Generate `SchemaWrite` and `SchemaRead` implementations for tuples up to the given arity.
+#[allow(clippy::arithmetic_side_effects)]
+pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
     // Avoid single item tuples and avoid running out of alphabet.
-    assert!(arity > 2 && arity <= 26, "arity must be > 2 and <= 26");
+    assert!(arity > 1 && arity <= 26, "arity must be > 1 and <= 26");
 
-    let impls = (2..=arity).map(|arity| {
+    for arity in 2..=arity {
         let mut alpha = ('A'..='Z').cycle();
         let params: Vec<_> = (0..arity)
             .map(|_| {
@@ -43,7 +20,7 @@ pub fn generate(input: TokenStream) -> TokenStream {
                 Ident::new(str, Span::call_site())
             })
             .collect();
-        let idxs: Vec<_> = (0..arity).map(Index::from).collect();
+        let idxs: Vec<_> = (0..arity).map(Literal::usize_unsuffixed).collect();
 
         // The generic tuple (A, B, C, ...)
         let params_tuple = quote! { ( #(#params),* ) };
@@ -52,14 +29,14 @@ pub fn generate(input: TokenStream) -> TokenStream {
             let parts = params
                 .iter()
                 .zip(&idxs)
-                .map(|(ident, i)| quote!( <#ident as SchemaWrite>::size_of(&value.#i)? ));
-            quote!(0usize #(+#parts)*)
+                .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::size_of(&value.#i)? ));
+            quote!(#(#parts)+*)
         };
 
         let write_impl = params
             .iter()
             .zip(&idxs)
-            .map(|(ident, i)| quote!( <#ident as SchemaWrite>::write(writer, &value.#i)?; ));
+            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::write(writer, &value.#i)?; ));
 
         let read_impl = params
             .iter()
@@ -72,7 +49,7 @@ pub fn generate(input: TokenStream) -> TokenStream {
                     quote! { *init_count += 1; }
                 };
                 quote! {
-                    <#ident as SchemaRead>::read(
+                    <#ident as crate::SchemaRead>::read(
                         reader,
                         unsafe { &mut *(&raw mut (*dst_ptr).#index).cast() }
                     )?;
@@ -87,15 +64,15 @@ pub fn generate(input: TokenStream) -> TokenStream {
             }
             // Generate code to drop already initialized fields in reverse order.
             let drops = idxs[..init_count].iter().rev().map(|i| {
-                quote! { unsafe { ptr::drop_in_place(&mut (*dst_ptr).#i); } }
+                quote! { unsafe { core::ptr::drop_in_place(&raw mut (*dst_ptr).#i); } }
             });
 
             let cnt = init_count as u8;
             quote!(#cnt => { #(#drops)* })
         });
 
-        quote! {
-            impl<#(#params),*> SchemaWrite for #params_tuple
+        let stream = quote! {
+            impl<#(#params),*> crate::SchemaWrite for #params_tuple
             where
                 #(#params: crate::SchemaWrite,)*
                 #(#params::Src: Sized,)*
@@ -103,29 +80,31 @@ pub fn generate(input: TokenStream) -> TokenStream {
                 type Src = (#(#params::Src),*);
 
                 #[inline]
-                fn size_of(value: &Self::Src) -> WriteResult<usize> {
+                #[allow(clippy::arithmetic_side_effects)]
+                fn size_of(value: &Self::Src) -> crate::WriteResult<usize> {
                     Ok(#size_impl)
                 }
 
                 #[inline]
-                fn write(writer: &mut Writer, value: &Self::Src) -> WriteResult<()>
+                fn write(writer: &mut crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
                 {
                     #(#write_impl)*
                     Ok(())
                 }
             }
 
-            impl<'de, #(#params),*> SchemaRead<'de> for #params_tuple
+            impl<'de, #(#params),*> crate::SchemaRead<'de> for #params_tuple
             where
-                #(#params: SchemaRead<'de>,)*
+                #(#params: crate::SchemaRead<'de>,)*
             {
                 type Dst = (#(#params::Dst),*);
 
                 #[inline]
+                #[allow(clippy::arithmetic_side_effects, clippy::type_complexity)]
                 fn read(
-                    reader: &mut Reader<'de>,
-                    dst: &mut MaybeUninit<Self::Dst>
-                ) -> ReadResult<()>
+                    reader: &mut crate::io::Reader<'de>,
+                    dst: &mut core::mem::MaybeUninit<Self::Dst>
+                ) -> crate::ReadResult<()>
                 {
                     let dst_ptr = dst.as_mut_ptr();
                     struct DropGuard<#(#params),*> {
@@ -150,19 +129,14 @@ pub fn generate(input: TokenStream) -> TokenStream {
 
                     #(#read_impl)*
 
-                    mem::forget(guard);
+                    core::mem::forget(guard);
                     Ok(())
                 }
             }
-        }
-    });
-
-    quote! {
-        const _: () = {
-            use crate::{SchemaRead, SchemaWrite, WriteResult, ReadResult, io::{Reader, Writer}};
-            use core::{mem::{self, MaybeUninit}, ptr};
-            #(#impls)*
         };
+
+        write!(out, "{stream}")?;
     }
-    .into()
+
+    Ok(())
 }

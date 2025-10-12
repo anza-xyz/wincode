@@ -271,3 +271,5 @@ mod proptest_config;
 mod util;
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
+// Include tuple impls.
+include!(concat!(env!("OUT_DIR"), "/tuples.rs"));

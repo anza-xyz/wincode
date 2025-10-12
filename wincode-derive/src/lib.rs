@@ -11,7 +11,6 @@ use {
 mod common;
 mod schema_read;
 mod schema_write;
-mod tuple;
 
 /// Implement `SchemaWrite` for a struct or enum.
 #[proc_macro_derive(SchemaWrite, attributes(wincode))]
@@ -31,13 +30,4 @@ pub fn derive_schema_read(input: TokenStream) -> TokenStream {
         Ok(tokens) => tokens.into(),
         Err(e) => e.write_errors().into(),
     }
-}
-
-/// Implement `SchemaRead` and `SchemaWrite` for all tuples up to the given arity.
-///
-/// (For internal use only.)
-#[doc(hidden)]
-#[proc_macro]
-pub fn impl_tuple_schema(input: TokenStream) -> TokenStream {
-    tuple::generate(input)
 }

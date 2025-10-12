@@ -34,3 +34,7 @@ proptest-derive = "0.6.0"
 rand = { version = "0.8.5" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.0.0" }
+
+[build-dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
