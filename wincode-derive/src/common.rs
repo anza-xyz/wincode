@@ -230,7 +230,7 @@ pub(crate) fn ensure_not_repr_packed(input: &DeriveInput, trait_name: &str) -> R
                 )));
             }
 
-            // Don't leave unparsed input behind
+            // Parse left over input for `align(n)`
             let _ = meta.input.parse::<TokenStream>();
 
             Ok(())
