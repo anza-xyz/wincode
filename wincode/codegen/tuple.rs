@@ -49,7 +49,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     quote! { *init_count += 1; }
                 };
                 quote! {
-                    <#ident as crate::SchemaRead>::read(
+                    <#ident as crate::SchemaRead<'de>>::read(
                         reader,
                         unsafe { &mut *(&raw mut (*dst_ptr).#index).cast() }
                     )?;
