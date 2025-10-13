@@ -17,3 +17,7 @@ repository = "https://github.com/anza-xyz/wincode"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2021"
+
+[workspace.dependencies]
+quote = "1.0.41"
+proc-macro2 = "1.0.101"

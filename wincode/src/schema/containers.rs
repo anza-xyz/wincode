@@ -1,22 +1,27 @@
-//! This module provides specialized "container" types that can be used to opt
-//! into optimized read/write implementations or specialized length encodings.
+//! This module provides specialized implementations of standard library collection types that
+//! provide control over how elements are traversed and initialized (see [`Pod`] and [`Elem`]),
+//! as well control over the length encoding (see [`SeqLen`](crate::len::SeqLen)).
 //!
 //! # Examples
-//! Raw byte vec with default bincode length encoding:
+//! Pod-newtype vec with default bincode length encoding:
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
 //! # use wincode_derive::SchemaWrite;
 //! # use wincode::{containers::{self, Pod}};
 //! # use serde::Serialize;
+//! #[repr(transparent)]
+//! #[derive(Serialize, Clone, Copy)]
+//! struct Address([u8; 32]);
+//!
 //! #[derive(Serialize, SchemaWrite)]
 //! struct MyStruct {
 //!     #[wincode(with = "containers::Vec<Pod<_>>")]
-//!     vec: Vec<u8>,
+//!     vec: Vec<Address>,
 //! }
 //!
 //! let my_struct = MyStruct {
-//!     vec: vec![1, 2, 3],
+//!     vec: vec![Address([0; 32]), Address([1; 32])],
 //! };
 //! let wincode_bytes = wincode::serialize(&my_struct).unwrap();
 //! let bincode_bytes = bincode::serialize(&my_struct).unwrap();
@@ -151,13 +156,81 @@ pub struct Arc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 /// Prefer [`Pod`] for types representable as raw bytes.
 pub struct Elem<T>(PhantomData<T>);
 
-/// Indicates that the type is represented by raw bytes, composable with sequence [`containers`](self)
-/// or compound types (structs, tuples) for an optimized read/write implementation.
+/// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
+///
+/// By opting into `Pod`, you are telling wincode that it can serialize and deserialize a type
+/// with a single memcpy -- it wont pay attention to things like struct layout, endianness, or anything
+/// else that would require validity or bit pattern checks. This is a very strong claim to make,
+/// so be sure that your type adheres to those requirements.
+///
+/// Composable with sequence [`containers`](self) or compound types (structs, tuples) for
+/// an optimized read/write implementation.
 ///
 /// Use [`Elem`] with [`containers`](self) that aren't comprised of POD.
 ///
 /// This can be useful outside of sequences as well, for example on newtype structs
-/// containing byte arrays / vectors with `#[repr(transparent)]`.
+/// containing byte arrays with `#[repr(transparent)]`.
+///
+/// # Safety
+///
+/// - The type must allow any bit pattern (e.g., no `bool`s, no `char`s, etc.)
+/// - If used on a compound type like a struct or tuple, all fields must be also be `Pod` and its
+///   layout must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`).
+/// - Must not contain references or pointers (includes types like `Vec` or `Box`).
+///     - Note, you may use `Pod` *inside* types like `Vec` or `Box`, e.g., `Vec<Pod<T>>` or `Box<[Pod<T>]>`,
+///       but specifying `Pod` on the outer type is invalid.
+///
+/// # Notes on composing with collections
+///
+/// It is perfectly valid to specify `Pod` within the definition of struct newtypes:
+/// ```
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// use wincode::{containers::Pod, SchemaWrite, SchemaRead};
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// #[repr(transparent)]
+/// struct Address(#[wincode(with = "Pod<_>")] [u8; 32]);
+/// # }
+/// ```
+///
+/// And you may be tempted to use it like the following and assume you're getting an optimized read/write implementation:
+/// ```
+/// # #[cfg(feature = "derive")] {
+/// use wincode::{containers::Pod, SchemaWrite, SchemaRead};
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// #[repr(transparent)]
+/// struct Address(#[wincode(with = "Pod<_>")] [u8; 32]);
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct MyStruct {
+///     addresses: Vec<Address>,
+/// }
+/// # }
+/// ```
+///
+/// But this is not quite what you want. While individual reads of `Address` will be optimized, reads of `Vec<Address>`
+/// will still visit `Address`es individually. This is because the blanket implementation of alloc `Vec` cannot inspect the
+/// "PODness" of its inner type (unless that type is strictly `u8`), and must assume it should visit element-wise. The
+/// rule of thumb is that when you want optimized implementations when using collection types, you should explicitly opt
+/// into the [`container`](self) version and explicitly annotate with `Pod` (unless the inner type is strictly `u8` --
+/// blanket implementations _will_ detect this).
+///
+/// ```
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// use wincode::{containers::{self, Pod}, SchemaWrite, SchemaRead};
+///
+/// #[derive(Clone, Copy)]
+/// #[repr(transparent)]
+/// struct Address([u8; 32]);
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct MyStruct {
+///     #[wincode(with = "containers::Vec<Pod<_>>")]
+///     addresses: Vec<Address>,
+/// }
+/// # }
+/// ```
 ///
 /// # Examples
 ///

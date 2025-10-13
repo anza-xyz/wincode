@@ -468,11 +468,13 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bincode",
+ "proc-macro2",
  "proptest",
  "proptest-derive",
+ "quote",
  "rand 0.8.5",
  "serde",
  "solana-short-vec",
