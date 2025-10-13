@@ -198,6 +198,28 @@
 //!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
 //!
+//! # Zero copy deserialization
+//!
+//! `wincode` supports zero copy deserialization of contiguous byte slices
+//! (serialized with `Vec<u8>`, `Box<[u8]>`, `[u8; N]`, etc.).
+//!
+//! ```
+//! # #[cfg(feature = "derive")] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! struct ByteRef<'a> {
+//!     bytes: &'a [u8],
+//! }
+//!
+//! let bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
+//! let byte_ref = ByteRef { bytes: &bytes };
+//! let serialized = wincode::serialize(&byte_ref).unwrap();
+//! let deserialized = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(byte_ref, deserialized);
+//! # }  
+//! ```
 //! # Derive attributes
 //!
 //! ## Top level
@@ -219,6 +241,7 @@
 //! these lint errors with visibility modifiers (e.g., `pub`).
 //!
 //! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
+//!
 //!
 //! ### `struct_extensions`
 //!
