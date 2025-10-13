@@ -20,7 +20,7 @@
 //! #
 //! #[derive(SchemaWrite, SchemaRead)]
 //! struct MyStruct {
-//!     data: Vec<u64>,
+//!     data: Vec<u8>,
 //!     win: bool,
 //! }
 //!
@@ -29,8 +29,8 @@
 //! # }
 //! ```
 //!
-//! For POD‑like fields (bytes, arrays of bytes, POD newtypes), use [`containers`]
-//! to leverage optimized read/write implementations.
+//! For "plain old data" (see [`Pod`](containers::Pod)) fields (POD newtypes, arrays of POD newtypes, etc),
+//! use [`containers`] to leverage optimized read/write implementations.
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
@@ -38,81 +38,148 @@
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use serde::{Serialize, Deserialize};
 //! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
+//! #[repr(transparent)]
+//! #[derive(Clone, Copy)]
+//! struct Address([u8; 32]);
+//!
+//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
+//! #[repr(transparent)]
+//! #[derive(Clone, Copy)]
+//! struct Hash([u8; 32]);
+//!
+//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
 //! #[derive(SchemaWrite, SchemaRead)]
 //! struct MyStruct {
+//!     #[wincode(with = "Pod<_>")]
+//!     hash: Hash,
 //!     #[wincode(with = "containers::Vec<Pod<_>>")]
-//!     data: Vec<u8>,
-//!     #[wincode(with = "containers::Vec<Pod<_>>")]
-//!     addresses: Vec<[u8; 32]>,
+//!     addresses: Vec<Address>,
 //! }
 //!
-//! let val = MyStruct { data: vec![1,2,3], addresses: vec![[0; 32], [1; 32]] };
+//! let val = MyStruct {
+//!     hash: Hash([0; 32]),
+//!     addresses: vec![Address([0; 32]), Address([1; 32])]
+//! };
 //! assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap());
 //! # }
 //! ```
 //!
 //! # Motivation
 //!
-//! Safe Rust offers limited support for placement initialization, especially for heap
-//! memory. The effect of this is a lot of unnecessary copying, which is unacceptable in
-//! performance‑critical code.
-//! `serde` inherits these limitations since it neither attempts to initialize in‑place
-//! nor exposes APIs to do so. `wincode` addresses this by providing schemas that support direct,
-//! in‑place reads and writes for common patterns like byte buffers and POD types.
+//! Typical Rust API design employs a *construct-then-move* style of programming.
+//! Common APIs like `Vec::push`, iterator adaptors, `Box::new` (and its `Rc`/`Arc`
+//! variants), and even returning a fully-initialized struct from a function all
+//! follow this pattern. While this style feels intuitive and ergonomic, it
+//! inherently entails copying unless the compiler can perform elision -- which,
+//! today, it generally cannot. To see why this is a consequence of the design,
+//! consider the following code:
+//! ```
+//! # struct MyStruct;
+//! # impl MyStruct {
+//! #     fn new() -> Self {
+//! #         MyStruct
+//! #     }
+//! # }
+//! Box::new(MyStruct::new());
+//! ```
+//! `MyStruct` must be constructed *before* it can be moved into `Box`'s allocation.
+//! This is a classic code ordering problem: to avoid the copy, `Box::new` needs
+//! to execute code before `MyStruct::new()` runs. `Vec::push`, iterator collection,
+//! and similar APIs have this same problem.
+//! (See these [design meeting notes](https://hackmd.io/XXuVXH46T8StJB_y0urnYg) or
+//! or the
+//! [`placement-by-return` RFC](https://github.com/PoignardAzur/rust-rfcs/blob/placement-by-return/text/0000-placement-by-return.md)
+//! for a more in-depth discussion on this topic.) The result of this is that even
+//! performance conscious developers routinely introduce avoidable copying without
+//! realizing it. `serde` inherits these issues since it neither attempts to
+//! initialize in‑place nor exposes APIs to do so.
+//!
+//! These patterns are not inherent limitations of Rust, but are consequences of
+//! conventions and APIs that do not consider in-place initialization as part of
+//! their design. The tools for in-place construction *do* exist (see
+//! [`MaybeUninit`](core::mem::MaybeUninit) and raw pointer APIs), but they are
+//! rarely surfaced in libraries and can be cumbersome to use (see [`addr_of_mut!`](core::ptr::addr_of_mut)),
+//! so programmers are often not even aware of them or avoid them.
+//!
+//! `wincode` makes in-place initialization a first class design goal, and fundamentally
+//! operates on [traits](#traits) that facilitate direct writes of memory.
 //!
 //! # Adapting foreign types
 //!
-//! Another motivating feature of `wincode` is the ability to implement serialization/deserialization
+//! `wincode` can also be used to implement serialization/deserialization
 //! on foreign types, where serialization/deserialization schemes on those types are unoptimized (and
-//! out of your control as a foreign type). For example, suppose the following struct,
+//! out of your control as a foreign type). For example, consider the following struct,
 //! defined outside of your crate:
 //! ```
 //! use serde::{Serialize, Deserialize};
 //!
+//! # #[derive(PartialEq, Eq, Debug)]
+//! #[repr(transparent)]
+//! #[derive(Clone, Copy, Serialize, Deserialize)]
+//! struct Address([u8; 32]);
+//!
+//! # #[derive(PartialEq, Eq, Debug)]
+//! #[repr(transparent)]
+//! #[derive(Clone, Copy, Serialize, Deserialize)]
+//! struct Hash([u8; 32]);
+//!
 //! #[derive(Serialize, Deserialize)]
 //! pub struct A {
-//!     pub data: Vec<u8>,
-//!     pub address: [u8; 32],
+//!     pub addresses: Vec<Address>,
+//!     pub hash: Hash,
 //! }
 //! ```
 //!
 //! `serde`'s default, naive, implementation will perform per-element visitation of all bytes
-//! in `Vec<u8>` and `[u8; 32]`. Because these fields are "plain old data", ideally we would
+//! in `Vec<Address>` and `Hash`. Because these fields are "plain old data", ideally we would
 //! avoid per-element visitation entirely and read / write these fields in a single pass.
 //! The situation worsens if this struct needs to be written into a heap allocated data structure,
-//! like a `Vec<A>` or `Box<[A]>`. Due to lack of placement initialization of heap memory, all
-//! those bytes will be put on the stack before being copied into the heap allocation.
+//! like a `Vec<A>` or `Box<[A]>`. As discussed in [motivation](#motivation), all
+//! those bytes will be initialized on the stack before being copied into the heap allocation.
 //!
 //! `wincode` can solve this with the following:
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
 //! # use wincode::{Serialize as _, Deserialize as _, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
-//! # use serde::{Serialize, Deserialize};
-//! # #[derive(Debug, PartialEq, Eq)]
-//! // Defined in some foreign crate...
-//! #[derive(Serialize, Deserialize)]
-//! pub struct A {
-//!     pub data: Vec<u8>,
-//!     pub address: [u8; 32],
+//! mod foreign_crate {
+//!     // Defined in some foreign crate...
+//!     use serde::{Serialize, Deserialize};
+//!
+//!     # #[derive(PartialEq, Eq, Debug)]
+//!     #[repr(transparent)]
+//!     #[derive(Clone, Copy, Serialize, Deserialize)]
+//!     pub struct Address(pub [u8; 32]);
+//!
+//!     # #[derive(PartialEq, Eq, Debug)]
+//!     #[repr(transparent)]
+//!     #[derive(Clone, Copy, Serialize, Deserialize)]
+//!     pub struct Hash(pub [u8; 32]);
+//!
+//!     # #[derive(PartialEq, Eq, Debug)]
+//!     #[derive(Serialize, Deserialize)]
+//!     pub struct A {
+//!         pub addresses: Vec<Address>,
+//!         pub hash: Hash,
+//!     }
 //! }
 //!
 //! #[derive(SchemaWrite, SchemaRead)]
-//! #[wincode(from = "A")]
+//! #[wincode(from = "foreign_crate::A")]
 //! pub struct MyA {
-//!     data: containers::Vec<Pod<u8>>,
-//!     address: Pod<[u8; 32]>,
+//!     addresses: Vec<Pod<foreign_crate::Address>>,
+//!     hash: Pod<foreign_crate::Hash>,
 //! }
 //!
-//! let val = A {
-//!     data: vec![1, 2, 3],
-//!     address: [0; 32],
+//! let val = foreign_crate::A {
+//!     addresses: vec![foreign_crate::Address([0; 32]), foreign_crate::Address([1; 32])],
+//!     hash: foreign_crate::Hash([0; 32]),
 //! };
 //! let bincode_serialize = bincode::serialize(&val).unwrap();
 //! let wincode_serialize = MyA::serialize(&val).unwrap();
 //! assert_eq!(bincode_serialize, wincode_serialize);
 //!
-//! let bincode_deserialize: A = bincode::deserialize(&bincode_serialize).unwrap();
+//! let bincode_deserialize: foreign_crate::A = bincode::deserialize(&bincode_serialize).unwrap();
 //! let wincode_deserialize = MyA::deserialize(&bincode_serialize).unwrap();
 //! assert_eq!(val, bincode_deserialize);
 //! assert_eq!(val, wincode_deserialize);
@@ -121,12 +188,8 @@
 //!
 //! Now, when deserializing `A`:
 //! - All initialization is done in-place, including heap-allocated memory
-//!   (true of all supported heap-allocated structures in `wincode`).
-//! - Byte fields are written in a single pass by leveraging the
-//!   [`Pod`](containers::Pod) in the [`containers`] module.
-//! - No intermediate staging buffers: bytes are copied directly into the final
-//!   destination allocation during deserialization and written directly into the
-//!   output buffer during serialization.
+//!   (true of all supported contiguous heap-allocated structures in `wincode`).
+//! - Byte fields are read and written in a single pass.
 //!
 //! # Compatibility
 //!
