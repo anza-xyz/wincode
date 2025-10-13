@@ -195,7 +195,7 @@ pub struct Elem<T>(PhantomData<T>);
 ///
 /// And you may be tempted to use it like the following and assume you're getting an optimized read/write implementation:
 /// ```
-/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// # #[cfg(feature = "derive")] {
 /// use wincode::{containers::Pod, SchemaWrite, SchemaRead};
 ///
 /// #[derive(SchemaWrite, SchemaRead)]
@@ -220,7 +220,7 @@ pub struct Elem<T>(PhantomData<T>);
 /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
 /// use wincode::{containers::{self, Pod}, SchemaWrite, SchemaRead};
 ///
-/// #[derive(SchemaWrite, SchemaRead, Clone, Copy)]
+/// #[derive(Clone, Copy)]
 /// #[repr(transparent)]
 /// struct Address([u8; 32]);
 ///
