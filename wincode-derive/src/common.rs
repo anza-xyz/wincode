@@ -225,8 +225,8 @@ pub(crate) fn ensure_not_repr_packed(input: &DeriveInput, trait_name: &str) -> R
         attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("packed") {
                 return Err(meta.error(format!(
-                    "`{trait_name}` cannot be derived for types annotated with \
-                     `#[repr(packed)]` or `#[repr(packed(n))]`"
+                    "`{trait_name}` cannot be derived for types annotated with `#[repr(packed)]` \
+                     or `#[repr(packed(n))]`"
                 )));
             }
 
