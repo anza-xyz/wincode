@@ -12,7 +12,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
     assert!(arity > 1 && arity <= 26, "arity must be > 1 and <= 26");
 
     for arity in 2..=arity {
-        let mut alpha = ('A'..='Z').cycle();
+        let mut alpha = 'A'..='Z';
         let params: Vec<_> = (0..arity)
             .map(|_| {
                 let char_byte = [alpha.next().unwrap() as u8];
@@ -36,7 +36,8 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         let write_impl = params
             .iter()
             .zip(&idxs)
-            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::write(writer, &value.#i)?; ));
+            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::write(writer, &value.#i)?; ))
+            .collect::<Vec<_>>();
 
         let read_impl = params
             .iter()
@@ -55,7 +56,40 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     )?;
                     #init_count
                 }
-            });
+            })
+            .collect::<Vec<_>>();
+
+        let write_static_size = params.iter().map(|ident| {
+            quote! { <#ident as crate::SchemaWrite>::TYPE_META }
+        });
+        let read_static_size = params.iter().map(|ident| {
+            quote! { <#ident as crate::SchemaRead<'de>>::TYPE_META }
+        });
+
+        let mut alpha = 'a'..='z';
+        let static_idents = (0..arity)
+            .map(|_| {
+                let char_byte = [alpha.next().unwrap() as u8];
+                let str = unsafe { str::from_utf8_unchecked(&char_byte) };
+                Ident::new(str, Span::call_site())
+            })
+            .collect::<Vec<_>>();
+
+        // Tuples don't have guaranteed layout, so we never mark them as zero-copy.
+        let static_size_impl_write = quote! {
+            if let (#(TypeMeta::Static { size: #static_idents, .. }),*) = (#(#write_static_size),*) {
+                TypeMeta::Static { size: #(#static_idents)+*, zero_copy: false }
+            } else {
+                TypeMeta::Dynamic
+            }
+        };
+        let static_size_impl_read = quote! {
+            if let (#(TypeMeta::Static { size: #static_idents, .. }),*) = (#(#read_static_size),*) {
+                TypeMeta::Static { size: #(#static_idents)+*, zero_copy: false }
+            } else {
+                TypeMeta::Dynamic
+            }
+        };
 
         let drop_arms = (0..arity).map(|init_count| {
             if init_count == 0 {
@@ -79,16 +113,29 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
             {
                 type Src = (#(#params::Src),*);
 
+                const TYPE_META: TypeMeta = #static_size_impl_write;
+
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects)]
                 fn size_of(value: &Self::Src) -> crate::WriteResult<usize> {
-                    Ok(#size_impl)
+                    if let TypeMeta::Static { size, .. } = <Self as crate::SchemaWrite>::TYPE_META {
+                        Ok(size)
+                    } else {
+                        Ok(#size_impl)
+                    }
                 }
 
                 #[inline]
                 fn write(writer: &mut impl crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
                 {
-                    #(#write_impl)*
+                    use crate::io::Writer;
+                    if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+                        let writer = &mut writer.as_trusted_for(size)?;
+                        #(#write_impl)*
+                        writer.finish()?;
+                    } else {
+                        #(#write_impl)*
+                    }
                     Ok(())
                 }
             }
@@ -98,6 +145,8 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 #(#params: crate::SchemaRead<'de>,)*
             {
                 type Dst = (#(#params::Dst),*);
+
+                const TYPE_META: TypeMeta = #static_size_impl_read;
 
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects, clippy::type_complexity)]
@@ -127,7 +176,12 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     let mut guard = DropGuard { init_count: 0, dst_ptr };
                     let init_count = &mut guard.init_count;
 
-                    #(#read_impl)*
+                    if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+                        let reader = &mut reader.as_trusted_for(size)?;
+                        #(#read_impl)*
+                    } else {
+                        #(#read_impl)*
+                    }
 
                     core::mem::forget(guard);
                     Ok(())
