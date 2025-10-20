@@ -1,7 +1,7 @@
 //! Error types and helpers.
 use {crate::io, core::str::Utf8Error, thiserror::Error};
 
-#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
     WriteError(#[from] WriteError),
@@ -9,7 +9,7 @@ pub enum Error {
     ReadError(#[from] ReadError),
 }
 
-#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Error, Debug)]
 pub enum WriteError {
     #[error(transparent)]
     Io(#[from] io::WriteError),
@@ -19,7 +19,7 @@ pub enum WriteError {
     LengthEncodingOverflow(&'static str),
 }
 
-#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Error, Debug)]
 pub enum ReadError {
     #[error(transparent)]
     Io(#[from] io::ReadError),

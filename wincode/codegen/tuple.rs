@@ -86,7 +86,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 }
 
                 #[inline]
-                fn write(writer: &mut crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
+                fn write(writer: &mut impl crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
                 {
                     #(#write_impl)*
                     Ok(())
@@ -102,7 +102,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects, clippy::type_complexity)]
                 fn read(
-                    reader: &mut crate::io::Reader<'de>,
+                    reader: &mut impl crate::io::Reader<'de>,
                     dst: &mut core::mem::MaybeUninit<Self::Dst>
                 ) -> crate::ReadResult<()>
                 {
