@@ -445,11 +445,19 @@ where
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
         let base = dst.as_mut_ptr();
         let mut guard = SliceDropGuard::<T::Dst>::new(base);
-        // Avoid slice reborrow of `dst` (triggered by `dst.iter_mut()`)
-        for i in 0..N {
-            let slot = unsafe { &mut *base.add(i) };
-            T::read(reader, slot)?;
-            guard.inc_len();
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            let reader = &mut reader.as_trusted_for(size)?;
+            for i in 0..N {
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader, slot)?;
+                guard.inc_len();
+            }
+        } else {
+            for i in 0..N {
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader, slot)?;
+                guard.inc_len();
+            }
         }
         mem::forget(guard);
         Ok(())
@@ -476,8 +484,8 @@ where
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        if type_equal::<T::Src, u8>() {
-            return Ok(N);
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            return Ok(size);
         }
         // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
         value
@@ -490,6 +498,15 @@ where
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
         if type_equal::<T::Src, u8>() {
             unsafe { writer.write(transmute::<&[T::Src; N], &[u8; N]>(value))? };
+            return Ok(());
+        }
+
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            let writer = &mut writer.as_trusted_for(size)?;
+            for item in value {
+                T::write(writer, item)?;
+            }
+            writer.finish()?;
             return Ok(());
         }
         for item in value {
@@ -843,6 +860,9 @@ macro_rules! impl_seq {
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                    return Ok(<BincodeLen>::write_bytes_needed(src.len())? + (key_size + value_size) * src.len());
+                }
                 Ok(<BincodeLen>::write_bytes_needed(src.len())? +
                     src
                         .iter()
@@ -860,6 +880,19 @@ macro_rules! impl_seq {
 
             #[inline]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                    #[allow(clippy::arithmetic_side_effects)]
+                    let writer = &mut writer.as_trusted_for(
+                        <BincodeLen>::write_bytes_needed(src.len())? + (key_size + value_size) * src.len()
+                    )?;
+                    <BincodeLen>::write(writer, src.len())?;
+                    for (k, v) in src.iter() {
+                        $key::write(writer, k)?;
+                        $value::write(writer, v)?;
+                    }
+                    writer.finish()?;
+                    return Ok(());
+                }
                 <BincodeLen>::write(writer, src.len())?;
                 for (k, v) in src.iter() {
                     $key::write(writer, k)?;
@@ -881,13 +914,26 @@ macro_rules! impl_seq {
             #[inline]
             fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = <BincodeLen>::read::<($key::Dst, $value::Dst)>(reader)?;
-                let map = (0..len)
-                    .map(|_| {
-                        let k = $key::get(reader)?;
-                        let v = $value::get(reader)?;
-                        Ok::<_, crate::ReadError>((k, v))
-                    })
-                    .collect::<ReadResult<_>>()?;
+
+                let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                    #[allow(clippy::arithmetic_side_effects)]
+                    let reader = &mut reader.as_trusted_for((key_size + value_size) * len)?;
+                    (0..len)
+                        .map(|_| {
+                            let k = $key::get(reader)?;
+                            let v = $value::get(reader)?;
+                            Ok::<_, crate::ReadError>((k, v))
+                        })
+                        .collect::<ReadResult<_>>()?
+                } else {
+                    (0..len)
+                        .map(|_| {
+                            let k = $key::get(reader)?;
+                            let v = $value::get(reader)?;
+                            Ok::<_, crate::ReadError>((k, v))
+                        })
+                        .collect::<ReadResult<_>>()?
+                };
 
                 dst.write(map);
                 Ok(())
@@ -925,9 +971,21 @@ macro_rules! impl_seq {
             #[inline]
             fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = <BincodeLen>::read::<$key::Dst>(reader)?;
-                let map = (0..len)
-                    .map(|_| $key::get(reader))
-                    .collect::<ReadResult<_>>()?;
+
+                let map = match $key::TYPE_META {
+                    TypeMeta::Static { size, .. } => {
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let reader = &mut reader.as_trusted_for(size * len)?;
+                        (0..len)
+                            .map(|_| $key::get(reader))
+                            .collect::<ReadResult<_>>()?
+                    }
+                    TypeMeta::Dynamic => {
+                        (0..len)
+                            .map(|_| $key::get(reader))
+                            .collect::<ReadResult<_>>()?
+                    }
+                };
 
                 dst.write(map);
                 Ok(())
