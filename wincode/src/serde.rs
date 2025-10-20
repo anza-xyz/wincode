@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use {
     crate::{
         error::{ReadResult, WriteResult},
-        io::{Reader, Writer},
+        io::{Reader, SliceReader, SliceWriter, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
     core::mem::MaybeUninit,
@@ -39,18 +39,21 @@ use {
 pub trait Deserialize<'de>: SchemaRead<'de> {
     /// Deserialize `bytes` into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(bytes: &'de [u8]) -> ReadResult<Self::Dst> {
+    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
         let mut dst = MaybeUninit::uninit();
-        Self::deserialize_into(bytes, &mut dst)?;
+        let src = SliceReader::new(src);
+        Self::deserialize_into(src, &mut dst)?;
         // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
         Ok(unsafe { dst.assume_init() })
     }
 
     /// Deserialize `bytes` into `target`.
     #[inline]
-    fn deserialize_into(bytes: &'de [u8], target: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let mut cursor = Reader::new(bytes);
-        Self::read(&mut cursor, target)?;
+    fn deserialize_into(
+        mut src: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        Self::read(&mut src, dst)?;
         Ok(())
     }
 }
@@ -89,7 +92,8 @@ pub trait Serialize: SchemaWrite {
     #[cfg(feature = "alloc")]
     fn serialize(src: &Self::Src) -> WriteResult<Vec<u8>> {
         let mut buffer = Vec::with_capacity(Self::size_of(src)?);
-        let len = Self::serialize_into(src, buffer.spare_capacity_mut())?;
+        let writer = SliceWriter::new(buffer.spare_capacity_mut());
+        let len = Self::serialize_into(src, writer)?;
         unsafe {
             buffer.set_len(len);
         }
@@ -100,10 +104,9 @@ pub trait Serialize: SchemaWrite {
     ///
     /// Returns the number of bytes written to the buffer.
     #[inline]
-    fn serialize_into(src: &Self::Src, target: &mut [MaybeUninit<u8>]) -> WriteResult<usize> {
-        let mut writer = Writer::new(target);
-        Self::write(&mut writer, src)?;
-        Ok(writer.finish())
+    fn serialize_into(src: &Self::Src, mut dst: impl Writer) -> WriteResult<usize> {
+        Self::write(&mut dst, src)?;
+        Ok(dst.finish())
     }
 
     /// Get the size in bytes of the type when serialized.
@@ -137,22 +140,22 @@ impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize<'de, T>(bytes: &'de [u8]) -> ReadResult<T>
+pub fn deserialize<'de, T>(src: &'de [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, Dst = T>,
 {
-    T::deserialize(bytes)
+    T::deserialize(src)
 }
 
 /// Deserialize a type from the given bytes into the given target.
 ///
-/// Like [`deserialize`], but allows the caller to provide their own target.
+/// Like [`deserialize`], but allows the caller to provide their own reader and target.
 #[inline]
-pub fn deserialize_into<'de, T>(bytes: &'de [u8], target: &mut MaybeUninit<T>) -> ReadResult<()>
+pub fn deserialize_into<'de, T>(src: impl Reader<'de>, dst: &mut MaybeUninit<T>) -> ReadResult<()>
 where
     T: SchemaRead<'de, Dst = T>,
 {
-    T::deserialize_into(bytes, target)
+    T::deserialize_into(src, dst)
 }
 
 /// Serialize a type into a `Vec` of bytes.
@@ -174,29 +177,29 @@ where
 /// ```
 #[inline(always)]
 #[cfg(feature = "alloc")]
-pub fn serialize<T>(value: &T) -> WriteResult<Vec<u8>>
+pub fn serialize<T>(src: &T) -> WriteResult<Vec<u8>>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialize(value)
+    T::serialize(src)
 }
 
-/// Serialize a type into the given byte buffer.
+/// Serialize a type into the given writer.
 ///
-/// Like [`serialize`], but allows the caller to provide their own buffer.
+/// Like [`serialize`], but allows the caller to provide their own writer.
 #[inline]
-pub fn serialize_into<T>(value: &T, target: &mut [MaybeUninit<u8>]) -> WriteResult<usize>
+pub fn serialize_into<T>(src: &T, dst: impl Writer) -> WriteResult<usize>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialize_into(value, target)
+    T::serialize_into(src, dst)
 }
 
 /// Get the size in bytes of the type when serialized.
 #[inline(always)]
-pub fn serialized_size<T>(value: &T) -> WriteResult<u64>
+pub fn serialized_size<T>(src: &T) -> WriteResult<u64>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialized_size(value)
+    T::serialized_size(src)
 }
