@@ -5,6 +5,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, SliceReader, SliceWriter, Writer},
         schema::{SchemaRead, SchemaWrite},
+        TypeMeta,
     },
     core::mem::MaybeUninit,
 };
@@ -53,7 +54,14 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
         mut src: impl Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> ReadResult<()> {
-        Self::read(&mut src, dst)?;
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+            }
+            _ => {
+                Self::read(&mut src, dst)?;
+            }
+        }
         Ok(())
     }
 }
@@ -105,8 +113,16 @@ pub trait Serialize: SchemaWrite {
     /// Returns the number of bytes written to the buffer.
     #[inline]
     fn serialize_into(src: &Self::Src, mut dst: impl Writer) -> WriteResult<usize> {
-        Self::write(&mut dst, src)?;
-        Ok(dst.finish())
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                Self::write(&mut dst.as_trusted_for(size)?, src)?;
+                Ok(dst.finish())
+            }
+            _ => {
+                Self::write(&mut dst, src)?;
+                Ok(dst.finish())
+            }
+        }
     }
 
     /// Get the size in bytes of the type when serialized.
