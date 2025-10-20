@@ -350,13 +350,31 @@ where
         let len = Len::read::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
         let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-        for i in 0..len {
-            T::read(reader, unsafe { &mut *ptr })?;
-            unsafe {
-                ptr = ptr.add(1);
+
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => {
                 #[allow(clippy::arithmetic_side_effects)]
-                // i <= len
-                vec.set_len(i + 1);
+                let mut reader = reader.as_trusted_for(size * len)?;
+                for i in 0..len {
+                    T::read(&mut reader, unsafe { &mut *ptr })?;
+                    unsafe {
+                        ptr = ptr.add(1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        // i <= len
+                        vec.set_len(i + 1);
+                    }
+                }
+            }
+            _ => {
+                for i in 0..len {
+                    T::read(reader, unsafe { &mut *ptr })?;
+                    unsafe {
+                        ptr = ptr.add(1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        // i <= len
+                        vec.set_len(i + 1);
+                    }
+                }
             }
         }
 
@@ -587,10 +605,23 @@ macro_rules! impl_heap_slice {
                 let raw_base = unsafe { (*fat).as_mut_ptr() };
                 let mut guard: DropGuard<T::Dst> = DropGuard::new(fat, raw_base);
 
-                for i in 0..len {
-                    let slot = unsafe { &mut *raw_base.add(i) };
-                    T::read(reader, slot)?;
-                    guard.inner.inc_len();
+                match T::TYPE_META {
+                    TypeMeta::Static { size, .. } => {
+                        #[allow(clippy::arithmetic_side_effects)]
+                        let reader = &mut reader.as_trusted_for(size * len)?;
+                        for i in 0..len {
+                            let slot = unsafe { &mut *raw_base.add(i) };
+                            T::read(reader, slot)?;
+                            guard.inner.inc_len();
+                        }
+                    }
+                    _ => {
+                        for i in 0..len {
+                            let slot = unsafe { &mut *raw_base.add(i) };
+                            T::read(reader, slot)?;
+                            guard.inner.inc_len();
+                        }
+                    }
                 }
 
                 mem::forget(guard);

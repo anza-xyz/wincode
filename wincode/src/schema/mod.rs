@@ -130,6 +130,9 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
+    if let TypeMeta::Static { size, .. } = T::TYPE_META {
+        return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
+    }
     // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
     Ok(Len::write_bytes_needed(value.len())?
         + (value
@@ -162,6 +165,18 @@ where
     Len: SeqLen,
     T: SchemaWrite + 'a,
 {
+    if let TypeMeta::Static { size, .. } = T::TYPE_META {
+        #[allow(clippy::arithmetic_side_effects)]
+        let mut writer =
+            writer.as_trusted_for(Len::write_bytes_needed(src.len())? + size * src.len())?;
+        Len::write(&mut writer, src.len())?;
+        for item in src {
+            T::write(&mut writer, item)?;
+        }
+        writer.finish()?;
+        return Ok(());
+    }
+
     Len::write(writer, src.len())?;
     for item in src {
         T::write(writer, item)?;
@@ -183,6 +198,7 @@ where
         let writer = &mut writer.as_trusted_for(Len::write_bytes_needed(src.len())? + src.len())?;
         Len::write(writer, src.len())?;
         writer.write(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
+        writer.finish()?;
         return Ok(());
     }
     write_elem_iter::<T, Len>(writer, src.iter())
@@ -744,6 +760,22 @@ mod tests {
             let schema_deserialized: BorrowedBytes = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_boxed_slice_pod_drop() {
+        #[derive(proptest_derive::Arbitrary, Debug, Clone, Copy)]
+        #[allow(dead_code)]
+        struct Signature([u8; 64]);
+
+        type Target = containers::Box<[Pod<Signature>]>;
+        proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<Signature>(), 1..=32).prop_map(|vec| vec.into_boxed_slice()))| {
+            let serialized = Target::serialize(&slice).unwrap();
+            // Deliberately trigger the drop with a failed deserialization
+            // This test is specifically to get miri to exercise the drop logic
+            let deserialized = Target::deserialize(&serialized[..serialized.len() - 32]);
+            prop_assert!(deserialized.is_err());
         });
     }
 

@@ -5,7 +5,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        SchemaReadOwned,
+        SchemaReadOwned, TypeMeta,
     },
     core::mem::MaybeUninit,
 };
@@ -47,9 +47,17 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
         Ok(unsafe { dst.assume_init() })
     }
 
-    /// Deserialize `bytes` into `dst`.
+    /// Deserialize `bytes` into `target`.
+    #[inline]
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        Self::read(&mut src, dst)?;
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+            }
+            _ => {
+                Self::read(&mut src, dst)?;
+            }
+        }
         Ok(())
     }
 }
@@ -73,7 +81,14 @@ pub trait DeserializeOwned: SchemaReadOwned {
         src: &mut impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
     ) -> ReadResult<()> {
-        Self::read(src, dst)?;
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+            }
+            _ => {
+                Self::read(src, dst)?;
+            }
+        }
         Ok(())
     }
 }
@@ -124,13 +139,20 @@ pub trait Serialize: SchemaWrite {
     }
 
     /// Serialize a serializable type into the given byte buffer.
-    ///
-    /// Returns the number of bytes written to the buffer.
     #[inline]
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        Self::write(dst, src)?;
-        dst.finish()?;
-        Ok(())
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                Self::write(&mut dst.as_trusted_for(size)?, src)?;
+                dst.finish()?;
+                Ok(())
+            }
+            _ => {
+                Self::write(dst, src)?;
+                dst.finish()?;
+                Ok(())
+            }
+        }
     }
 
     /// Get the size in bytes of the type when serialized.
