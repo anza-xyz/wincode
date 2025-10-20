@@ -1,7 +1,8 @@
 use {
     crate::common::{
-        ensure_not_repr_packed, get_crate_name, get_src_dst, get_src_dst_fully_qualified,
-        suppress_unused_fields, Field, SchemaArgs, Variant,
+        extract_repr, get_crate_name, get_src_dst, get_src_dst_fully_qualified,
+        suppress_unused_fields, Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt,
+        Variant,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -9,118 +10,56 @@ use {
     },
     proc_macro2::TokenStream,
     quote::{format_ident, quote},
-    syn::{
-        parse_quote,
-        spanned::Spanned,
-        visit_mut::{self, VisitMut},
-        DeriveInput, GenericArgument, GenericParam, Generics, Ident, Lifetime, Type, TypeImplTrait,
-        TypeParamBound, TypeReference, TypeTraitObject,
-    },
+    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
 };
 
-/// Ensure target reference types are tied to the `'de` lifetime.
-///
-/// This ensures that rather than generating:
-/// ```ignore
-/// <&'a str as SchemaRead>::read(reader, dst)
-/// ```
-///
-/// We generate:
-/// ```ignore
-/// <&'de str as SchemaRead>::read(reader, dst)
-/// ```
-///
-/// We ensure that `'de` extends to all type parameters via [`append_de_lifetime`].
-fn override_ref_lifetime(target: &Type) -> Type {
-    let mut target = target.clone();
-    ReplaceLifetimes.visit_type_mut(&mut target);
-    target
-}
-
-/// Visitor to recursively replace a given type's lifetimes with `'de`.
-struct ReplaceLifetimes;
-
-impl ReplaceLifetimes {
-    /// Replace the lifetime with `'de`, preserving the span.
-    fn replace(&self, t: &mut Lifetime) {
-        t.ident = Ident::new("de", t.ident.span());
-    }
-}
-
-impl VisitMut for ReplaceLifetimes {
-    fn visit_type_reference_mut(&mut self, t: &mut TypeReference) {
-        match &mut t.lifetime {
-            Some(l) => self.replace(l),
-            // Lifetime may be elided. Prefer being explicit, as the implicit lifetime
-            // may refer to a lifetime that is not `'de` (e.g., 'a on some type `Foo<'a>`).
-            None => t.lifetime = Some(Lifetime::new("'de", t.and_token.span())),
-        }
-        visit_mut::visit_type_reference_mut(self, t);
-    }
-
-    fn visit_generic_argument_mut(&mut self, ga: &mut GenericArgument) {
-        if let GenericArgument::Lifetime(l) = ga {
-            self.replace(l);
-        }
-        visit_mut::visit_generic_argument_mut(self, ga);
-    }
-
-    fn visit_type_trait_object_mut(&mut self, t: &mut TypeTraitObject) {
-        for bd in &mut t.bounds {
-            if let TypeParamBound::Lifetime(l) = bd {
-                self.replace(l);
-            }
-        }
-        visit_mut::visit_type_trait_object_mut(self, t);
-    }
-
-    fn visit_type_impl_trait_mut(&mut self, t: &mut TypeImplTrait) {
-        for bd in &mut t.bounds {
-            if let TypeParamBound::Lifetime(l) = bd {
-                self.replace(l);
-            }
-        }
-        visit_mut::visit_type_impl_trait_mut(self, t);
-    }
-}
-
-fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
+fn impl_struct(
+    args: &SchemaArgs,
+    fields: &Fields<Field>,
+    repr: &StructRepr,
+) -> (TokenStream, TokenStream) {
     if fields.is_empty() {
-        return quote! {};
+        return (quote! {}, quote! {TypeMeta::Dynamic});
     }
 
     let num_fields = fields.len();
-    let read_impl = fields.iter().enumerate().map(|(i, field)| {
-        let ident = field.struct_member_ident(i);
-        let target = override_ref_lifetime(field.target());
-        let hint = if field.with.is_some() {
-            // Fields annotated with `with` may need help determining the pointer cast.
-            //
-            // This allows correct inference in `with` attributes, for example:
-            // ```
-            // struct Foo {
-            //     #[wincode(with = "Pod<_>")]
-            //     x: [u8; u64],
-            // }
-            // ```
-            let ty = override_ref_lifetime(&field.ty);
-            quote! { MaybeUninit<#ty> }
-        } else {
-            quote! { MaybeUninit<_> }
-        };
-        let init_count = if i == num_fields - 1 {
-            quote! {}
-        } else {
-            quote! { *init_count += 1; }
-        };
-        quote! {
-            <#target as SchemaRead<'de>>::read(
-                reader,
-                unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
-            )?;
-            #init_count
-        }
-    });
+    let read_impl = fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let ident = field.struct_member_ident(i);
+            let target = field.target_resolved().with_lifetime("de");
+            let hint = if field.with.is_some() {
+                // Fields annotated with `with` may need help determining the pointer cast.
+                //
+                // This allows correct inference in `with` attributes, for example:
+                // ```
+                // struct Foo {
+                //     #[wincode(with = "Pod<_>")]
+                //     x: [u8; u64],
+                // }
+                // ```
+                let ty = field.ty.with_lifetime("de");
+                quote! { MaybeUninit<#ty> }
+            } else {
+                quote! { MaybeUninit<_> }
+            };
+            let init_count = if i == num_fields - 1 {
+                quote! {}
+            } else {
+                quote! { *init_count += 1; }
+            };
+            quote! {
+                <#target as SchemaRead<'de>>::read(
+                    reader,
+                    unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
+                )?;
+                #init_count
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr);
 
     let drop_guard = (0..fields.len()).map(|i| {
         // Generate code to drop already initialized fields in reverse order.
@@ -150,34 +89,47 @@ fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
 
     let dst = get_src_dst_fully_qualified(args);
     let (impl_generics, ty_generics, _) = args.generics.split_for_impl();
-    quote! {
-        let dst_ptr = dst.as_mut_ptr();
-        struct DropGuard #impl_generics {
-            init_count: u8,
-            dst_ptr: *mut #dst,
-        }
-        let mut guard = DropGuard {
-            init_count: 0,
-            dst_ptr,
-        };
-        let init_count = &mut guard.init_count;
+    (
+        quote! {
+            let dst_ptr = dst.as_mut_ptr();
+            struct DropGuard #impl_generics {
+                init_count: u8,
+                dst_ptr: *mut #dst,
+            }
+            let mut guard = DropGuard {
+                init_count: 0,
+                dst_ptr,
+            };
+            let init_count = &mut guard.init_count;
 
-        impl #impl_generics Drop for DropGuard #ty_generics {
-            #[cold]
-            fn drop(&mut self) {
-                let dst_ptr = self.dst_ptr;
-                let init_count = self.init_count;
-                match init_count {
-                    #(#drop_guard)*
-                    // Impossible, given the `init_count` is bounded by the number of fields.
-                    _ => { debug_assert!(false, "init_count out of bounds"); },
+            impl #impl_generics Drop for DropGuard #ty_generics {
+                #[cold]
+                fn drop(&mut self) {
+                    let dst_ptr = self.dst_ptr;
+                    let init_count = self.init_count;
+                    match init_count {
+                        #(#drop_guard)*
+                        // Impossible, given the `init_count` is bounded by the number of fields.
+                        _ => { debug_assert!(false, "init_count out of bounds"); },
+                    }
                 }
             }
-        }
 
-        #(#read_impl)*
-        mem::forget(guard);
-    }
+            match <Self as SchemaRead<'de>>::TYPE_META {
+                TypeMeta::Static { size, .. } => {
+                    let reader = &mut reader.as_trusted_for(size)?;
+                    #(#read_impl)*
+                }
+                _ => {
+                    #(#read_impl)*
+                }
+            }
+            mem::forget(guard);
+        },
+        quote! {
+            #type_meta_impl
+        },
+    )
 }
 
 /// Include placement initialization helpers for structs.
@@ -242,8 +194,8 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
     let (_, ty_generics, where_clause) = args.generics.split_for_impl();
 
     let helpers = fields.iter().enumerate().map(|(i, field)| {
-        let ty = override_ref_lifetime(&field.ty);
-        let target = override_ref_lifetime(field.target());
+        let ty = field.ty.with_lifetime("de");
+        let target = field.target_resolved().with_lifetime("de");
         let ident = field.struct_member_ident(i);
         let ident_string = field.struct_member_ident_to_string(i);
         let uninit_mut_ident = format_ident!("uninit_{}_mut", ident_string);
@@ -283,9 +235,16 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
     ))
 }
 
-fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> TokenStream {
+fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStream) {
     if variants.is_empty() {
-        return quote! {Ok(())};
+        return (quote! {Ok(())}, quote! {TypeMeta::Dynamic});
+    }
+
+    // Note that all enums except unit enums are never static.
+    let mut type_meta_impl = quote!(TypeMeta::Dynamic);
+    if variants.iter().all(|variant| variant.fields.is_unit()) {
+        // If all variants are unit, we know up front that the static size is the size of the discriminant.
+        type_meta_impl = quote!(<u32 as SchemaRead<'de>>::TYPE_META);
     }
 
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
@@ -295,22 +254,32 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> TokenStream {
 
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
-                let idents = Field::enum_member_ident_iter(fields);
-                let read = fields.iter().zip(idents.clone()).map(|(field, ident)| {
-                    let target = override_ref_lifetime(field.target());
+                // No prefix disambiguation needed, as we are matching on a discriminant integer.
+                let idents = fields.enum_member_ident_iter(None).collect::<Vec<_>>();
+                let read = fields
+                    .iter()
+                    .zip(&idents)
+                    .map(|(field, ident)| {
+                        let target = field.target_resolved().with_lifetime("de");
 
-                    // Unfortunately we can't avoid temporaries for arbitrary enums, as Rust does not provide
-                    // facilities for placement initialization on enums.
-                    //
-                    // In the future, we may be able to support an attribute that allows users to opt into
-                    // a macro-generated shadowed enum that wraps all variant fields with `MaybeUninit`, which
-                    // could be used to facilitate direct reads. The user would have to guarantee layout on
-                    // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
-                    quote! {
-                        let mut #ident = MaybeUninit::uninit();
-                        <#target as SchemaRead<'de>>::read(reader, &mut #ident)?;
-                        let #ident = unsafe { #ident.assume_init() };
-                    }
+                        // Unfortunately we can't avoid temporaries for arbitrary enums, as Rust does not provide
+                        // facilities for placement initialization on enums.
+                        //
+                        // In the future, we may be able to support an attribute that allows users to opt into
+                        // a macro-generated shadowed enum that wraps all variant fields with `MaybeUninit`, which
+                        // could be used to facilitate direct reads. The user would have to guarantee layout on
+                        // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
+                        quote! {
+                            let #ident = <#target as SchemaRead<'de>>::get(reader)?;
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                // No prefix disambiguation needed, as we are matching on a discriminant integer.
+                let static_anon_idents = fields.member_anon_ident_iter(None).collect::<Vec<_>>();
+                let static_targets = fields.iter().map(|field| {
+                    let target = field.target_resolved().with_lifetime("de");
+                    quote! {<#target as SchemaRead<'de>>::TYPE_META}
                 });
 
                 let constructor = if style.is_struct() {
@@ -325,8 +294,14 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> TokenStream {
 
                 quote! {
                     #discriminant => {
-                        #(#read)*
-                        dst.write(#constructor);
+                        if let (#(TypeMeta::Static { size: #static_anon_idents, .. }),*) = (#(#static_targets),*) {
+                            let reader = &mut reader.as_trusted_for(#(#static_anon_idents)+*)?;
+                            #(#read)*
+                            dst.write(#constructor);
+                        } else {
+                            #(#read)*
+                            dst.write(#constructor);
+                        }
                     }
                 }
             }
@@ -339,13 +314,18 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> TokenStream {
         }
     });
 
-    quote! {
-        let discriminant = u32::get(reader)?;
-        match discriminant {
-            #(#read_impl)*
-            _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
-        }
-    }
+    (
+        quote! {
+            let discriminant = u32::get(reader)?;
+            match discriminant {
+                #(#read_impl)*
+                _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
+            }
+        },
+        quote! {
+            #type_meta_impl
+        },
+    )
 }
 
 /// Extend the `'de` lifetime to all lifetime parameters in the generics.
@@ -380,7 +360,7 @@ fn append_de_lifetime(generics: &Generics) -> Generics {
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
-    ensure_not_repr_packed(&input, "SchemaRead")?;
+    let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let appended_generics = append_de_lifetime(&args.generics);
     let (impl_generics, _, _) = appended_generics.split_for_impl();
@@ -391,8 +371,12 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let field_suppress = suppress_unused_fields(&args);
     let struct_extensions = impl_struct_extensions(&args)?;
 
-    let read_impl = match &args.data {
-        Data::Struct(fields) => impl_struct(&args, fields),
+    let (read_impl, type_meta_impl) = match &args.data {
+        Data::Struct(fields) => {
+            // Only structs are eligible being marked zero-copy, so only the struct
+            // impl needs the repr.
+            impl_struct(&args, fields, &repr)
+        }
         Data::Enum(v) => {
             let enum_ident = match &args.from {
                 Some(from) => from,
@@ -404,10 +388,14 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use core::{ptr, mem::{self, MaybeUninit}, hint::unreachable_unchecked};
-            use #crate_name::{SchemaRead, ReadResult, io::Reader, error};
-            impl #impl_generics #crate_name::SchemaRead<'de> for #ident #ty_generics #where_clause {
+            use core::{ptr, mem::{self, MaybeUninit}};
+            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error};
+
+            impl #impl_generics SchemaRead<'de> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;
+
+                #[allow(clippy::arithmetic_side_effects)]
+                const TYPE_META: TypeMeta = #type_meta_impl;
 
                 #[inline]
                 fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
