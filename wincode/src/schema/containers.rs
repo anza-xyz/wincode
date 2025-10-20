@@ -87,6 +87,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
+        TypeMeta,
     },
     core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };
@@ -267,6 +268,11 @@ where
 {
     type Src = T;
 
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<T>(),
+        zero_copy: true,
+    };
+
     #[inline]
     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
         Ok(size_of::<T>())
@@ -284,6 +290,11 @@ where
     T: Copy + 'static,
 {
     type Dst = T;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<T>(),
+        zero_copy: true,
+    };
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.

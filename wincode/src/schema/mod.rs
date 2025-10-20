@@ -53,9 +53,41 @@ use {
 pub mod containers;
 mod impls;
 
+/// Indicates what kind of assumptions can be made when encoding or decoding a type.
+///
+/// Readers and writers may use this to optimize their behavior.
+pub enum TypeMeta {
+    /// The type has a statically known serialized size.
+    ///
+    /// Specifying this variant can have significant performance benefits, as it can allow
+    /// writers to prefetch larger chunks of memory such that subsequent read/write operations
+    /// in those chunks can be performed at once without intermediate bounds checks.
+    ///
+    /// Specifying this variant incorrectly will almost certainly result in a panic at runtime.
+    ///
+    /// Take care not to specify this on variable length types, like `Vec` or `String`, as their
+    /// serialized size will vary based on their length.
+    Static {
+        /// The static serialized size of the type.
+        size: usize,
+        /// Whether the type is eligible for zero-copy encoding/decoding.
+        ///
+        /// This indicates that the type has no invalid bit patterns, no layout requirements, no endianness
+        /// checks, etc. This is a very strong claim that should be used judiciously.
+        ///
+        /// Specifying this incorrectly may trigger UB.
+        zero_copy: bool,
+    },
+    /// The type has a dynamic size, and no optimizations can be made.
+    Dynamic,
+}
+
 /// Types that can be written (serialized) to a [`Writer`].
 pub trait SchemaWrite {
     type Src: ?Sized;
+
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
     /// Get the serialized size of `Self::Src`.
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
     /// Write `Self::Src` to `writer`.
@@ -65,6 +97,9 @@ pub trait SchemaWrite {
 /// Types that can be read (deserialized) from a [`Reader`].
 pub trait SchemaRead<'de> {
     type Dst;
+
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
     /// Read into `dst` from `reader`.
     ///
     /// # Safety
@@ -165,7 +200,8 @@ mod tests {
             io::{Reader, Writer},
             len::BincodeLen,
             proptest_config::proptest_cfg,
-            serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, WriteResult,
+            serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
+            WriteResult,
         },
         core::marker::PhantomData,
         proptest::prelude::*,
@@ -287,6 +323,12 @@ mod tests {
 
     impl SchemaWrite for DropCounted {
         type Src = Self;
+
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
+
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
@@ -298,6 +340,11 @@ mod tests {
 
     impl<'de> SchemaRead<'de> for DropCounted {
         type Dst = Self;
+
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
 
         fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
@@ -318,6 +365,11 @@ mod tests {
     impl SchemaWrite for ErrorsOnRead {
         type Src = Self;
 
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
+
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
@@ -329,6 +381,11 @@ mod tests {
 
     impl<'de> SchemaRead<'de> for ErrorsOnRead {
         type Dst = Self;
+
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
 
         fn read(
             reader: &mut impl Reader<'de>,
@@ -348,6 +405,11 @@ mod tests {
     impl SchemaWrite for DropCountedMaybeError {
         type Src = Self;
 
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
+
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => DropCounted::size_of(v),
@@ -365,6 +427,11 @@ mod tests {
 
     impl<'de> SchemaRead<'de> for DropCountedMaybeError {
         type Dst = Self;
+
+        const TYPE_META: TypeMeta = TypeMeta::Static {
+            size: 1,
+            zero_copy: false,
+        };
 
         fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = u8::get(reader)?;
