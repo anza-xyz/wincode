@@ -53,16 +53,16 @@ use {
 pub mod containers;
 mod impls;
 
-/// Types that can be written (serialized) to a byte buffer.
+/// Types that can be written (serialized) to a [`Writer`].
 pub trait SchemaWrite {
     type Src: ?Sized;
     /// Get the serialized size of `Self::Src`.
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
     /// Write `Self::Src` to `writer`.
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()>;
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
-/// Types that can be read (deserialized) from a byte buffer.
+/// Types that can be read (deserialized) from a [`Reader`].
 pub trait SchemaRead<'de> {
     type Dst;
     /// Read into `dst` from `reader`.
@@ -70,17 +70,21 @@ pub trait SchemaRead<'de> {
     /// # Safety
     ///
     /// - Implementation must properly initialize the `Self::Dst`.
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut Reader<'de>) -> ReadResult<Self::Dst> {
+    fn get(reader: &mut impl Reader<'de>) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
         Ok(unsafe { value.assume_init() })
     }
 }
+
+/// A type that can be read (deserialized) from a [`Reader`] without borrowing from it.
+pub trait SchemaReadOwned: for<'de> SchemaRead<'de> {}
+impl<T> SchemaReadOwned for T where T: for<'de> SchemaRead<'de> {}
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
@@ -116,7 +120,7 @@ where
 
 #[inline(always)]
 fn write_elem_iter<'a, T, Len>(
-    writer: &mut Writer,
+    writer: &mut impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -134,15 +138,16 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn write_elem_slice<T, Len>(writer: &mut Writer, src: &[T::Src]) -> WriteResult<()>
+fn write_elem_slice<T, Len>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
 where
     Len: SeqLen,
     T: SchemaWrite,
     T::Src: Sized,
 {
     if type_equal::<T::Src, u8>() {
+        let writer = &mut writer.as_trusted_for(Len::write_bytes_needed(src.len())? + src.len())?;
         Len::write(writer, src.len())?;
-        writer.write_exact(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
+        writer.write(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
         return Ok(());
     }
     write_elem_iter::<T, Len>(writer, src.iter())
@@ -285,16 +290,16 @@ mod tests {
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
-        fn write(writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
             u8::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
     }
 
-    impl SchemaRead<'_> for DropCounted {
+    impl<'de> SchemaRead<'de> for DropCounted {
         type Dst = Self;
 
-        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             // This will increment the counter.
             dst.write(DropCounted::new());
@@ -317,15 +322,18 @@ mod tests {
             Ok(1)
         }
 
-        fn write(writer: &mut Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
             u8::write(writer, &Self::TAG_BYTE)
         }
     }
 
-    impl SchemaRead<'_> for ErrorsOnRead {
+    impl<'de> SchemaRead<'de> for ErrorsOnRead {
         type Dst = Self;
 
-        fn read(reader: &mut Reader, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(
+            reader: &mut impl Reader<'de>,
+            _dst: &mut MaybeUninit<Self::Dst>,
+        ) -> ReadResult<()> {
             reader.consume(1)?;
             Err(error::ReadError::PointerSizedReadError)
         }
@@ -347,7 +355,7 @@ mod tests {
             }
         }
 
-        fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => DropCounted::write(writer, v),
                 DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::write(writer, v),
@@ -355,9 +363,10 @@ mod tests {
         }
     }
 
-    impl SchemaRead<'_> for DropCountedMaybeError {
+    impl<'de> SchemaRead<'de> for DropCountedMaybeError {
         type Dst = Self;
-        fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+
+        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = u8::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {

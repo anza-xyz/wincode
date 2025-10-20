@@ -273,21 +273,21 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(writer.write_t(src)?) }
     }
 }
 
-impl<T> SchemaRead<'_> for Pod<T>
+impl<'de, T> SchemaRead<'de> for Pod<T>
 where
     T: Copy + 'static,
 {
     type Dst = T;
 
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(reader.read_t(dst)?) }
+        unsafe { Ok(reader.copy_into_t(dst)?) }
     }
 }
 
@@ -306,7 +306,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, Len>(writer, src)
     }
 }
@@ -329,7 +329,7 @@ where
     /// # Safety
     ///
     /// - `T::read` must properly initialize elements.
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         if type_equal::<T::Dst, u8>() {
             return <Vec<Pod<u8>, Len>>::read(reader, unsafe {
                 transmute::<&mut MaybeUninit<vec::Vec<T::Dst>>, &mut MaybeUninit<vec::Vec<u8>>>(dst)
@@ -370,7 +370,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         Len::write(writer, src.len())?;
         // SAFETY: Caller ensures `src` is plain ol' data.
         unsafe { Ok(writer.write_slice_t(src.as_slice())?) }
@@ -378,7 +378,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead<'_> for Vec<Pod<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for Vec<Pod<T>, Len>
 where
     Len: SeqLen,
     T: Copy + 'static,
@@ -394,11 +394,11 @@ where
     /// # Safety
     ///
     /// - `T` must be plain ol' data, valid for writes of `size_of::<T>()` bytes.
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read::<T>(reader)?;
         let mut vec = vec::Vec::with_capacity(len);
         let spare_capacity = vec.spare_capacity_mut();
-        unsafe { reader.read_slice_t(spare_capacity)? };
+        unsafe { reader.copy_into_slice_t(spare_capacity)? };
         // SAFETY: Caller ensures `T` is plain ol' data and can be initialized by raw byte reads.
         unsafe { vec.set_len(len) }
         dst.write(vec);
@@ -456,7 +456,7 @@ macro_rules! impl_heap_slice {
             }
 
             #[inline]
-            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
                 Len::write(writer, src.len())?;
                 // SAFETY: Caller ensures `T` is plain ol' data.
                 unsafe { Ok(writer.write_slice_t(&src[..])?) }
@@ -464,7 +464,7 @@ macro_rules! impl_heap_slice {
         }
 
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaRead<'_> for $container<[Pod<T>], Len>
+        impl<'de, T, Len> SchemaRead<'de> for $container<[Pod<T>], Len>
         where
             Len: SeqLen,
             T: Copy + 'static,
@@ -472,7 +472,10 @@ macro_rules! impl_heap_slice {
             type Dst = $target<[T]>;
 
             #[inline(always)]
-            fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(
+                reader: &mut impl Reader<'de>,
+                dst: &mut MaybeUninit<Self::Dst>,
+            ) -> ReadResult<()> {
                 struct DropGuard<T>(*mut [MaybeUninit<T>]);
                 impl<T> Drop for DropGuard<T> {
                     fn drop(&mut self) {
@@ -486,7 +489,7 @@ macro_rules! impl_heap_slice {
                 let guard = DropGuard(ptr);
 
                 unsafe {
-                    reader.read_slice_t(&mut *ptr)?;
+                    reader.copy_into_slice_t(&mut *ptr)?;
                 }
 
                 mem::forget(guard);
@@ -512,7 +515,7 @@ macro_rules! impl_heap_slice {
             }
 
             #[inline(always)]
-            fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
                 write_elem_slice::<T, Len>(writer, src)
             }
         }
@@ -526,7 +529,10 @@ macro_rules! impl_heap_slice {
             type Dst = $target<[T::Dst]>;
 
             #[inline(always)]
-            fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(
+                reader: &mut impl Reader<'de>,
+                dst: &mut MaybeUninit<Self::Dst>,
+            ) -> ReadResult<()> {
                 if type_equal::<T::Dst, u8>() {
                     return <$container<[Pod<u8>], Len>>::read(reader, unsafe {
                         transmute::<
@@ -605,7 +611,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         Len::write(writer, src.len())?;
         let (front, back) = src.as_slices();
         unsafe {
@@ -620,7 +626,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead<'_> for VecDeque<Pod<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for VecDeque<Pod<T>, Len>
 where
     Len: SeqLen,
     T: Copy + 'static,
@@ -628,7 +634,7 @@ where
     type Dst = collections::VecDeque<T>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
         let vec = <Vec<Pod<T>, Len>>::get(reader)?;
@@ -657,7 +663,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         if type_equal::<T::Src, u8>() {
             return <VecDeque<Pod<u8>, Len>>::write(writer, unsafe {
                 transmute::<&collections::VecDeque<T::Src>, &collections::VecDeque<u8>>(src)
@@ -676,7 +682,7 @@ where
     type Dst = collections::VecDeque<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
         let vec = <Vec<Elem<T>, Len>>::get(reader)?;
@@ -705,7 +711,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, Len>(writer, src.as_slice())
     }
 }
@@ -720,7 +726,7 @@ where
     type Dst = collections::BinaryHeap<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let vec = <Vec<Elem<T>, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));
@@ -744,7 +750,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         Len::write(writer, src.len())?;
         // SAFETY: Caller ensures `T` is plain ol' data.
         unsafe { writer.write_slice_t(src.as_slice())? }
@@ -753,7 +759,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaRead<'_> for BinaryHeap<Pod<T>, Len>
+impl<'de, T, Len> SchemaRead<'de> for BinaryHeap<Pod<T>, Len>
 where
     Len: SeqLen,
     T: Ord + Copy + 'static,
@@ -761,7 +767,7 @@ where
     type Dst = collections::BinaryHeap<T>;
 
     #[inline(always)]
-    fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let vec = <Vec<Pod<T>, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));

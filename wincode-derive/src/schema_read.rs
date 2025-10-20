@@ -206,10 +206,10 @@ fn impl_struct(args: &SchemaArgs, fields: &Fields<Field>) -> TokenStream {
 ///     body: Body,
 /// }
 ///
-/// impl SchemaRead<'_> for Message {
+/// impl<'de> SchemaRead<'de> for Message {
 ///     type Dst = Message;
 ///
-///     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> Result<()> {
+///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         // Some more complicated logic not capturable by the macro...
 ///         let mut body = MaybeUninit::<Body>::uninit();
 ///         // Project a mutable MaybeUninit<Header> from the MaybeUninit<Body>.
@@ -265,7 +265,7 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
             }
 
             #[inline(always)]
-            #vis fn #read_field_ident(reader: &mut Reader<'de>, dst: &mut MaybeUninit<#dst>) -> ReadResult<()> {
+            #vis fn #read_field_ident(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<#dst>) -> ReadResult<()> {
                 <#target as SchemaRead<'de>>::read(reader, Self::#uninit_mut_ident(dst))
             }
 
@@ -410,7 +410,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 type Dst = #src_dst;
 
                 #[inline]
-                fn read(reader: &mut Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                     #read_impl
                     Ok(())
                 }

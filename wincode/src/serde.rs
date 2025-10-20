@@ -5,6 +5,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
+        SchemaReadOwned,
     },
     core::mem::MaybeUninit,
 };
@@ -39,23 +40,45 @@ use {
 pub trait Deserialize<'de>: SchemaRead<'de> {
     /// Deserialize `bytes` into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(bytes: &'de [u8]) -> ReadResult<Self::Dst> {
+    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
         let mut dst = MaybeUninit::uninit();
-        Self::deserialize_into(bytes, &mut dst)?;
+        Self::deserialize_into(src, &mut dst)?;
         // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
         Ok(unsafe { dst.assume_init() })
     }
 
-    /// Deserialize `bytes` into `target`.
-    #[inline]
-    fn deserialize_into(bytes: &'de [u8], target: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let mut cursor = Reader::new(bytes);
-        Self::read(&mut cursor, target)?;
+    /// Deserialize `bytes` into `dst`.
+    fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        Self::read(&mut src, dst)?;
         Ok(())
     }
 }
 
 impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de> {}
+
+/// A variant of [`Deserialize`] for types that can be deserialized without borrowing from the reader.
+pub trait DeserializeOwned: SchemaReadOwned {
+    /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
+    #[inline(always)]
+    fn deserialize_from<'de>(
+        src: &mut impl Reader<'de>,
+    ) -> ReadResult<<Self as SchemaRead<'de>>::Dst> {
+        let mut dst = MaybeUninit::uninit();
+        Self::deserialize_from_into(src, &mut dst)?;
+        Ok(unsafe { dst.assume_init() })
+    }
+
+    /// Deserialize from the given [`Reader`] into `dst`.
+    fn deserialize_from_into<'de>(
+        src: &mut impl Reader<'de>,
+        dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
+    ) -> ReadResult<()> {
+        Self::read(src, dst)?;
+        Ok(())
+    }
+}
+
+impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
 
 /// Helper over [`SchemaWrite`] that automatically constructs a writer
 /// and serializes a source.
@@ -88,10 +111,14 @@ pub trait Serialize: SchemaWrite {
     /// Serialize a serializable type into a `Vec` of bytes.
     #[cfg(feature = "alloc")]
     fn serialize(src: &Self::Src) -> WriteResult<Vec<u8>> {
-        let mut buffer = Vec::with_capacity(Self::size_of(src)?);
-        let len = Self::serialize_into(src, buffer.spare_capacity_mut())?;
+        let capacity = Self::size_of(src)?;
+        let mut buffer = Vec::with_capacity(capacity);
+        let mut writer = buffer.spare_capacity_mut();
+        Self::serialize_into(&mut writer, src)?;
+        let len = writer.len();
         unsafe {
-            buffer.set_len(len);
+            #[allow(clippy::arithmetic_side_effects)]
+            buffer.set_len(capacity - len);
         }
         Ok(buffer)
     }
@@ -100,10 +127,10 @@ pub trait Serialize: SchemaWrite {
     ///
     /// Returns the number of bytes written to the buffer.
     #[inline]
-    fn serialize_into(src: &Self::Src, target: &mut [MaybeUninit<u8>]) -> WriteResult<usize> {
-        let mut writer = Writer::new(target);
-        Self::write(&mut writer, src)?;
-        Ok(writer.finish())
+    fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        Self::write(dst, src)?;
+        dst.finish()?;
+        Ok(())
     }
 
     /// Get the size in bytes of the type when serialized.
@@ -137,22 +164,26 @@ impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize<'de, T>(bytes: &'de [u8]) -> ReadResult<T>
+pub fn deserialize<'de, T>(src: &'de [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, Dst = T>,
 {
-    T::deserialize(bytes)
+    T::deserialize(src)
 }
 
 /// Deserialize a type from the given bytes into the given target.
 ///
-/// Like [`deserialize`], but allows the caller to provide their own target.
+/// Like [`deserialize`], but allows the caller to provide their own reader.
+///
+/// Because not all readers will support zero-copy deserialization, this function
+/// requires [`SchemaReadOwned`] instead of [`SchemaRead`]. If you are deserializing
+/// from raw bytes, always prefer [`deserialize`] for maximum flexibility.
 #[inline]
-pub fn deserialize_into<'de, T>(bytes: &'de [u8], target: &mut MaybeUninit<T>) -> ReadResult<()>
+pub fn deserialize_from<'de, T>(src: &mut impl Reader<'de>) -> ReadResult<T>
 where
-    T: SchemaRead<'de, Dst = T>,
+    T: SchemaReadOwned<Dst = T>,
 {
-    T::deserialize_into(bytes, target)
+    T::deserialize_from(src)
 }
 
 /// Serialize a type into a `Vec` of bytes.
@@ -174,29 +205,29 @@ where
 /// ```
 #[inline(always)]
 #[cfg(feature = "alloc")]
-pub fn serialize<T>(value: &T) -> WriteResult<Vec<u8>>
+pub fn serialize<T>(src: &T) -> WriteResult<Vec<u8>>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialize(value)
+    T::serialize(src)
 }
 
-/// Serialize a type into the given byte buffer.
+/// Serialize a type into the given writer.
 ///
-/// Like [`serialize`], but allows the caller to provide their own buffer.
+/// Like [`serialize`], but allows the caller to provide their own writer.
 #[inline]
-pub fn serialize_into<T>(value: &T, target: &mut [MaybeUninit<u8>]) -> WriteResult<usize>
+pub fn serialize_into<T>(dst: &mut impl Writer, src: &T) -> WriteResult<()>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialize_into(value, target)
+    T::serialize_into(dst, src)
 }
 
 /// Get the size in bytes of the type when serialized.
 #[inline(always)]
-pub fn serialized_size<T>(value: &T) -> WriteResult<u64>
+pub fn serialized_size<T>(src: &T) -> WriteResult<u64>
 where
     T: SchemaWrite<Src = T> + ?Sized,
 {
-    T::serialized_size(value)
+    T::serialized_size(src)
 }
