@@ -26,6 +26,7 @@ use {
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
         util::type_equal,
+        TypeMeta,
     },
     core::{
         marker::PhantomData,
@@ -50,9 +51,14 @@ use {
 };
 
 macro_rules! impl_int {
-    ($type:ty) => {
+    ($type:ty, zero_copy: $zero_copy:expr) => {
         impl SchemaWrite for $type {
             type Src = $type;
+
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: $zero_copy,
+            };
 
             #[inline(always)]
             fn size_of(_src: &Self::Src) -> WriteResult<usize> {
@@ -67,6 +73,11 @@ macro_rules! impl_int {
 
         impl<'de> SchemaRead<'de> for $type {
             type Dst = $type;
+
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: $zero_copy,
+            };
 
             #[inline(always)]
             fn read(
@@ -88,6 +99,11 @@ macro_rules! impl_int {
         impl SchemaWrite for $type {
             type Src = $type;
 
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: size_of::<$cast>(),
+                zero_copy: false,
+            };
+
             #[inline]
             fn size_of(_src: &Self::Src) -> WriteResult<usize> {
                 Ok(size_of::<$cast>())
@@ -104,6 +120,11 @@ macro_rules! impl_int {
 
         impl<'de> SchemaRead<'de> for $type {
             type Dst = $type;
+
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: size_of::<$cast>(),
+                zero_copy: false,
+            };
 
             #[inline]
             fn read(
@@ -123,21 +144,26 @@ macro_rules! impl_int {
     };
 }
 
-impl_int!(u8);
-impl_int!(i8);
-impl_int!(u16);
-impl_int!(i16);
-impl_int!(u32);
-impl_int!(i32);
-impl_int!(u64);
-impl_int!(i64);
-impl_int!(u128);
-impl_int!(i128);
+impl_int!(u8, zero_copy: true);
+impl_int!(i8, zero_copy: true);
+impl_int!(u16, zero_copy: false);
+impl_int!(i16, zero_copy: false);
+impl_int!(u32, zero_copy: false);
+impl_int!(i32, zero_copy: false);
+impl_int!(u64, zero_copy: false);
+impl_int!(i64, zero_copy: false);
+impl_int!(u128, zero_copy: false);
+impl_int!(i128, zero_copy: false);
 impl_int!(usize as u64);
 impl_int!(isize as i64);
 
 impl SchemaWrite for bool {
     type Src = bool;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<bool>(),
+        zero_copy: false,
+    };
 
     #[inline]
     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
@@ -152,6 +178,11 @@ impl SchemaWrite for bool {
 
 impl<'de> SchemaRead<'de> for bool {
     type Dst = bool;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<bool>(),
+        zero_copy: false,
+    };
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -226,6 +257,11 @@ impl<'de> SchemaRead<'de> for char {
 impl<T> SchemaWrite for PhantomData<T> {
     type Src = PhantomData<T>;
 
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 0,
+        zero_copy: true,
+    };
+
     #[inline]
     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
         Ok(0)
@@ -240,6 +276,11 @@ impl<T> SchemaWrite for PhantomData<T> {
 impl<'de, T> SchemaRead<'de> for PhantomData<T> {
     type Dst = PhantomData<T>;
 
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 0,
+        zero_copy: true,
+    };
+
     #[inline]
     fn read(_reader: &mut impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         Ok(())
@@ -248,6 +289,11 @@ impl<'de, T> SchemaRead<'de> for PhantomData<T> {
 
 impl SchemaWrite for () {
     type Src = ();
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 0,
+        zero_copy: true,
+    };
 
     #[inline]
     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
@@ -262,6 +308,11 @@ impl SchemaWrite for () {
 
 impl<'de> SchemaRead<'de> for () {
     type Dst = ();
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 0,
+        zero_copy: true,
+    };
 
     #[inline]
     fn read(_reader: &mut impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -368,6 +419,16 @@ where
 {
     type Dst = [T::Dst; N];
 
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+                size: N * size,
+                zero_copy,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         if type_equal::<T::Dst, u8>() {
@@ -401,6 +462,16 @@ where
     T::Src: Sized,
 {
     type Src = [T::Src; N];
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+                size: N * size,
+                zero_copy,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
 
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
@@ -493,6 +564,8 @@ where
 {
     type Src = &'a T::Src;
 
+    const TYPE_META: TypeMeta = T::TYPE_META;
+
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         T::size_of(*src)
@@ -513,6 +586,16 @@ macro_rules! impl_heap_container {
         {
             type Src = $container<T::Src>;
 
+            const TYPE_META: TypeMeta = const {
+                match T::TYPE_META {
+                    TypeMeta::Static { size, .. } => TypeMeta::Static {
+                        size,
+                        zero_copy: false,
+                    },
+                    TypeMeta::Dynamic => TypeMeta::Dynamic,
+                }
+            };
+
             #[inline]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
                 T::size_of(src)
@@ -530,6 +613,16 @@ macro_rules! impl_heap_container {
             T: SchemaRead<'de>,
         {
             type Dst = $container<T::Dst>;
+
+            const TYPE_META: TypeMeta = const {
+                match T::TYPE_META {
+                    TypeMeta::Static { size, .. } => TypeMeta::Static {
+                        size,
+                        zero_copy: false,
+                    },
+                    TypeMeta::Dynamic => TypeMeta::Dynamic,
+                }
+            };
 
             #[inline]
             fn read(
