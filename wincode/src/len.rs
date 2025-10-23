@@ -124,7 +124,7 @@ pub mod short_vec {
     impl SeqLen for ShortU16Len {
         #[inline(always)]
         fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
-            let Ok((len, read)) = decode_shortu16_len(reader.peek_buffered(3)) else {
+            let Ok((len, read)) = decode_shortu16_len(reader.buffer(3)?) else {
                 return Err(read_length_encoding_overflow("u16::MAX"));
             };
             reader.consume_unchecked(read);

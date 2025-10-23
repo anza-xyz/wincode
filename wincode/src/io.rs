@@ -1,6 +1,7 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
-    core::{mem::MaybeUninit, ptr},
+    core::{marker::PhantomData, mem::MaybeUninit, ops::Deref, ptr},
+    std::{fs::File, os::unix::fs::FileExt},
     thiserror::Error,
 };
 
@@ -8,6 +9,8 @@ use {
 pub enum ReadError {
     #[error("Attempting to read {0} bytes")]
     ReadSizeLimit(usize),
+    #[error("IO error")]
+    Io,
 }
 
 pub type ReadResult<T> = core::result::Result<T, ReadError>;
@@ -17,27 +20,320 @@ fn read_size_limit(len: usize) -> ReadError {
     ReadError::ReadSizeLimit(len)
 }
 
+#[allow(unused)]
+pub struct FileReaderTrusted<'a, 'b> {
+    file: &'a File,
+    offset: u64,
+    buffer: &'b mut Vec<u8>,
+}
+
+impl<'a, 'b> FileReaderTrusted<'a, 'b> {
+    pub fn new_from_offset(file: &'a File, offset: u64, buffer: &'b mut Vec<u8>) -> Self {
+        Self {
+            file,
+            offset,
+            buffer,
+        }
+    }
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn try_buffer(&mut self, n_bytes: usize) -> ReadResult<()> {
+        if self.buffer.len() < n_bytes {
+            let needed = n_bytes - self.buffer.len();
+            let base_len = self.buffer.len();
+            let start_offset = self.offset;
+
+            self.buffer.reserve(needed);
+
+            let mut filled = 0;
+            let spare = self.buffer.spare_capacity_mut();
+            let dst =
+                unsafe { std::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), needed) };
+
+            while filled < needed {
+                match self
+                    .file
+                    .read_at(&mut dst[filled..], start_offset + filled as u64)
+                {
+                    Ok(0) => break, // EOF
+                    Ok(n) => filled += n,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        eprintln!("Error: {:?}", e);
+                        return Err(ReadError::Io);
+                    }
+                }
+            }
+
+            unsafe {
+                self.buffer.set_len(base_len + filled);
+            }
+            self.offset = start_offset + filled as u64;
+        }
+        Ok(())
+    }
+}
+
+#[allow(unused)]
+impl<'a, 'b> Reader<'a> for FileReaderTrusted<'a, 'b> {
+    type Trusted<'c>
+        = FileReaderTrusted<'a, 'c>
+    where
+        Self: 'c;
+
+    fn buffer(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        self.try_buffer(n_bytes)?;
+        Ok(&self.buffer[..n_bytes.min(self.buffer.len())])
+    }
+
+    fn buffer_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        self.try_buffer(n_bytes)?;
+        let src = &self.buffer[..n_bytes];
+        Ok(src)
+    }
+
+    fn consume_unchecked(&mut self, amt: usize) {
+        // discard first `amt` bytes
+        self.buffer.drain(..amt);
+    }
+
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        self.consume_unchecked(amt);
+        Ok(())
+    }
+
+    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(FileReaderTrusted::new_from_offset(
+            self.file,
+            self.offset,
+            self.buffer,
+        ))
+    }
+}
+
+pub struct FileReader<'a> {
+    file: &'a File,
+    offset: u64,
+    buffer: Vec<u8>,
+}
+
+impl<'a> FileReader<'a> {
+    pub fn new(file: &'a File) -> Self {
+        Self {
+            file,
+            offset: 0,
+            buffer: Vec::new(),
+        }
+    }
+
+    pub fn new_from_offset(file: &'a File, offset: u64) -> Self {
+        Self {
+            file,
+            offset,
+            buffer: Vec::new(),
+        }
+    }
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn try_buffer(&mut self, n_bytes: usize) -> ReadResult<()> {
+        if self.buffer.len() < n_bytes {
+            let needed = n_bytes - self.buffer.len();
+            let base_len = self.buffer.len();
+            let start_offset = self.offset;
+
+            self.buffer.reserve(needed);
+
+            let mut filled = 0;
+            let spare = self.buffer.spare_capacity_mut();
+            let dst =
+                unsafe { std::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), needed) };
+
+            while filled < needed {
+                match self
+                    .file
+                    .read_at(&mut dst[filled..], start_offset + filled as u64)
+                {
+                    Ok(0) => break, // EOF
+                    Ok(n) => filled += n,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        eprintln!("Error: {:?}", e);
+                        return Err(ReadError::Io);
+                    }
+                }
+            }
+
+            unsafe {
+                self.buffer.set_len(base_len + filled);
+            }
+            self.offset = start_offset + filled as u64;
+        }
+        Ok(())
+    }
+}
+
+impl<'a> Reader<'a> for FileReader<'a> {
+    type Trusted<'b>
+        = FileReaderTrusted<'a, 'b>
+    where
+        Self: 'b;
+
+    #[inline]
+    fn buffer(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        self.try_buffer(n_bytes)?;
+        Ok(&self.buffer[..n_bytes.min(self.buffer.len())])
+    }
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn buffer_exact(&mut self, len: usize) -> ReadResult<&[u8]> {
+        self.try_buffer(len)?;
+        let src = self.buffer.get(..len).ok_or_else(|| read_size_limit(len))?;
+        Ok(src)
+    }
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn consume_unchecked(&mut self, amt: usize) {
+        // discard first `amt` bytes
+        self.buffer.drain(..amt);
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        if self.buffer.len() < amt {
+            return Err(read_size_limit(amt));
+        }
+        self.consume_unchecked(amt);
+        Ok(())
+    }
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        if self.file.metadata().unwrap().len() < self.offset + n_bytes as u64 {
+            return Err(read_size_limit(n_bytes));
+        }
+        self.try_buffer(n_bytes)?;
+        Ok(FileReaderTrusted::new_from_offset(
+            self.file,
+            self.offset,
+            &mut self.buffer,
+        ))
+    }
+}
+
+pub struct BufferGuard<'call, 'reader, R: Reader<'reader> + ?Sized> {
+    reader: *mut R,
+    buffer: &'call [u8],
+    _uniq: PhantomData<&'call mut R>,
+    _call: PhantomData<&'reader ()>,
+}
+
+impl<'call, 'reader, R: Reader<'reader> + ?Sized> Drop for BufferGuard<'call, 'reader, R> {
+    fn drop(&mut self) {
+        let len = self.buffer.len();
+        self.buffer = &[];
+        unsafe { (&mut *self.reader).consume_unchecked(len) };
+    }
+}
+
+impl<'call, 'reader, R: Reader<'reader> + ?Sized> Deref for BufferGuard<'call, 'reader, R> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.buffer
+    }
+}
+
+impl<'call, 'reader, R: Reader<'reader> + ?Sized> BufferGuard<'call, 'reader, R> {
+    pub fn new(reader: *mut R, buf: &'call [u8]) -> Self {
+        Self {
+            reader,
+            buffer: buf,
+            _uniq: PhantomData,
+            _call: PhantomData,
+        }
+    }
+
+    pub fn buffer_exact(reader: &'call mut R, n_bytes: usize) -> ReadResult<Self> {
+        let ptr = reader as *mut R;
+        let src = reader.buffer(n_bytes)?;
+        if src.len() != n_bytes {
+            return Err(read_size_limit(n_bytes));
+        }
+        Ok(Self::new(ptr, src))
+    }
+}
+
+pub trait GuardExt {
+    fn consumed<'de, R>(&self, reader: &mut R) -> BufferGuard<'_, 'de, R>
+    where
+        R: Reader<'de> + ?Sized;
+}
+
+impl GuardExt for &[u8] {
+    #[inline(always)]
+    fn consumed<'de, R>(&self, reader: &mut R) -> BufferGuard<'_, 'de, R>
+    where
+        R: Reader<'de> + ?Sized,
+    {
+        BufferGuard::new(reader, self)
+    }
+}
+
 /// Trait for structured reading of bytes from a source into potentially uninitialized memory.
 pub trait Reader<'a> {
     /// A variant of the reader that can elide bounds checking.
     ///
     /// Useful for sections of code where there is enough information to bulk prefetch bytes
     /// with a single bounds check for the entire chunk.
-    type Trusted: Reader<'a>;
-    /// Peek up to `n_bytes` bytes without consuming them.
+    type Trusted<'b>: Reader<'a>
+    where
+        Self: 'b;
+    /// Buffer up to `n_bytes` bytes.
     ///
     /// This is _not_ required to return exactly `n_bytes`, it is required
-    /// to return _up to_ `n_bytes`, so take care to check the length
-    /// if you need to ensure you get exactly `n_bytes`.
-    fn peek_buffered(&self, n_bytes: usize) -> &'a [u8];
+    /// to return _up to_ `n_bytes`. Use [`Reader::buffer_exact`] to get
+    /// exactly `n_bytes`.
+    fn buffer(&mut self, n_bytes: usize) -> ReadResult<&[u8]>;
+    /// Buffer exactly `n_bytes` bytes.
+    ///
+    /// This is guaranteed to return exactly `n_bytes` bytes, or
+    /// an error if the source has insufficient bytes.
+    #[inline]
+    fn buffer_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        let src = self.buffer(n_bytes)?;
+        if src.len() != n_bytes {
+            return Err(read_size_limit(n_bytes));
+        }
+        Ok(src)
+    }
+
+    #[inline]
+    fn consume_with(
+        &mut self,
+        mut f: impl FnMut(&mut Self) -> ReadResult<&[u8]>,
+    ) -> ReadResult<BufferGuard<'_, 'a, Self>> {
+        let ptr = self as *mut Self;
+        let consumed = f(self)?;
+        Ok(BufferGuard::new(ptr, consumed))
+    }
     /// Consume and return a slice of `len` bytes, returning an error if the
     /// reader does not have enough bytes.
-    fn read_slice(&mut self, len: usize) -> ReadResult<&'a [u8]>;
+    fn consume_slice(&mut self, _len: usize) -> ReadResult<&'a [u8]> {
+        unimplemented!()
+    }
+    fn consume_array<const N: usize>(&mut self) -> ReadResult<&'a [u8; N]> {
+        let src = self.consume_slice(N)?;
+        Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
+    }
+
     /// Consume and return a reference to an array of `N` bytes, returning an error if the
     /// reader does not have enough bytes.
     #[inline]
-    fn read_array<const N: usize>(&mut self) -> ReadResult<&'a [u8; N]> {
-        let src = self.read_slice(N)?;
+    fn buffer_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        let src = self.buffer_exact(N)?;
         // SAFETY:
         // - `read_slice` ensures we read N bytes.
         Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
@@ -45,21 +341,21 @@ pub trait Reader<'a> {
     /// Consume exactly `amt` bytes without checking bounds.
     ///
     /// May panic if the reader does not have enough bytes.
-    fn consume_unchecked(&mut self, amt: usize);
+    fn consume_unchecked(&mut self, amt: usize) {
+        self.consume(amt).unwrap();
+    }
     /// Consume exactly `amt` bytes, returning an error if the reader does not have enough bytes.
     fn consume(&mut self, amt: usize) -> ReadResult<()>;
     /// Bulk read `n_bytes` with a single bounds check, returning a [`Reader`]
     /// that can elide bounds checking for the entire chunk.
     ///
     /// Should return an error if the reader does not have enough space.
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted>;
+    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>>;
 
     /// Peek the next byte without consuming it.
     #[inline]
-    fn peek(&self) -> ReadResult<&'a u8> {
-        self.peek_buffered(1)
-            .first()
-            .ok_or_else(|| read_size_limit(1))
+    fn peek(&mut self) -> ReadResult<&u8> {
+        self.buffer(1)?.first().ok_or_else(|| read_size_limit(1))
     }
 
     /// Copy exactly `dst.len()` bytes from the [`Reader`] into `dst`.
@@ -69,7 +365,7 @@ pub trait Reader<'a> {
     /// - `dst` must not overlap with the internal buffer.
     #[inline]
     fn read_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
-        let src = self.read_slice(dst.len())?;
+        let src = self.consume_with(|reader| reader.buffer_exact(dst.len()))?;
         // SAFETY:
         // - `read_slice` must do the appropriate bounds checking.
         unsafe { ptr::copy_nonoverlapping(src.as_ptr().cast(), dst.as_mut_ptr(), dst.len()) };
@@ -86,10 +382,11 @@ pub trait Reader<'a> {
         &mut self,
         dst: &mut MaybeUninit<[u8; N]>,
     ) -> ReadResult<()> {
-        let src = self.read_array::<N>()?;
+        let src = self.buffer_array::<N>()?;
         // SAFETY:
         // - `read_array` must do the appropriate bounds checking.
         unsafe { ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), 1) };
+        self.consume_unchecked(N);
         Ok(())
     }
 
@@ -101,10 +398,11 @@ pub trait Reader<'a> {
     /// - `dst` must not overlap with the internal buffer.
     #[inline]
     unsafe fn read_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
-        let src = self.read_slice(size_of::<T>())?;
+        let src = self.buffer_exact(size_of::<T>())?;
         // SAFETY:
         // - `read_slice` must do the appropriate bounds checking.
         unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), size_of::<T>()) };
+        self.consume_unchecked(size_of::<T>());
         Ok(())
     }
 
@@ -116,12 +414,13 @@ pub trait Reader<'a> {
     /// - `dst` must not overlap with the internal buffer.
     #[inline]
     unsafe fn read_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
-        let bytes = self.read_slice(size_of_val(dst))?;
+        let bytes = self.buffer_exact(size_of_val(dst))?;
         // SAFETY:
         // - `read_slice` must do the appropriate bounds checking.
         unsafe {
             ptr::copy_nonoverlapping(bytes.as_ptr(), dst.as_mut_ptr().cast(), size_of_val(dst))
         };
+        self.consume_unchecked(size_of_val(dst));
         Ok(())
     }
 }
@@ -142,17 +441,26 @@ impl<'a> TrustedSliceReader<'a> {
 }
 
 impl<'a> Reader<'a> for TrustedSliceReader<'a> {
-    type Trusted = Self;
+    type Trusted<'b>
+        = TrustedSliceReader<'a>
+    where
+        Self: 'b;
 
     #[inline]
-    fn peek_buffered(&self, n_bytes: usize) -> &'a [u8] {
-        &self.cursor[..n_bytes.min(self.cursor.len())]
+    fn buffer(&mut self, n_bytes: usize) -> ReadResult<&'a [u8]> {
+        Ok(&self.cursor[..n_bytes.min(self.cursor.len())])
     }
 
     #[inline]
-    fn read_slice(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+    fn consume_slice(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         let (src, rest) = self.cursor.split_at(len);
         self.cursor = rest;
+        Ok(src)
+    }
+
+    #[inline]
+    fn buffer_exact(&mut self, len: usize) -> ReadResult<&[u8]> {
+        let src = &self.cursor[..len];
         Ok(src)
     }
 
@@ -168,8 +476,8 @@ impl<'a> Reader<'a> for TrustedSliceReader<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted> {
-        Ok(TrustedSliceReader::new(self.read_slice(n_bytes)?))
+    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReader::new(self.consume_slice(n_bytes)?))
     }
 }
 
@@ -185,15 +493,23 @@ impl<'a> SliceReader<'a> {
 }
 
 impl<'a> Reader<'a> for SliceReader<'a> {
-    type Trusted = TrustedSliceReader<'a>;
+    type Trusted<'b>
+        = TrustedSliceReader<'a>
+    where
+        Self: 'b;
 
     #[inline]
-    fn peek_buffered(&self, n_bytes: usize) -> &'a [u8] {
-        &self.cursor[..n_bytes.min(self.cursor.len())]
+    fn buffer(&mut self, n_bytes: usize) -> ReadResult<&'a [u8]> {
+        Ok(&self.cursor[..n_bytes.min(self.cursor.len())])
+    }
+
+    fn buffer_exact(&mut self, len: usize) -> ReadResult<&[u8]> {
+        let src = self.cursor.get(..len).ok_or_else(|| read_size_limit(len))?;
+        Ok(src)
     }
 
     #[inline]
-    fn read_slice(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+    fn consume_slice(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         let Some((src, rest)) = self.cursor.split_at_checked(len) else {
             return Err(read_size_limit(len));
         };
@@ -216,8 +532,8 @@ impl<'a> Reader<'a> for SliceReader<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted> {
-        Ok(TrustedSliceReader::new(self.read_slice(n)?))
+    fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReader::new(self.consume_slice(n)?))
     }
 }
 
@@ -494,13 +810,13 @@ mod tests {
 
     #[test]
     fn test_reader_peek() {
-        let reader = SliceReader::new(b"hello");
+        let mut reader = SliceReader::new(b"hello");
         assert_eq!(reader.peek(), Ok(&b'h'));
     }
 
     #[test]
     fn test_reader_peek_empty() {
-        let reader = SliceReader::new(b"");
+        let mut reader = SliceReader::new(b"");
         assert_eq!(reader.peek(), Err(ReadError::ReadSizeLimit(1)));
     }
 
@@ -539,7 +855,7 @@ mod tests {
     fn trusted_reader_read_slice_input_too_large() {
         let bytes = [1, 2, 3, 4, 5];
         let mut reader = TrustedSliceReader::new(&bytes);
-        let _ = reader.read_slice(bytes.len() + 1);
+        let _ = reader.consume_slice(bytes.len() + 1);
     }
 
     #[test]
@@ -585,7 +901,7 @@ mod tests {
         #[test]
         fn test_reader_read_slice(bytes in any::<Vec<u8>>()) {
             with_both_readers!(&bytes, |reader| {
-                let read = reader.read_slice(bytes.len()).unwrap();
+                let read = reader.consume_slice(bytes.len()).unwrap();
                 prop_assert_eq!(&read, &bytes);
             });
         }
@@ -593,7 +909,7 @@ mod tests {
         #[test]
         fn slice_reader_read_slice_input_too_large(bytes in any::<Vec<u8>>()) {
             let mut reader = SliceReader::new(&bytes);
-            assert_eq!(reader.read_slice(bytes.len() + 1), Err(ReadError::ReadSizeLimit(bytes.len() + 1)));
+            assert_eq!(reader.consume_slice(bytes.len() + 1), Err(ReadError::ReadSizeLimit(bytes.len() + 1)));
         }
 
 
@@ -609,7 +925,7 @@ mod tests {
         fn test_reader_consume(bytes in any::<Vec<u8>>()) {
             with_both_readers!(&bytes, |reader| {
                 reader.consume(bytes.len()).unwrap();
-                prop_assert_eq!(reader.peek_buffered(1), &[]);
+                prop_assert_eq!(reader.buffer(1)?, &[]);
             });
         }
 

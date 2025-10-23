@@ -205,9 +205,9 @@ mod tests {
     use {
         crate::{
             containers::{self, Elem, Pod},
-            deserialize,
+            deserialize, deserialize_into,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer},
+            io::{FileReader, Reader, Writer},
             len::BincodeLen,
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
@@ -218,6 +218,8 @@ mod tests {
         std::{
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
+            fs::{File, OpenOptions},
+            io::Write,
             mem::MaybeUninit,
             rc::Rc,
             result::Result,
@@ -1331,5 +1333,43 @@ mod tests {
             prop_assert_eq!(&val, &schema_deserialized);
         }
 
+
+
+    }
+
+    #[test]
+    fn test_file_io() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct Data {
+            a: u8,
+            b: u16,
+            c: Vec<u64>,
+            d: bool,
+            e: String,
+        }
+
+        let data = Data {
+            a: 1,
+            b: 2,
+            c: vec![3, 4, 5, 6, 7, 8, 9, 10],
+            d: true,
+            e: "test".to_string(),
+        };
+        let serialized = serialize(&data).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open("test.bin")
+            .unwrap();
+        file.write_all(&serialized).unwrap();
+        drop(file);
+        let file = File::open("test.bin").unwrap();
+        let reader = FileReader::new(&file);
+        let mut dst: MaybeUninit<Data> = MaybeUninit::uninit();
+        deserialize_into(reader, &mut dst).unwrap();
+        let dst = unsafe { dst.assume_init() };
+        assert_eq!(data, dst);
     }
 }

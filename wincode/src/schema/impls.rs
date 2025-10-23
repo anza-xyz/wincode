@@ -84,10 +84,12 @@ macro_rules! impl_int {
                 reader: &mut impl Reader<'de>,
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
-                // SAFETY: integer is plain ol' data.
-                let bytes = reader.read_array::<{ size_of::<$type>() }>()?;
-                // bincode defaults to little endian encoding.
-                dst.write(<$type>::from_le_bytes(*bytes));
+                reader.consume_with(|reader| {
+                    let bytes = reader.buffer_array::<{ size_of::<$type>() }>()?;
+                    // bincode defaults to little endian encoding.
+                    dst.write(<$type>::from_le_bytes(*bytes));
+                    Ok(bytes)
+                })?;
 
                 Ok(())
             }
@@ -240,7 +242,7 @@ impl<'de> SchemaRead<'de> for char {
             return Ok(());
         }
 
-        let buf = reader.read_slice(len)?;
+        let buf = reader.consume_slice(len)?;
         // TODO: Could implement a manual decoder that avoids UTF-8 validate + chars()
         // and instead performs the UTF-8 validity checks and produces a `char` directly.
         // Some quick micro-benchmarking revealed a roughly 2x speedup is possible,
@@ -406,7 +408,7 @@ impl<'de> SchemaRead<'de> for &'de [u8] {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
-        dst.write(reader.read_slice(len)?);
+        dst.write(reader.consume_slice(len)?);
         Ok(())
     }
 }
@@ -807,7 +809,7 @@ impl<'de> SchemaRead<'de> for &'de str {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
-        let bytes = reader.read_slice(len)?;
+        let bytes = reader.consume_slice(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);
@@ -825,7 +827,11 @@ impl<'de> SchemaRead<'de> for String {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
-        match String::from_utf8(reader.read_slice(len)?.to_vec()) {
+        let buf = reader.buffer_exact(len)?;
+        let bytes = buf.to_vec();
+        reader.consume_unchecked(len);
+        // let bytes = reader.buffer_exact(len)?.to_vec();
+        match String::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);
                 Ok(())
