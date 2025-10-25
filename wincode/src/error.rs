@@ -1,7 +1,7 @@
 //! Error types and helpers.
 use {crate::io, core::str::Utf8Error, thiserror::Error};
 
-#[derive(Error, Debug, PartialEq, Eq, Clone)]
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Error {
     #[error(transparent)]
     WriteError(#[from] WriteError),
@@ -9,7 +9,7 @@ pub enum Error {
     ReadError(#[from] ReadError),
 }
 
-#[derive(Error, Debug, PartialEq, Eq, Clone)]
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum WriteError {
     #[error(transparent)]
     Io(#[from] io::WriteError),
@@ -18,16 +18,10 @@ pub enum WriteError {
     #[error("Sequence length would overflow length encoding scheme: {0}")]
     LengthEncodingOverflow(&'static str),
     #[error("Custom error: {0}")]
-    Custom(Box<str>),
+    Custom(&'static str),
 }
 
-impl WriteError {
-    pub fn custom<E: core::fmt::Display>(error: E) -> Self {
-        Self::Custom(error.to_string().into_boxed_str())
-    }
-}
-
-#[derive(Error, Debug, PartialEq, Eq, Clone)]
+#[derive(Error, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ReadError {
     #[error(transparent)]
     Io(#[from] io::ReadError),
@@ -49,13 +43,7 @@ pub enum ReadError {
     #[error("Invalid char lead: {0}")]
     InvalidCharLead(u8),
     #[error("Custom error: {0}")]
-    Custom(Box<str>),
-}
-
-impl ReadError {
-    pub fn custom<E: core::fmt::Display>(error: E) -> Self {
-        Self::Custom(error.to_string().into_boxed_str())
-    }
+    Custom(&'static str),
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
