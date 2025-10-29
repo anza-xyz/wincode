@@ -281,10 +281,10 @@
 //! }
 //!
 //! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
-//! impl SchemaRead<'_> for Message {
+//! impl<'de> SchemaRead<'de> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut Reader, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 //!         // We have to do a big ugly cast like this to get a mutable MaybeUninit<Payload>.
 //!         let mut payload = unsafe {
 //!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()

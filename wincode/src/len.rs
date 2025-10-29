@@ -17,9 +17,9 @@ pub trait SeqLen {
     ///
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
-    fn read<T>(reader: &mut Reader) -> ReadResult<usize>;
+    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
-    fn write(writer: &mut Writer, len: usize) -> WriteResult<()>;
+    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
@@ -38,7 +38,7 @@ pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
 
 impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     #[inline(always)]
-    fn read<T>(reader: &mut Reader) -> ReadResult<usize> {
+    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
         // Bincode's default fixint encoding writes lengths as `u64`.
         let len = u64::get(reader)
             .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
@@ -52,7 +52,7 @@ impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
     }
 
     #[inline(always)]
-    fn write(writer: &mut Writer, len: usize) -> WriteResult<()> {
+    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
         u64::write(writer, &(len as u64))
     }
 
@@ -67,7 +67,10 @@ pub mod short_vec {
     use {
         super::*,
         crate::error::{read_length_encoding_overflow, write_length_encoding_overflow},
-        core::ptr,
+        core::{
+            mem::{transmute, MaybeUninit},
+            ptr,
+        },
         solana_short_vec::decode_shortu16_len,
     };
     pub struct ShortU16Len;
@@ -123,31 +126,29 @@ pub mod short_vec {
 
     impl SeqLen for ShortU16Len {
         #[inline(always)]
-        fn read<T>(reader: &mut Reader) -> ReadResult<usize> {
-            let Ok((len, read)) = decode_shortu16_len(reader.as_slice()) else {
+        fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+            let Ok((len, read)) = decode_shortu16_len(reader.fill_buf(3)?) else {
                 return Err(read_length_encoding_overflow("u16::MAX"));
             };
-            // `decode_shortu16_len` successfully read `read` bytes.
-            reader.consume_unchecked(read);
+            unsafe { reader.consume_unchecked(read) };
             Ok(len)
         }
 
         #[inline(always)]
-        fn write(writer: &mut Writer, len: usize) -> WriteResult<()> {
+        fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
             if len > u16::MAX as usize {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }
 
             let len = len as u16;
             let needed = short_u16_bytes_needed(len);
-            unsafe {
-                // SAFETY: `writer.write_with` ensures we have at least `needed` bytes of capacity.
-                writer.write_with(needed, |dst| {
-                    encode_short_u16(dst.as_mut_ptr().cast(), needed, len);
-                    Ok(())
-                })?;
-            }
-
+            let mut buf = [MaybeUninit::<u8>::uninit(); 3];
+            // SAFETY: short_u16 uses a maximum of 3 bytes, so the buffer is always large enough.
+            unsafe { encode_short_u16(buf.as_mut_ptr().cast(), needed, len) };
+            // SAFETY: encode_short_u16 writes exactly `needed` bytes.
+            let buf =
+                unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(buf.get_unchecked(..needed)) };
+            writer.write(buf)?;
             Ok(())
         }
 
