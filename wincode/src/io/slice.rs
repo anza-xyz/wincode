@@ -328,6 +328,10 @@ mod tests {
                 let mut $reader = TrustedSliceReaderZeroCopy::new($bytes);
                 $body
             }
+            {
+                let mut $reader = Cursor::new($bytes);
+                $body
+            }
         }};
     }
 

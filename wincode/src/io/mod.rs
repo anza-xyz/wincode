@@ -254,5 +254,8 @@ pub trait Writer {
     }
 }
 
+mod cursor;
 mod slice;
-pub use slice::*;
+#[cfg(feature = "alloc")]
+mod vec;
+pub use {cursor::Cursor, slice::*};
