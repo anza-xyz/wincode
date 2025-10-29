@@ -5,7 +5,7 @@ use core::slice::from_raw_parts_mut;
 /// `Cursor` wraps an in-memory buffer, providing [`Reader`] and [`Writer`] functionality
 /// for types implementing <code>[AsRef]<\[u8]></code>.
 ///
-/// This can be especially useful for wrapping [`Reader`]s [`Writer`]s that are consumed by
+/// This can be especially useful for wrapping [`Reader`]s and [`Writer`]s that are consumed by
 /// reading or writing like `&[u8]` or `&mut [MaybeUninit<u8>]`, making them reusable.
 ///
 /// # Examples
