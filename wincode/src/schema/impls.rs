@@ -154,6 +154,8 @@ impl_int!(u64, zero_copy: false);
 impl_int!(i64, zero_copy: false);
 impl_int!(u128, zero_copy: false);
 impl_int!(i128, zero_copy: false);
+impl_int!(f32, zero_copy: false);
+impl_int!(f64, zero_copy: false);
 impl_int!(usize as u64);
 impl_int!(isize as i64);
 

@@ -1337,5 +1337,21 @@ mod tests {
             prop_assert_eq!(&val, &schema_deserialized);
         }
 
+        #[test]
+        fn test_floats(
+            val in (
+                any::<f32>(),
+                any::<f64>(),
+            )
+        ) {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: (f32, f64) = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: (f32, f64) = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(val, bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        }
     }
 }
