@@ -28,6 +28,7 @@ use core::slice::from_raw_parts_mut;
 /// cursor.write(&bytes).unwrap();
 /// assert_eq!(unsafe { data.assume_init() }, bytes);
 ///
+/// // We can write over the same buffer multiple times with a new Cursor.
 /// let mut cursor = Cursor::new(&mut data);
 /// let bytes = rand_bytes();
 /// cursor.write(&bytes).unwrap();
@@ -51,6 +52,7 @@ use core::slice::from_raw_parts_mut;
 /// cursor.write(&bytes).unwrap();
 /// assert_eq!(data, bytes);
 ///
+/// // We can write over the same buffer multiple times with a new Cursor.
 /// let mut cursor = Cursor::new(&mut data);
 /// let bytes = rand_bytes();
 /// cursor.write(&bytes).unwrap();
