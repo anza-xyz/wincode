@@ -29,41 +29,6 @@
 //! # }
 //! ```
 //!
-//! For "plain old data" (see [`Pod`](containers::Pod)) fields (POD newtypes, arrays of POD newtypes, etc),
-//! use [`containers`] to leverage optimized read/write implementations.
-//!
-//! ```
-//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{containers::{self, Pod}};
-//! # use wincode_derive::{SchemaWrite, SchemaRead};
-//! # use serde::{Serialize, Deserialize};
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy)]
-//! struct Address([u8; 32]);
-//!
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy)]
-//! struct Hash([u8; 32]);
-//!
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[derive(SchemaWrite, SchemaRead)]
-//! struct MyStruct {
-//!     #[wincode(with = "Pod<_>")]
-//!     hash: Hash,
-//!     #[wincode(with = "containers::Vec<Pod<_>>")]
-//!     addresses: Vec<Address>,
-//! }
-//!
-//! let val = MyStruct {
-//!     hash: Hash([0; 32]),
-//!     addresses: vec![Address([0; 32]), Address([1; 32])]
-//! };
-//! assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap());
-//! # }
-//! ```
-//!
 //! # Motivation
 //!
 //! Typical Rust API design employs a *construct-then-move* style of programming.
@@ -354,7 +319,6 @@ mod serde;
 pub use serde::*;
 #[cfg(test)]
 mod proptest_config;
-mod util;
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
 // Include tuple impls.

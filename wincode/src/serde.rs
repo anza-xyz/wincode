@@ -18,17 +18,16 @@ use {
 /// Using containers (indirect deserialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Deserialize, containers::{self, Pod}};
+/// # use wincode::{Deserialize, containers};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
-/// // Use the optimized `Pod` container
-/// type Dst = containers::Vec<Pod<u8>>;
+/// type Dst = containers::Vec<u8>;
 /// let deserialized = Dst::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct deserialization (`T::Dst = T`) (non-optimized):
+/// Using direct deserialization (`T::Dst = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
@@ -103,17 +102,16 @@ impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
 /// Using containers (indirect serialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Serialize, containers::{self, Pod}};
+/// # use wincode::{Serialize, containers};
 /// let vec: Vec<u8> = vec![1, 2, 3];
-/// // Use the optimized `Pod` container
-/// type Src = containers::Vec<Pod<u8>>;
+/// type Src = containers::Vec<u8>;
 /// let bytes = Src::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct serialization (`T::Src = T`) (non-optimized):
+/// Using direct serialization (`T::Src = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
