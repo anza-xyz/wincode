@@ -828,9 +828,17 @@ impl<'de> SchemaRead<'de> for String {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = <BincodeLen>::read::<u8>(reader)?;
-        let bytes = reader.fill_exact(len)?.to_vec();
-        unsafe { reader.consume_unchecked(len) };
-        match String::from_utf8(bytes) {
+        // Pre-allocate Vec with exact capacity to avoid reallocation, then convert to String
+        // This avoids the intermediate allocation from fill_exact().to_vec()
+        let mut vec = Vec::with_capacity(len);
+        let spare_capacity = vec.spare_capacity_mut();
+        unsafe {
+            // copy_into_slice_t already consumes the bytes, so we don't need to consume again
+            reader.copy_into_slice_t(&mut spare_capacity[..len])?;
+            // SAFETY: We've written exactly `len` bytes
+            vec.set_len(len);
+        }
+        match String::from_utf8(vec) {
             Ok(s) => {
                 dst.write(s);
                 Ok(())

@@ -134,10 +134,11 @@ where
         return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
     }
     // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
+    // Optimized: avoid double map by using and_then in the fold closure
     Ok(Len::write_bytes_needed(value.len())?
-        + (value
+        + value
             .map(T::size_of)
-            .try_fold(0usize, |acc, x| x.map(|x| acc + x))?))
+            .try_fold(0usize, |acc, x| x.map(|size| acc + size))?)
 }
 
 #[inline(always)]
@@ -292,9 +293,9 @@ mod tests {
         TL_DROP_COUNT.with(|cell| cell.set(0));
     }
 
+    /// Guard for test set up that will ensure that the TL counter is 0 at the start and end of the test.
     #[must_use]
     #[derive(Debug)]
-    /// Guard for test set up that will ensure that the TL counter is 0 at the start and end of the test.
     struct TLDropGuard;
 
     impl TLDropGuard {

@@ -621,7 +621,7 @@ mod tests {
             parse_quote!(containers::Vec<containers::Box<[containers::Pod<u8>]>>)
         );
 
-        // Similarly, not a an actual use-case.
+        // Similarly, not an actual use-case.
         let src: Type =
             parse_quote!(Pair<containers::Box<[containers::Pod<_>]>, containers::Pod<_>>);
         let infer: Type = parse_quote!(Pair<Box<[Foo<Bar<u8>>]>, u16>);
@@ -630,7 +630,7 @@ mod tests {
             parse_quote!(
                 Pair<containers::Box<[containers::Pod<Foo<Bar<u8>>>]>, containers::Pod<u16>>
             )
-        )
+        );
     }
 
     #[test]
