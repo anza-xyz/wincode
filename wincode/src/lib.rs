@@ -368,6 +368,40 @@
 //! |---|---|---|---|
 //! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
 //!
+//! ## Variant level (enum variants)
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`tag`|`Expr`|`None`|Specifies the discriminant expression for the variant. Only usable on enums.|
+//!
+//! ### `tag`
+//!
+//! Specifies the discriminant expression for the variant. Only usable on enums.
+//!
+//! <div class="warning">
+//! There is no bincode analog to this attribute.
+//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
+//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
+//! <code>Serialize</code> impl for your enum on the serde / bincode side.
+//! </div>
+//!
+//! Example:
+//! ```
+//! # #[cfg(any(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! #[derive(SchemaWrite, SchemaRead)]
+//! enum Enum {
+//!     #[wincode(tag = 5)]
+//!     A,
+//!     #[wincode(tag = 8)]
+//!     B,
+//!     #[wincode(tag = 13)]
+//!     C,
+//! }
+//!
+//! assert_eq!(&wincode::serialize(&Enum::A).unwrap(), &5u32.to_le_bytes());
+//! # }
+//! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #[cfg(feature = "alloc")]

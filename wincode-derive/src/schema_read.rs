@@ -8,9 +8,9 @@ use {
         ast::{Data, Fields, Style},
         Error, FromDeriveInput, Result,
     },
-    proc_macro2::{Span, TokenStream},
+    proc_macro2::TokenStream,
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, LitInt, Type},
+    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
 };
 
 fn impl_struct(
@@ -266,7 +266,7 @@ fn impl_enum(
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
         let variant_ident = &variant.ident;
         let fields = &variant.fields;
-        let discriminant = LitInt::new(&i.to_string(), Span::call_site());
+        let discriminant = variant.discriminant(i);
 
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {

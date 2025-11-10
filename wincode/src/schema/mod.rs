@@ -749,6 +749,36 @@ mod tests {
     }
 
     #[test]
+    fn enum_with_custom_tag_roundtrip() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            #[wincode(tag = 5)]
+            A { name: String, id: u64 },
+            #[wincode(tag = 8)]
+            B(String, Vec<u8>),
+            #[wincode(tag = 13)]
+            C,
+        }
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let int: u32 = match e {
+                Enum::A { .. } => 5,
+                Enum::B(..) => 8,
+                Enum::C => 13,
+            };
+            prop_assert_eq!(&int.to_le_bytes(), &serialized[..4]);
+        });
+    }
+
+    #[test]
     fn unit_enum_with_variant_encoding_static_size() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
         #[wincode(internal, variant_encoding = "u8")]
