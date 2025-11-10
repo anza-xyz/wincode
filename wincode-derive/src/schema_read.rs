@@ -8,9 +8,9 @@ use {
         ast::{Data, Fields, Style},
         Error, FromDeriveInput, Result,
     },
-    proc_macro2::TokenStream,
+    proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
+    syn::{parse_quote, DeriveInput, GenericParam, Generics, LitInt, Type},
 };
 
 fn impl_struct(
@@ -235,22 +235,38 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
     ))
 }
 
-fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStream) {
+fn impl_enum(
+    enum_ident: &Type,
+    variants: &[Variant],
+    variant_encoding: Option<&Type>,
+) -> (TokenStream, TokenStream) {
     if variants.is_empty() {
         return (quote! {Ok(())}, quote! {TypeMeta::Dynamic});
     }
+
+    // Bincode always encodes the discriminant as u32.
+    let default_variant_encoding = parse_quote!(u32);
+    let variant_encoding = variant_encoding.unwrap_or(&default_variant_encoding);
 
     // Note that all enums except unit enums are never static.
     let mut type_meta_impl = quote!(TypeMeta::Dynamic);
     if variants.iter().all(|variant| variant.fields.is_unit()) {
         // If all variants are unit, we know up front that the static size is the size of the discriminant.
-        type_meta_impl = quote!(<u32 as SchemaRead<'de>>::TYPE_META);
+        type_meta_impl = quote! {
+            const {
+                match <#variant_encoding as SchemaRead<'de>>::TYPE_META {
+                    // Unit enums are never zero-copy, as they have invalid bit patterns.
+                    TypeMeta::Static { size, .. } => TypeMeta::Static { size, zero_copy: false },
+                    TypeMeta::Dynamic => TypeMeta::Dynamic,
+                }
+            }
+        };
     }
 
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
         let variant_ident = &variant.ident;
         let fields = &variant.fields;
-        let discriminant = i as u32;
+        let discriminant = LitInt::new(&i.to_string(), Span::call_site());
 
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
@@ -316,7 +332,7 @@ fn impl_enum(enum_ident: &Type, variants: &[Variant]) -> (TokenStream, TokenStre
 
     (
         quote! {
-            let discriminant = u32::get(reader)?;
+            let discriminant = #variant_encoding::get(reader)?;
             match discriminant {
                 #(#read_impl)*
                 _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
@@ -373,6 +389,11 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     let (read_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
+            if args.variant_encoding.is_some() {
+                return Err(Error::custom(
+                    "`variant_encoding` is only supported for enums",
+                ));
+            }
             // Only structs are eligible being marked zero-copy, so only the struct
             // impl needs the repr.
             impl_struct(&args, fields, &repr)
@@ -382,7 +403,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 Some(from) => from,
                 None => &parse_quote!(Self),
             };
-            impl_enum(enum_ident, v)
+            impl_enum(enum_ident, v, args.variant_encoding.as_ref())
         }
     };
 

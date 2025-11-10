@@ -228,6 +228,7 @@
 //! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
+//! |`variant_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //!
 //! ### `no_suppress_unused`
 //!
@@ -242,6 +243,34 @@
 //!
 //! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
 //!
+//! ### `variant_encoding`
+//!
+//! Allows specifying the encoding/decoding schema to use for the variant discriminant. Only usable on enums.
+//!
+//! <div class="warning">
+//! There is no bincode analog to this attribute.
+//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
+//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
+//! <code>Serialize</code> impl for your enum on the serde / bincode side.
+//! </div>
+//!
+//! Example:
+//! ```
+//! # #[cfg(any(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! #[wincode(variant_encoding = "u8")]
+//! enum Enum {
+//!     A,
+//!     B,
+//!     C,
+//! }
+//!
+//! assert_eq!(&wincode::serialize(&Enum::B).unwrap(), &1u8.to_le_bytes());
+//! # }
+//! ```
 //!
 //! ### `struct_extensions`
 //!

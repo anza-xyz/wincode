@@ -385,6 +385,13 @@ pub(crate) struct SchemaArgs {
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
+    /// Specifies the encoding to use for enum variants.
+    ///
+    /// If specified, the enum variants will be encoded using the given type's `SchemaWrite`
+    /// and `SchemaRead` implementations.
+    /// Otherwise, the enum variants will be encoded using the default encoding (`u32`).
+    #[darling(default)]
+    pub(crate) variant_encoding: Option<Type>,
 }
 
 /// Metadata about the `#[repr]` attribute on a struct.
