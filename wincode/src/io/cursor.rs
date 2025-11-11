@@ -59,10 +59,6 @@ use core::slice::from_raw_parts_mut;
 /// assert_eq!(data, bytes);
 /// # }
 /// ```
-///
-/// # Invariants
-/// - `pos` is less than or equal to the length of the inner type. Failing to uphold
-///   this invariant will result in undefined behavior.
 pub struct Cursor<T> {
     inner: T,
     pos: usize,
@@ -74,22 +70,12 @@ impl<T> Cursor<T> {
     }
 
     /// Creates a new cursor at the given position.
-    ///
-    /// # Safety
-    /// - `pos` must be less than or equal to the length of the inner type.
-    ///
-    /// Providing a position greater than the length of the inner type will result in undefined behavior.
-    pub const unsafe fn new_at(inner: T, pos: usize) -> Self {
+    pub const fn new_at(inner: T, pos: usize) -> Self {
         Self { inner, pos }
     }
 
     /// Sets the position of the cursor.
-    ///
-    ///  # Safety
-    /// - `pos` must be less than or equal to the length of the inner type.
-    ///
-    /// Providing a position greater than the length of the inner type will result in undefined behavior.
-    pub const unsafe fn set_position(&mut self, pos: usize) {
+    pub const fn set_position(&mut self, pos: usize) {
         self.pos = pos;
     }
 
@@ -111,22 +97,23 @@ where
     /// Returns a slice of the remaining bytes in the cursor.
     #[inline]
     fn cur_slice(&self) -> &[u8] {
+        let slice = self.inner.as_ref();
         // SAFETY: `pos` is less than or equal to the length of the slice.
-        unsafe { self.inner.as_ref().get_unchecked(self.pos..) }
+        unsafe { slice.get_unchecked(self.pos.min(slice.len())..) }
     }
 
     /// Returns the number of bytes remaining in the cursor.
     #[inline]
     fn cur_len(&self) -> usize {
-        // SAFETY: `pos` is less than or equal to the length of the slice.
-        unsafe { self.inner.as_ref().len().unchecked_sub(self.pos) }
+        self.inner.as_ref().len().saturating_sub(self.pos)
     }
 
     /// Split the cursor at `mid` and consume the left slice.
     #[inline]
     fn consume_slice_checked(&mut self, mid: usize) -> ReadResult<&[u8]> {
+        let slice = self.inner.as_ref();
         // SAFETY: `pos` is less than or equal to the length of the slice.
-        let cur = unsafe { self.inner.as_ref().get_unchecked(self.pos..) };
+        let cur = unsafe { slice.get_unchecked(self.pos.min(slice.len())..) };
         let Some(left) = cur.get(..mid) else {
             return Err(read_size_limit(mid));
         };
@@ -193,7 +180,7 @@ mod uninit_slice {
         pos: usize,
     ) -> &mut [MaybeUninit<u8>] {
         // SAFETY: `pos` is less than or equal to the length of the slice.
-        unsafe { inner.get_unchecked_mut(pos..) }
+        unsafe { inner.get_unchecked_mut(pos.min(inner.len())..) }
     }
 
     /// Get a mutable slice of `len` bytes from the cursor at the current position,
@@ -528,6 +515,99 @@ mod tests {
 
     proptest! {
         #![proptest_config(proptest_cfg())]
+
+        #[test]
+        fn cursor_read_no_panic_no_ub_check(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
+            let mut cursor = Cursor::new_at(&bytes, pos);
+            let buf = cursor.fill_buf(bytes.len()).unwrap();
+            if pos > bytes.len() {
+                // fill-buf should return an empty slice if the position
+                // is greater than the length of the bytes.
+                prop_assert_eq!(buf, &[]);
+            } else {
+                prop_assert_eq!(buf, &bytes[pos..]);
+            }
+
+            let res = cursor.fill_exact(bytes.len());
+            if pos > bytes.len() && !bytes.is_empty() {
+                prop_assert!(matches!(res, Err(ReadError::ReadSizeLimit(x)) if x == bytes.len()));
+            } else {
+                prop_assert_eq!(res.unwrap(), &bytes[pos.min(bytes.len())..]);
+            }
+        }
+
+        #[test]
+        fn cursor_zero_len_ops_ok(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
+            let mut cursor = Cursor::new_at(&bytes, pos);
+            let start = cursor.position();
+
+            // fill_exact(0) is always Ok and does not advance.
+            let fe = cursor.fill_exact(0).unwrap();
+            prop_assert_eq!(fe.len(), 0);
+            prop_assert_eq!(cursor.position(), start);
+
+            // consume(0) is always Ok and does not advance.
+            prop_assert!(cursor.consume(0).is_ok());
+            prop_assert_eq!(cursor.position(), start);
+
+            // as_trusted_for(0) is always Ok and does not advance.
+            let start2 = cursor.position();
+            let mut trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0).unwrap();
+            // Trusted reader on a 0-window should behave like EOF for >0, but allow zero-length reads.
+            prop_assert_eq!(trusted.fill_buf(1).unwrap(), &[]);
+            prop_assert_eq!(trusted.fill_exact(0).unwrap().len(), 0);
+            prop_assert_eq!(cursor.position(), start2);
+        }
+
+        #[test]
+        fn cursor_as_trusted_for_remaining_advances_to_len(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
+            // Clamp pos to be within [0, len] so the request is valid.
+            let len = bytes.len();
+            let pos = if len == 0 { 0 } else { pos % (len + 1) };
+            let mut cursor = Cursor::new_at(&bytes, pos);
+            let remaining = len.saturating_sub(pos);
+
+            let _trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, remaining).unwrap();
+            // After consuming the exact remaining, position should be exactly len.
+            prop_assert_eq!(cursor.position(), len);
+        }
+
+        #[test]
+        fn cursor_extremal_pos_max_zero_len_ok(bytes in any::<Vec<u8>>()) {
+            let mut cursor = Cursor::new_at(&bytes, usize::MAX);
+            // With extremal position, fill_buf should be empty and peek should error.
+            prop_assert_eq!(cursor.fill_buf(1).unwrap(), &[]);
+            prop_assert!(matches!(cursor.peek(), Err(ReadError::ReadSizeLimit(1))));
+
+            // Zero-length ops still succeed and do not advance.
+            let start = cursor.position();
+            prop_assert!(cursor.fill_exact(0).is_ok());
+            prop_assert!(cursor.consume(0).is_ok());
+            let _trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0).unwrap();
+            prop_assert_eq!(cursor.position(), start);
+        }
+
+        #[test]
+        fn uninit_slice_write_no_panic_no_ub_check(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
+            let mut output: Vec<u8> = Vec::with_capacity(bytes.len());
+            let mut cursor = Cursor::new_at(output.spare_capacity_mut(), pos);
+            let res = cursor.write(&bytes);
+            if pos > bytes.len() && !bytes.is_empty() {
+                prop_assert!(matches!(res, Err(WriteError::WriteSizeLimit(x)) if x == bytes.len()));
+            } else if pos == 0 {
+                prop_assert_eq!(output, bytes);
+            }
+        }
+
+        #[test]
+        fn vec_write_no_panic_no_ub_check(bytes in any::<Vec<u8>>(), pos in any::<u16>()) {
+            let pos = pos as usize;
+            let mut output: Vec<u8> = Vec::new();
+            let mut cursor = Cursor::new_at(&mut output, pos);
+            // Vec impl grows, so it should be valid to write to any position within memory limits.
+            cursor.write(&bytes).unwrap();
+            prop_assert_eq!(&output[pos..], &bytes);
+        }
 
         #[test]
         fn cursor_write_vec_new(bytes in any::<Vec<u8>>()) {
