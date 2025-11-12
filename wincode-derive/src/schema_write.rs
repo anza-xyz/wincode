@@ -7,9 +7,9 @@ use {
         ast::{Data, Fields, Style},
         Error, FromDeriveInput, Result,
     },
-    proc_macro2::{Span, TokenStream},
+    proc_macro2::TokenStream,
     quote::quote,
-    syn::{parse_quote, DeriveInput, LitInt, Type},
+    syn::{parse_quote, DeriveInput, Type},
 };
 
 fn impl_struct(
@@ -94,7 +94,7 @@ fn impl_enum(
     for (i, variant) in variants.iter().enumerate() {
         let variant_ident = &variant.ident;
         let fields = &variant.fields;
-        let discriminant = LitInt::new(&i.to_string(), Span::call_site());
+        let discriminant = variant.discriminant(i);
         // Bincode always encodes the discriminant using the index of the field order.
         let size_of_discriminant = quote! {
             #variant_encoding::size_of(&#discriminant)?

@@ -15,8 +15,9 @@ use {
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
-        DeriveInput, GenericArgument, Generics, Ident, Lifetime, Member, Path, Type, TypeImplTrait,
-        TypeParamBound, TypeReference, TypeTraitObject, Visibility,
+        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
+        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
+        Visibility,
     },
 };
 
@@ -281,6 +282,23 @@ fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone 
 pub(crate) struct Variant {
     pub(crate) ident: Ident,
     pub(crate) fields: Fields<Field>,
+    #[darling(default)]
+    pub(crate) tag: Option<Expr>,
+}
+
+impl Variant {
+    /// Get the discriminant expression for the variant.
+    ///
+    /// If the variant has a `tag` attribute, return it.
+    /// Otherwise, return an integer literal with the given field index (the bincode default).
+    pub(crate) fn discriminant(&self, field_index: usize) -> Cow<'_, Expr> {
+        self.tag.as_ref().map(Cow::Borrowed).unwrap_or_else(|| {
+            Cow::Owned(Expr::Lit(ExprLit {
+                lit: Lit::Int(LitInt::new(&field_index.to_string(), Span::call_site())),
+                attrs: vec![],
+            }))
+        })
+    }
 }
 
 pub(crate) type ImplBody = Data<Variant, Field>;
