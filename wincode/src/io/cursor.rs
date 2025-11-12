@@ -360,13 +360,19 @@ mod vec {
 /// Trusted writer for `Cursor<&mut Vec<u8>>` or `Cursor<Vec<u8>>` that continues
 /// overwriting the vector's memory.
 ///
-/// This will _not_ grow the vector, as it assumes the caller has already reserved enough capacity.
+/// Generally this should not be constructed directly, but rather by calling [`Writer::as_trusted_for`]
+/// on a trusted [`Writer`]. This will ensure that the safety invariants are upheld.
 ///
 /// Note that this does *not* update the length of the vector, as it only contains a reference to the
 /// vector's memory via `&mut [MaybeUninit<u8>]`, but it will update the _position_ of the cursor.
 /// Vec implementations will synchronize the length and position on subsequent writes or when the
 /// writer is finished. Benchmarks showed a roughly 2x performance improvement using this method
 /// rather than taking a `&mut Vec<u8>` directly.
+///
+/// # Safety
+///
+/// - This will _not_ grow the vector, as it assumes the caller has already reserved enough capacity.
+///   The `inner` buffer must have sufficient capacity for all writes. It is UB if this is not upheld.
 #[cfg(feature = "alloc")]
 pub struct TrustedVecWriter<'a> {
     inner: &'a mut [MaybeUninit<u8>],

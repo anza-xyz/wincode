@@ -2,7 +2,14 @@ use super::*;
 
 /// Trusted writer for `Vec<u8>` that continues appending to the vector's spare capacity.
 ///
-/// This will _not_ grow the vector, as it assumes the caller has already reserved enough capacity.
+/// Generally this should not be constructed directly, but rather by calling [`Writer::as_trusted_for`]
+/// on a [`Vec<u8>`]. This will ensure that the safety invariants are upheld.
+///
+/// # Safety
+///
+/// - This will _not_ grow the vector, and it will not bounds check writes, as it assumes the caller has
+///   already reserved enough capacity. The `inner` Vec must have sufficient capacity for all writes.
+///   It is UB if this is not upheld.
 pub struct TrustedVecWriter<'a> {
     inner: &'a mut Vec<u8>,
 }
