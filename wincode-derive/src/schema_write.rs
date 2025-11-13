@@ -48,12 +48,16 @@ fn impl_struct(
         },
         quote! {
             match <Self as SchemaWrite>::TYPE_META {
-                TypeMeta::Static { size, .. } => {
+                TypeMeta::Static { zero_copy: true, .. } => {
+                    // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                    unsafe { writer.write_t(src)? };
+                }
+                TypeMeta::Static { size, zero_copy: false } => {
                     let writer = &mut writer.as_trusted_for(size)?;
                     #(#writes)*
                     writer.finish()?;
                 }
-                _ => {
+                TypeMeta::Dynamic => {
                     #(#writes)*
                 }
             }

@@ -50,10 +50,19 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
     #[inline]
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { src.copy_into_t(dst)? };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
                 Self::read(&mut src.as_trusted_for(size)?, dst)?;
             }
-            _ => {
+            TypeMeta::Dynamic => {
                 Self::read(&mut src, dst)?;
             }
         }
@@ -81,10 +90,19 @@ pub trait DeserializeOwned: SchemaReadOwned {
         dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
     ) -> ReadResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { src.copy_into_t(dst)? };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
                 Self::read(&mut src.as_trusted_for(size)?, dst)?;
             }
-            _ => {
+            TypeMeta::Dynamic => {
                 Self::read(src, dst)?;
             }
         }
@@ -140,17 +158,27 @@ pub trait Serialize: SchemaWrite {
     #[inline]
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { dst.write_t(src)? };
+                dst.finish()?;
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
                 Self::write(&mut dst.as_trusted_for(size)?, src)?;
                 dst.finish()?;
-                Ok(())
             }
-            _ => {
+            TypeMeta::Dynamic => {
                 Self::write(dst, src)?;
                 dst.finish()?;
-                Ok(())
             }
         }
+
+        Ok(())
     }
 
     /// Get the size in bytes of the type when serialized.

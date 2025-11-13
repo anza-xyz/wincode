@@ -243,8 +243,8 @@ pub trait Writer {
     ///
     /// - `T` must be plain ol' data.
     #[inline]
-    unsafe fn write_t<T>(&mut self, src: &T) -> WriteResult<()> {
-        let src = from_raw_parts((src as *const T).cast::<u8>(), size_of::<T>());
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        let src = from_raw_parts((src as *const T).cast::<u8>(), size_of_val(src));
         self.write(src)?;
         Ok(())
     }
