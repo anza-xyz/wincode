@@ -798,6 +798,36 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_zero_copy_padding_disqualification() {
+        #[derive(SchemaWrite, SchemaRead)]
+        #[wincode(internal)]
+        #[repr(C, align(4))]
+        struct Padded {
+            a: u8,
+        }
+
+        assert!(matches!(
+            <Padded as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                // Serialized size is still the size of the byte, not the in-memory size.
+                size: 1,
+                // Padding disqualifies the type from zero-copy optimization.
+                zero_copy: false
+            }
+        ));
+
+        assert!(matches!(
+            <Padded as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                // Serialized size is still the size of the byte, not the in-memory size.
+                size: 1,
+                // Padding disqualifies the type from zero-copy optimization.
+                zero_copy: false
+            }
+        ));
+    }
+
     proptest! {
         #![proptest_config(proptest_cfg())]
 

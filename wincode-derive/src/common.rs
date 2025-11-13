@@ -227,7 +227,13 @@ impl FieldsExt for Fields<Field> {
             // for each field.
             // If any field is not `TypeMeta::Static`, the entire match will fail, and we will fall through to the `Dynamic` case.
             if let (#(TypeMeta::Static { size: #anon_idents, zero_copy: #zero_copy_idents }),*) = (#tuple_expansion) {
-                TypeMeta::Static { size: #(#anon_idents)+*, zero_copy: #is_zero_copy_eligible && #(#zero_copy_idents)&&* }
+                let serialized_size = #(#anon_idents)+*;
+                // Bincode never serializes padding, so for types to qualify for zero-copy, the summed serialized size of
+                // the fields must be equal to the in-memory size of the type. This is because zero-copy types
+                // may be read/written directly using their in-memory representation; padding disqualifies a type
+                // from this kind of optimization.
+                let no_padding = serialized_size == core::mem::size_of::<Self>();
+                TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && #(#zero_copy_idents)&&* }
             } else {
                 TypeMeta::Dynamic
             }
