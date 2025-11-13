@@ -198,13 +198,32 @@
 //!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
 //!
-//! # Zero copy deserialization
+//! # Zero-copy deserialization
 //!
-//! `wincode` supports zero copy deserialization of contiguous byte slices
-//! (serialized with `Vec<u8>`, `Box<[u8]>`, `[u8; N]`, etc.).
+//! `wincode`'s zero-copy deserialization is built on the following primitives:
+//! - [`u8`]
+//! - [`i8`]
 //!
+//! Within `wincode`, any type that is composed entirely of these primitives is
+//! eligible for zero-copy deserialization.
+//!
+//! Let `Z` be the set of zero-copy types.
+//!
+//! The following higher order types are eligible for zero-copy deserialization:
+//! - `&[Z]`
+//! - `&Z`
+//! - `&[Z; N]`
+//!
+//! Structs deriving [`SchemaWrite`] and [`SchemaRead`] are eligible for zero-copy deserialization
+//! as long as they are composed entirely of the above zero-copy types and are annotated with
+//! `#[repr(transparent)]` or `#[repr(C)]`.
+//! Note that this is **not** true for tuples, as Rust does not currently guarantee tuple layout.
+//!
+//! ## Examples
+//!
+//! ### `&[u8]`
 //! ```
-//! # #[cfg(feature = "derive")] {
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
 //! use wincode::{SchemaWrite, SchemaRead};
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -216,10 +235,59 @@
 //! let bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
 //! let byte_ref = ByteRef { bytes: &bytes };
 //! let serialized = wincode::serialize(&byte_ref).unwrap();
-//! let deserialized = wincode::deserialize(&serialized).unwrap();
+//! let deserialized: ByteRef<'_> = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(byte_ref, deserialized);
 //! # }  
 //! ```
+//!
+//! ### struct newtype
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use rand::random;
+//! # use std::array;
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! #[repr(transparent)]
+//! struct Signature([u8; 64]);
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! struct Data<'a> {
+//!     signature: &'a Signature,
+//!     data: &'a [u8],
+//! }
+//!
+//! let signature = Signature(array::from_fn(|_| random()));
+//! let data = Data {
+//!     signature: &signature,
+//!     data: &[1, 2, 3, 4, 5],
+//! };
+//! let serialized = wincode::serialize(&data).unwrap();
+//! let deserialized: Data<'_> = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(data, deserialized);
+//! # }
+//! ```
+//!
+//! ### `&[u8; N]`
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! struct HeaderRef<'a> {
+//!     magic: &'a [u8; 7],
+//! }
+//!
+//! let header = HeaderRef { magic: b"W1NC0D3" };
+//! let serialized = wincode::serialize(&header).unwrap();
+//! let deserialized: HeaderRef<'_> = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(header, deserialized);
+//! # }
+//! ```
+//!
 //! # Derive attributes
 //!
 //! ## Top level

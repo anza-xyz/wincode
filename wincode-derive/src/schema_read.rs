@@ -10,7 +10,10 @@ use {
     },
     proc_macro2::TokenStream,
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
+    syn::{
+        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, PredicateType,
+        Type, WhereClause, WherePredicate,
+    },
 };
 
 fn impl_struct(
@@ -386,10 +389,48 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    // Provide a `ZeroCopy` impl for the type if its `repr` is eligible and all its fields are zero-copy.
+    let zero_copy_impl = match &args.data {
+        Data::Struct(fields) if repr.is_zero_copy_eligible() => {
+            // Ensure all fields are zero-copy.
+            let inner_constraint_predicates = fields.iter().map(|field| {
+                let mut bounds = Punctuated::new();
+                bounds.push(parse_quote!(ZeroCopy));
+                WherePredicate::Type(PredicateType {
+                    // Workaround for https://github.com/rust-lang/rust/issues/48214.
+                    lifetimes: Some(parse_quote!(for<'_wincode_internal>)),
+                    bounded_ty: field.target_resolved(),
+                    colon_token: parse_quote![:],
+                    bounds,
+                })
+            });
+            let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
+            let mut where_clause = where_clause.cloned();
+
+            match &mut where_clause {
+                Some(where_clause) => {
+                    where_clause.predicates.extend(inner_constraint_predicates);
+                }
+                None => {
+                    where_clause = Some(WhereClause {
+                        where_token: parse_quote!(where),
+                        predicates: inner_constraint_predicates.collect(),
+                    });
+                }
+            }
+            quote! {
+                unsafe impl #impl_generics ZeroCopy for #ident #ty_generics #where_clause {}
+            }
+        }
+        _ => quote!(),
+    };
+
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}};
-            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error};
+            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, ZeroCopy};
+
+            #zero_copy_impl
 
             impl #impl_generics SchemaRead<'de> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;

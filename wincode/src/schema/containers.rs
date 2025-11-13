@@ -87,7 +87,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        TypeMeta,
+        TypeMeta, ZeroCopy,
     },
     core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };
@@ -262,6 +262,13 @@ pub struct Elem<T>(PhantomData<T>);
 /// # }
 /// ```
 pub struct Pod<T: Copy + 'static>(PhantomData<T>);
+
+// SAFETY:
+// - By using `Pod`, user asserts that the type is zero-copy, given the contract of Pod:
+//   - The type's in‑memory representation is exactly its serialized bytes.
+//   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
+//   - Does not contain references or pointers.
+unsafe impl<T> ZeroCopy for Pod<T> where T: Copy + 'static {}
 
 impl<T> SchemaWrite for Pod<T>
 where

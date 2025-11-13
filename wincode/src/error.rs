@@ -44,11 +44,18 @@ pub enum ReadError {
     InvalidCharLead(u8),
     #[error("Custom error: {0}")]
     Custom(&'static str),
+    #[error("Zero-copy read would be unaligned")]
+    UnalignedPointerRead,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
 pub type WriteResult<T> = core::result::Result<T, WriteError>;
 pub type ReadResult<T> = core::result::Result<T, ReadError>;
+
+#[cold]
+pub const fn unaligned_pointer_read() -> ReadError {
+    ReadError::UnalignedPointerRead
+}
 
 #[cold]
 pub const fn preallocation_size_limit(needed: usize, limit: usize) -> ReadError {

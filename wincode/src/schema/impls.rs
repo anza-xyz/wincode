@@ -20,17 +20,18 @@ use {
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, ReadResult, WriteResult,
+            pointer_sized_decode_error, unaligned_pointer_read, ReadResult, WriteResult,
         },
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
-        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
+        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite, ZeroCopy},
         util::type_equal,
         TypeMeta,
     },
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
+        slice::from_raw_parts,
     },
 };
 #[cfg(feature = "alloc")]
@@ -143,6 +144,14 @@ macro_rules! impl_int {
         }
     };
 }
+
+// SAFETY:
+// - u8 is a canonical zero-copy type: no endianness, no layout, no validation.
+unsafe impl ZeroCopy for u8 {}
+
+// SAFETY:
+// - i8 is similarly a canonical zero-copy type: no endianness, no layout, no validation.
+unsafe impl ZeroCopy for i8 {}
 
 impl_int!(u8, zero_copy: true);
 impl_int!(i8, zero_copy: true);
@@ -404,16 +413,10 @@ where
     }
 }
 
-impl<'de> SchemaRead<'de> for &'de [u8] {
-    type Dst = &'de [u8];
-
-    #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = <BincodeLen>::read::<u8>(reader)?;
-        dst.write(reader.borrow_exact(len)?);
-        Ok(())
-    }
-}
+// SAFETY:
+// - [T; N] where T: ZeroCopy is trivially zero-copy. The length is constant,
+//   so there is no length encoding.
+unsafe impl<const N: usize, T> ZeroCopy for [T; N] where T: ZeroCopy {}
 
 impl<'de, T, const N: usize> SchemaRead<'de> for [T; N]
 where
@@ -1032,5 +1035,154 @@ where
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::BinaryHeap<Elem<T>, BincodeLen>>::read(reader, dst)
+    }
+}
+
+mod zero_copy {
+    use super::*;
+
+    // Ensure proper alignment for forming a reference of type `U` from a
+    // pointer of type `T`.
+    //
+    // This should trivially hold for all types supported by the crate,
+    // as we only mark zero-copy on `u8`, `i8`, and `[u/i8; N]` types.
+    // Additionally, all derived zero-copy types must be comprised entirely
+    // of aforementioned align-1 types.
+    //
+    // Note we include the `align_of > 1` check because it can be DCEd out
+    // for types we support (all align `1`).
+    #[inline(always)]
+    fn cast_ensure_aligned<T, U>(ptr: *const T) -> ReadResult<*const U> {
+        let ptr = ptr.cast::<U>();
+        if align_of::<T>() > 1 && !ptr.is_aligned() {
+            return Err(unaligned_pointer_read());
+        }
+        Ok(ptr)
+    }
+
+    /// Cast a `&[u8]` to a `&T` of a zero-copy type `T`.
+    ///
+    /// Errors if the pointer is not properly aligned for reads of `T`.
+    ///
+    /// Note we abstract this into a function because it ensures the lifetime of the
+    /// returned reference is the same as the input. Otherwise the compiler would
+    /// accept any lifetime as `'de`. We want to preclude usage of something like
+    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    ///
+    /// # Safety
+    /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+    /// - `bytes.len()` must be equal to `size_of::<T>()`.
+    #[inline(always)]
+    pub(super) unsafe fn cast_slice_to_t<T>(bytes: &[u8]) -> ReadResult<&T> {
+        debug_assert_eq!(bytes.len(), size_of::<T>());
+        let ptr = cast_ensure_aligned::<u8, T>(bytes.as_ptr())?;
+        // SAFETY:
+        // - The pointer is non-null, properly aligned for `&T`, and the length is valid.
+        // - T is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        let val = unsafe { &*ptr };
+        Ok(val)
+    }
+
+    /// Cast a `&[u8]` to a `&[T]` of a zero-copy type `T`.
+    ///
+    /// Errors if the pointer is not properly aligned for reads of `T`.
+    ///
+    /// Note we abstract this into a function because it ensures the lifetime of the
+    /// returned reference is the same as the input. Otherwise the compiler would
+    /// accept any lifetime as `'de`. We want to preclude usage of something like
+    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    ///
+    /// # Safety
+    /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+    /// - `bytes.len()` must be equal to `len * size_of::<T>()`.
+    #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
+    pub(super) unsafe fn cast_slice_to_slice_t<T>(bytes: &[u8], len: usize) -> ReadResult<&[T]> {
+        debug_assert_eq!(bytes.len(), len * size_of::<T>());
+        let ptr = cast_ensure_aligned::<u8, T>(bytes.as_ptr())?;
+        // SAFETY:
+        // - The pointer is non-null, properly aligned for `&[T]`, and the length is valid.
+        // - T is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        let slice = unsafe { from_raw_parts(ptr, len) };
+        Ok(slice)
+    }
+}
+
+impl<'de, T> SchemaRead<'de> for &'de T
+where
+    T: SchemaRead<'de> + ZeroCopy,
+{
+    type Dst = &'de T::Dst;
+
+    const TYPE_META: TypeMeta = match T::TYPE_META {
+        TypeMeta::Static { size, .. } => TypeMeta::Static {
+            size,
+            // Note: `&'de T` is NOT zero‑copy in the "raw-bytes representable" sense.
+            // In this crate, `zero_copy: true` means:
+            // - The type's in‑memory representation is exactly its serialized bytes.
+            // - It can be safely initialized by memcpy (no validation, no endianness/layout work).
+            // - Containers may bulk-copy elements (e.g., Vec/BoxedSlice memcpy fast path for Pod).
+            // - It can be deserialized by reference to some underlying source bytes.
+            //
+            // A _reference_ to a zero-copy type does not meet that contract:
+            // - `&'de T` is a pointer with provenance/lifetime, not bytes you can memcpy into place.
+            // - You cannot "initialize a reference" by copying bytes; you must point it at already
+            //   valid storage of `T`.
+            // - Advertising `zero_copy: true` here could incorrectly enable memcpy of reference
+            //   elements (e.g., Vec<&T>), which would be unsound.
+            //
+            // We borrow the underlying `T` here, knowing it is zero-copy, but the reference itself
+            // is never considered zero-copy.
+            zero_copy: false,
+        },
+        // Should be impossible to reach.
+        _ => panic!("Type is not statically known to be zero-copy"),
+    };
+
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let TypeMeta::Static {
+            size,
+            zero_copy: true,
+        } = T::TYPE_META
+        else {
+            // Should be impossible to reach.
+            unreachable!("Type is not statically known to be zero-copy");
+        };
+
+        let bytes = reader.borrow_exact(size)?;
+        // SAFETY:
+        // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        // - `bytes.len() == size_of::<T::Dst>()`. `borrow_exact` ensures we read exactly `size` bytes.
+        let val = unsafe { zero_copy::cast_slice_to_t::<T::Dst>(bytes)? };
+        dst.write(val);
+        Ok(())
+    }
+}
+
+impl<'de, T> SchemaRead<'de> for &'de [T]
+where
+    T: SchemaRead<'de> + ZeroCopy,
+{
+    type Dst = &'de [T::Dst];
+
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let TypeMeta::Static {
+            size,
+            zero_copy: true,
+        } = T::TYPE_META
+        else {
+            // Should be impossible to reach.
+            unreachable!("Type is not statically known to be zero-copy");
+        };
+
+        let len = <BincodeLen>::read::<T::Dst>(reader)?;
+        #[allow(clippy::arithmetic_side_effects)]
+        let bytes = reader.borrow_exact(len * size)?;
+        // SAFETY:
+        // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact` ensures we read exactly `len * size` bytes.
+        let slice = unsafe { zero_copy::cast_slice_to_slice_t::<T::Dst>(bytes, len)? };
+        dst.write(slice);
+        Ok(())
     }
 }

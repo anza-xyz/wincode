@@ -117,6 +117,19 @@ pub trait SchemaRead<'de> {
     }
 }
 
+/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`].
+///
+/// <div class="warning">
+/// You should not manually implement this trait for your own type unless you absolutely
+/// know what you're doing. The derive macros will automatically implement this trait for your type
+/// if it is eligible for zero-copy deserialization.
+/// </div>
+///
+/// # Safety
+///
+/// - The type must not have any invalid bit patterns, no layout requirements, no endianness checks, etc.
+pub unsafe trait ZeroCopy: 'static {}
+
 /// A type that can be read (deserialized) from a [`Reader`] without borrowing from it.
 pub trait SchemaReadOwned: for<'de> SchemaRead<'de> {}
 impl<T> SchemaReadOwned for T where T: for<'de> SchemaRead<'de> {}
@@ -219,7 +232,7 @@ mod tests {
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult,
         },
-        core::marker::PhantomData,
+        core::{marker::PhantomData, ptr},
         proptest::prelude::*,
         std::{
             cell::Cell,
@@ -527,6 +540,58 @@ mod tests {
             let deserialized = CouldLeak::deserialize(&serialized);
             if let Ok(deserialized) = deserialized {
                 prop_assert_eq!(could_leak, deserialized);
+            }
+        });
+    }
+
+    // Odd use case, but it's technically valid so we test it.
+    #[test]
+    fn test_vec_of_references_borrows_from_input() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy,
+        )]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct BigBytes([u8; 512]);
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<BigBytes>(), 0..=8))| {
+            // Serialize as owned bytes.
+            let bytes = serialize(&vec).unwrap();
+            let borrowed: Vec<&BigBytes> = deserialize(&bytes).unwrap();
+
+            prop_assert_eq!(borrowed.len(), vec.len());
+            let start = bytes.as_ptr().addr();
+            let end = start + bytes.len();
+            for (i, r) in borrowed.iter().enumerate() {
+                // Values match
+                prop_assert_eq!(**r, vec[i]);
+                // References point into the input buffer
+                let p = ptr::from_ref(*r).addr();
+                prop_assert!(p >= start && p < end);
+            }
+        });
+    }
+
+    // Odd use case, but it's technically valid so we test it.
+    #[test]
+    fn test_boxed_slice_of_references_borrows_from_input() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy,
+        )]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct BigBytes([u8; 512]);
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<BigBytes>(), 0..=8))| {
+            let boxed: Box<[BigBytes]> = vec.into_boxed_slice();
+            let bytes = serialize(&boxed).unwrap();
+            let borrowed: Box<[&BigBytes]> = deserialize(&bytes).unwrap();
+
+            prop_assert_eq!(borrowed.len(), boxed.len());
+            let start = bytes.as_ptr().addr();
+            let end = start + bytes.len();
+            for (i, &r) in borrowed.iter().enumerate() {
+                prop_assert_eq!(*r, boxed[i]);
+                let p = ptr::from_ref(r).addr();
+                prop_assert!(p >= start && p < end);
             }
         });
     }
@@ -1383,5 +1448,91 @@ mod tests {
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
         }
+    }
+
+    #[test]
+    fn test_struct_zero_copy() {
+        // Owned zero-copy type.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct Zc {
+            a: u8,
+            b: [u8; 64],
+        }
+
+        // `Zc`, mirrored with references.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct ZcRefs<'a> {
+            a: &'a u8,
+            b: &'a [u8; 64],
+        }
+
+        // `Zc`, wrapped in a reference.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct ZcWrapper<'a> {
+            data: &'a Zc,
+        }
+
+        impl<'a> From<&'a ZcRefs<'a>> for Zc {
+            fn from(value: &'a ZcRefs<'a>) -> Self {
+                Self {
+                    a: *value.a,
+                    b: *value.b,
+                }
+            }
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<Zc>())| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = Zc::deserialize(&serialized).unwrap();
+            assert_eq!(data, deserialized);
+
+            let serialized_ref = serialize(&ZcRefs { a: &data.a, b: &data.b }).unwrap();
+            assert_eq!(serialized_ref, serialized);
+            let deserialized_ref = ZcRefs::deserialize(&serialized_ref).unwrap();
+            assert_eq!(data, (&deserialized_ref).into());
+
+            let serialized_wrapper = serialize(&ZcWrapper { data: &data }).unwrap();
+            assert_eq!(serialized_wrapper, serialized);
+            let deserialized_wrapper = ZcWrapper::deserialize(&serialized_wrapper).unwrap();
+            assert_eq!(data, *deserialized_wrapper.data);
+        });
+    }
+
+    #[test]
+    fn test_pod_zero_copy() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy)]
+        #[repr(transparent)]
+        struct Address([u8; 64]);
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct MyStruct {
+            #[wincode(with = "Pod<_>")]
+            address: Address,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct MyStructRef<'a> {
+            inner: &'a MyStruct,
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<MyStruct>())| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = MyStruct::deserialize(&serialized).unwrap();
+            assert_eq!(data, deserialized);
+
+            let serialized_ref = serialize(&MyStructRef { inner: &data }).unwrap();
+            assert_eq!(serialized_ref, serialized);
+            let deserialized_ref = MyStructRef::deserialize(&serialized_ref).unwrap();
+            assert_eq!(data, *deserialized_ref.inner);
+        });
     }
 }
