@@ -403,13 +403,24 @@ pub(crate) struct SchemaArgs {
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
-    /// Specifies the encoding to use for enum variants.
+    /// Specifies the encoding to use for enum discriminants.
     ///
-    /// If specified, the enum variants will be encoded using the given type's `SchemaWrite`
+    /// If specified, the enum discriminants will be encoded using the given type's `SchemaWrite`
     /// and `SchemaRead` implementations.
-    /// Otherwise, the enum variants will be encoded using the default encoding (`u32`).
+    /// Otherwise, the enum discriminants will be encoded using the default encoding (`u32`).
     #[darling(default)]
-    pub(crate) variant_encoding: Option<Type>,
+    pub(crate) tag_encoding: Option<Type>,
+}
+
+/// The default encoding to use for enum discriminants.
+///
+/// Bincode's default discriminant encoding is `u32`.
+///
+/// Note in the public APIs we refer to `tag` to mean the discriminant encoding
+/// for friendlier naming.
+#[inline]
+pub(crate) fn default_tag_encoding() -> Type {
+    parse_quote!(u32)
 }
 
 /// Metadata about the `#[repr]` attribute on a struct.

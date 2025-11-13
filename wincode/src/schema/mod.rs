@@ -732,9 +732,9 @@ mod tests {
     }
 
     #[test]
-    fn enum_with_variant_encoding_roundtrip() {
+    fn enum_with_tag_encoding_roundtrip() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
-        #[wincode(internal, variant_encoding = "u8")]
+        #[wincode(internal, tag_encoding = "u8")]
         enum Enum {
             A { name: String, id: u64 },
             B(String, Vec<u8>),
@@ -779,9 +779,9 @@ mod tests {
     }
 
     #[test]
-    fn unit_enum_with_variant_encoding_static_size() {
+    fn unit_enum_with_tag_encoding_static_size() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
-        #[wincode(internal, variant_encoding = "u8")]
+        #[wincode(internal, tag_encoding = "u8")]
         enum Enum {
             A,
             B,
@@ -833,9 +833,9 @@ mod tests {
     }
 
     #[test]
-    fn enum_variant_encoding() {
+    fn enum_tag_encoding() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
-        #[wincode(internal, variant_encoding = "u8")]
+        #[wincode(internal, tag_encoding = "u8")]
         enum EnumU8 {
             A,
             B,
@@ -849,7 +849,7 @@ mod tests {
         });
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
-        #[wincode(internal, variant_encoding = "u8")]
+        #[wincode(internal, tag_encoding = "u8")]
         enum EnumTupleU8 {
             A(u64),
             B(StructStatic),
@@ -867,7 +867,7 @@ mod tests {
         });
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
-        #[wincode(internal, variant_encoding = "u8")]
+        #[wincode(internal, tag_encoding = "u8")]
         enum EnumRecordU8 {
             A { id: u64 },
             B { data: StructStatic },

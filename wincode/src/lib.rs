@@ -228,7 +228,7 @@
 //! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
-//! |`variant_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
+//! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //!
 //! ### `no_suppress_unused`
 //!
@@ -243,7 +243,7 @@
 //!
 //! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
 //!
-//! ### `variant_encoding`
+//! ### `tag_encoding`
 //!
 //! Allows specifying the encoding/decoding schema to use for the variant discriminant. Only usable on enums.
 //!
@@ -261,7 +261,7 @@
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
 //! #[derive(SchemaWrite, SchemaRead)]
-//! #[wincode(variant_encoding = "u8")]
+//! #[wincode(tag_encoding = "u8")]
 //! enum Enum {
 //!     A,
 //!     B,
