@@ -1,7 +1,7 @@
 use {super::*, core::marker::PhantomData};
 
 /// Helpers for trusted slice operations.
-pub(crate) mod trusted_slice {
+pub(super) mod trusted_slice {
     use super::*;
 
     #[inline]
@@ -49,7 +49,7 @@ pub struct TrustedSliceReaderZeroCopy<'a> {
 }
 
 impl<'a> TrustedSliceReaderZeroCopy<'a> {
-    pub const fn new(bytes: &'a [u8]) -> Self {
+    pub(super) const fn new(bytes: &'a [u8]) -> Self {
         Self { cursor: bytes }
     }
 }
@@ -110,7 +110,7 @@ pub struct TrustedSliceReader<'a, 'b> {
 }
 
 impl<'a, 'b> TrustedSliceReader<'a, 'b> {
-    pub const fn new(bytes: &'b [u8]) -> Self {
+    pub(super) const fn new(bytes: &'b [u8]) -> Self {
         Self {
             cursor: bytes,
             _marker: PhantomData,
@@ -225,7 +225,7 @@ impl core::ops::Deref for TrustedSliceWriter<'_> {
 
 impl<'a> TrustedSliceWriter<'a> {
     #[inline(always)]
-    pub const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
+    pub(super) const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { buffer }
     }
 }
