@@ -1115,7 +1115,10 @@ where
     type Dst = &'de T::Dst;
 
     const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size, .. } => TypeMeta::Static {
+        TypeMeta::Static {
+            size,
+            zero_copy: true,
+        } => TypeMeta::Static {
             size,
             // Note: `&'de T` is NOT zero‑copy in the "raw-bytes representable" sense.
             // In this crate, `zero_copy: true` means:
@@ -1136,7 +1139,7 @@ where
             zero_copy: false,
         },
         // Should be impossible to reach.
-        _ => panic!("Type is not statically known to be zero-copy"),
+        _ => panic!("Type is not zero-copy"),
     };
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -1146,7 +1149,7 @@ where
         } = T::TYPE_META
         else {
             // Should be impossible to reach.
-            unreachable!("Type is not statically known to be zero-copy");
+            unreachable!("Type is not zero-copy");
         };
 
         let bytes = reader.borrow_exact(size)?;
@@ -1165,6 +1168,13 @@ where
 {
     type Dst = &'de [T::Dst];
 
+    const TYPE_META: TypeMeta = match T::TYPE_META {
+        TypeMeta::Static {
+            zero_copy: true, ..
+        } => TypeMeta::Dynamic,
+        _ => panic!("Type is not zero-copy"),
+    };
+
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let TypeMeta::Static {
             size,
@@ -1172,7 +1182,7 @@ where
         } = T::TYPE_META
         else {
             // Should be impossible to reach.
-            unreachable!("Type is not statically known to be zero-copy");
+            unreachable!("Type is not zero-copy");
         };
 
         let len = <BincodeLen>::read::<T::Dst>(reader)?;
