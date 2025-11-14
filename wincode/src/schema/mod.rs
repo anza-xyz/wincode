@@ -56,6 +56,7 @@ mod impls;
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
 /// Readers and writers may use this to optimize their behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMeta {
     /// The type has a statically known serialized size.
     ///
@@ -883,6 +884,100 @@ mod tests {
             };
             prop_assert_eq!(&int.to_le_bytes(), &serialized[..1]);
         });
+    }
+
+    #[test]
+    fn enum_static_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A {
+                a: u64,
+            },
+            B {
+                x: u32,
+                y: u32,
+            },
+            C {
+                a: u8,
+                b: u8,
+                c: u8,
+                d: u8,
+                e: u8,
+                f: u8,
+                g: u8,
+                h: u8,
+            },
+        }
+
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_dynamic_non_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u64 },
+            B { x: u32, y: u32 },
+            C { a: u8, b: u8 },
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_single_variant_type_meta_pass_thru() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u8, b: [u8; 32] },
+        }
+
+        // Single variant enums should use the `TypeMeta` of the variant, but the zero-copy
+        // flag should be `false`, due to the discriminant having potentially invalid bit patterns.
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
     }
 
     #[test]
