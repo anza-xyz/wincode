@@ -163,20 +163,21 @@ pub trait Serialize: SchemaWrite {
             } => {
                 // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
                 unsafe { dst.write_t(src)? };
-                dst.finish()?;
             }
             TypeMeta::Static {
                 size,
                 zero_copy: false,
             } => {
-                Self::write(&mut dst.as_trusted_for(size)?, src)?;
-                dst.finish()?;
+                let trusted = &mut dst.as_trusted_for(size)?;
+                Self::write(trusted, src)?;
+                trusted.finish()?;
             }
             TypeMeta::Dynamic => {
                 Self::write(dst, src)?;
-                dst.finish()?;
             }
         }
+
+        dst.finish()?;
 
         Ok(())
     }
