@@ -2,7 +2,7 @@ use {
     crate::common::{
         default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
         get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
-        StructRepr, TraitImpl, TypeExt, Variant,
+        StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -247,20 +247,7 @@ fn impl_enum(
     let default_tag_encoding = default_tag_encoding();
     let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
 
-    // Note that all enums except unit enums are never static.
-    let mut type_meta_impl = quote!(TypeMeta::Dynamic);
-    if variants.iter().all(|variant| variant.fields.is_unit()) {
-        // If all variants are unit, we know up front that the static size is the size of the discriminant.
-        type_meta_impl = quote! {
-            const {
-                match <#tag_encoding as SchemaRead<'de>>::TYPE_META {
-                    // Unit enums are never zero-copy, as they have invalid bit patterns.
-                    TypeMeta::Static { size, .. } => TypeMeta::Static { size, zero_copy: false },
-                    TypeMeta::Dynamic => TypeMeta::Dynamic,
-                }
-            }
-        };
-    }
+    let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaRead, tag_encoding);
 
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
         let variant_ident = &variant.ident;

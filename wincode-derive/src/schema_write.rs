@@ -1,7 +1,7 @@
 use {
     crate::common::{
         default_tag_encoding, extract_repr, get_crate_name, get_src_dst, suppress_unused_fields,
-        Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant,
+        Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -75,20 +75,8 @@ fn impl_enum(
     let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
     let mut size_of_impl = Vec::with_capacity(variants.len());
     let mut write_impl = Vec::with_capacity(variants.len());
-    // Note that all enums except unit enums are never static.
-    let mut type_meta_impl = quote!(TypeMeta::Dynamic);
-    if variants.iter().all(|variant| variant.fields.is_unit()) {
-        // If all variants are unit, we know up front that the static size is the size of the discriminant.
-        type_meta_impl = quote! {
-            const {
-                match <#tag_encoding as SchemaWrite>::TYPE_META {
-                    // Unit enums are never zero-copy, as they have invalid bit patterns.
-                    TypeMeta::Static { size, .. } => TypeMeta::Static { size, zero_copy: false },
-                    TypeMeta::Dynamic => TypeMeta::Dynamic,
-                }
-            }
-        };
-    }
+
+    let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaWrite, tag_encoding);
 
     for (i, variant) in variants.iter().enumerate() {
         let variant_ident = &variant.ident;
