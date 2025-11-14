@@ -41,6 +41,10 @@ const fn read_size_limit(len: usize) -> ReadError {
 /// Returns [`ReadError::UnsupportedZeroCopy`] for readers that do not support zero-copy.
 pub trait Reader<'a> {
     /// A variant of the [`Reader`] that can elide bounds checking within a given window.
+    ///
+    /// Trusted variants of the [`Reader`] should generally not be constructed directly,
+    /// but rather by calling [`Reader::as_trusted_for`] on a trusted [`Reader`].
+    /// This will ensure that the safety invariants are upheld.
     type Trusted<'b>: Reader<'a>
     where
         Self: 'b;
@@ -205,6 +209,10 @@ pub type WriteResult<T> = core::result::Result<T, WriteError>;
 /// Trait for structured writing of bytes into a source of potentially uninitialized memory.
 pub trait Writer {
     /// A variant of the [`Writer`] that can elide bounds checking within a given window.
+    ///
+    /// Trusted variants of the [`Writer`] should generally not be constructed directly,
+    /// but rather by calling [`Writer::as_trusted_for`] on a trusted [`Writer`].
+    /// This will ensure that the safety invariants are upheld.
     type Trusted<'a>: Writer
     where
         Self: 'a;
@@ -263,5 +271,8 @@ pub trait Writer {
     }
 }
 
+mod cursor;
 mod slice;
-pub use slice::*;
+#[cfg(feature = "alloc")]
+mod vec;
+pub use {cursor::Cursor, slice::*};

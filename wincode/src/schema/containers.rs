@@ -167,8 +167,9 @@ pub struct Elem<T>(PhantomData<T>);
 /// # Safety
 ///
 /// - The type must allow any bit pattern (e.g., no `bool`s, no `char`s, etc.)
-/// - If used on a compound type like a struct or tuple, all fields must be also be `Pod` and its
-///   layout must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`).
+/// - If used on a compound type like a struct, all fields must be also be `Pod`, its
+///   layout must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`), and the struct
+///   must not have any padding.
 /// - Must not contain references or pointers (includes types like `Vec` or `Box`).
 ///     - Note, you may use `Pod` *inside* types like `Vec` or `Box`, e.g., `Vec<Pod<T>>` or `Box<[Pod<T>]>`,
 ///       but specifying `Pod` on the outer type is invalid.

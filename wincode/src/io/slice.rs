@@ -38,9 +38,12 @@ pub(crate) mod trusted_slice {
 
 /// In-memory [`Reader`] that does not perform bounds checking, with zero-copy support.
 ///
-/// Methods will panic if reads go out of bounds, so ensure that
-/// the chain of [`SchemaRead`](crate::SchemaRead) implementations that
-/// follow have statically known read requirements.
+/// Generally this should not be constructed directly, but rather by calling [`Reader::as_trusted_for`]
+/// on a trusted [`Reader`]. This will ensure that the safety invariants are upheld.
+///
+/// # Safety
+///
+/// - The inner buffer must have sufficient capacity for all reads. It is UB if this is not upheld.
 pub struct TrustedSliceReaderZeroCopy<'a> {
     cursor: &'a [u8],
 }
@@ -93,11 +96,14 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
 
 /// In-memory [`Reader`] that does not perform bounds checking.
 ///
+/// Generally this should not be constructed directly, but rather by calling [`Reader::as_trusted_for`]
+/// on a trusted [`Reader`]. This will ensure that the safety invariants are upheld.
+///
 /// Use [`TrustedSliceReaderZeroCopy`] for zero-copy support.
 ///
-/// Methods will panic if reads go out of bounds, so ensure that
-/// the chain of [`SchemaRead`](crate::SchemaRead) implementations that
-/// follow have statically known read requirements.
+/// # Safety
+///
+/// - The inner buffer must have sufficient capacity for all reads. It is UB if this is not upheld.
 pub struct TrustedSliceReader<'a, 'b> {
     cursor: &'b [u8],
     _marker: PhantomData<&'a ()>,
@@ -198,9 +204,12 @@ impl<'a> Reader<'a> for &'a [u8] {
 
 /// In-memory [`Writer`] that does not perform bounds checking.
 ///
-/// Methods will panic if writes go out of bounds, so ensure that
-/// the chain of [`SchemaWrite`](crate::SchemaWrite) implementations that
-/// follow have statically known size requirements.
+/// Generally this should not be constructed directly, but rather by calling [`Writer::as_trusted_for`]
+/// on a trusted [`Writer`]. This will ensure that the safety invariants are upheld.
+///
+/// # Safety
+///
+/// - The inner buffer must have sufficient capacity for all writes. It is UB if this is not upheld.
 pub struct TrustedSliceWriter<'a> {
     buffer: &'a mut [MaybeUninit<u8>],
 }
@@ -326,6 +335,10 @@ mod tests {
             }
             {
                 let mut $reader = TrustedSliceReaderZeroCopy::new($bytes);
+                $body
+            }
+            {
+                let mut $reader = Cursor::new($bytes);
                 $body
             }
         }};

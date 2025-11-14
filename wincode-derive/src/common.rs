@@ -15,8 +15,9 @@ use {
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
-        DeriveInput, GenericArgument, Generics, Ident, Lifetime, Member, Path, Type, TypeImplTrait,
-        TypeParamBound, TypeReference, TypeTraitObject, Visibility,
+        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
+        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
+        Visibility,
     },
 };
 
@@ -227,7 +228,13 @@ impl FieldsExt for Fields<Field> {
             // for each field.
             // If any field is not `TypeMeta::Static`, the entire match will fail, and we will fall through to the `Dynamic` case.
             if let (#(TypeMeta::Static { size: #anon_idents, zero_copy: #zero_copy_idents }),*) = (#tuple_expansion) {
-                TypeMeta::Static { size: #(#anon_idents)+*, zero_copy: #is_zero_copy_eligible && #(#zero_copy_idents)&&* }
+                let serialized_size = #(#anon_idents)+*;
+                // Bincode never serializes padding, so for types to qualify for zero-copy, the summed serialized size of
+                // the fields must be equal to the in-memory size of the type. This is because zero-copy types
+                // may be read/written directly using their in-memory representation; padding disqualifies a type
+                // from this kind of optimization.
+                let no_padding = serialized_size == core::mem::size_of::<Self>();
+                TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && #(#zero_copy_idents)&&* }
             } else {
                 TypeMeta::Dynamic
             }
@@ -281,6 +288,23 @@ fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone 
 pub(crate) struct Variant {
     pub(crate) ident: Ident,
     pub(crate) fields: Fields<Field>,
+    #[darling(default)]
+    pub(crate) tag: Option<Expr>,
+}
+
+impl Variant {
+    /// Get the discriminant expression for the variant.
+    ///
+    /// If the variant has a `tag` attribute, return it.
+    /// Otherwise, return an integer literal with the given field index (the bincode default).
+    pub(crate) fn discriminant(&self, field_index: usize) -> Cow<'_, Expr> {
+        self.tag.as_ref().map(Cow::Borrowed).unwrap_or_else(|| {
+            Cow::Owned(Expr::Lit(ExprLit {
+                lit: Lit::Int(LitInt::new(&field_index.to_string(), Span::call_site())),
+                attrs: vec![],
+            }))
+        })
+    }
 }
 
 pub(crate) type ImplBody = Data<Variant, Field>;
@@ -385,6 +409,24 @@ pub(crate) struct SchemaArgs {
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
+    /// Specifies the encoding to use for enum discriminants.
+    ///
+    /// If specified, the enum discriminants will be encoded using the given type's `SchemaWrite`
+    /// and `SchemaRead` implementations.
+    /// Otherwise, the enum discriminants will be encoded using the default encoding (`u32`).
+    #[darling(default)]
+    pub(crate) tag_encoding: Option<Type>,
+}
+
+/// The default encoding to use for enum discriminants.
+///
+/// Bincode's default discriminant encoding is `u32`.
+///
+/// Note in the public APIs we refer to `tag` to mean the discriminant encoding
+/// for friendlier naming.
+#[inline]
+pub(crate) fn default_tag_encoding() -> Type {
+    parse_quote!(u32)
 }
 
 /// Metadata about the `#[repr]` attribute on a struct.
