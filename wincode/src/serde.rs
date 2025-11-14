@@ -18,17 +18,16 @@ use {
 /// Using containers (indirect deserialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Deserialize, containers::{self, Pod}};
+/// # use wincode::{Deserialize, containers};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
-/// // Use the optimized `Pod` container
-/// type Dst = containers::Vec<Pod<u8>>;
+/// type Dst = containers::Vec<u8>;
 /// let deserialized = Dst::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct deserialization (`T::Dst = T`) (non-optimized):
+/// Using direct deserialization (`T::Dst = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
@@ -51,10 +50,19 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
     #[inline]
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { src.copy_into_t(dst)? };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
                 Self::read(&mut src.as_trusted_for(size)?, dst)?;
             }
-            _ => {
+            TypeMeta::Dynamic => {
                 Self::read(&mut src, dst)?;
             }
         }
@@ -82,10 +90,19 @@ pub trait DeserializeOwned: SchemaReadOwned {
         dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
     ) -> ReadResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { src.copy_into_t(dst)? };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
                 Self::read(&mut src.as_trusted_for(size)?, dst)?;
             }
-            _ => {
+            TypeMeta::Dynamic => {
                 Self::read(src, dst)?;
             }
         }
@@ -103,17 +120,16 @@ impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
 /// Using containers (indirect serialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Serialize, containers::{self, Pod}};
+/// # use wincode::{Serialize, containers};
 /// let vec: Vec<u8> = vec![1, 2, 3];
-/// // Use the optimized `Pod` container
-/// type Src = containers::Vec<Pod<u8>>;
+/// type Src = containers::Vec<u8>;
 /// let bytes = Src::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct serialization (`T::Src = T`) (non-optimized):
+/// Using direct serialization (`T::Src = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
@@ -142,17 +158,28 @@ pub trait Serialize: SchemaWrite {
     #[inline]
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                Self::write(&mut dst.as_trusted_for(size)?, src)?;
-                dst.finish()?;
-                Ok(())
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { dst.write_t(src)? };
             }
-            _ => {
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
+                let trusted = &mut dst.as_trusted_for(size)?;
+                Self::write(trusted, src)?;
+                trusted.finish()?;
+            }
+            TypeMeta::Dynamic => {
                 Self::write(dst, src)?;
-                dst.finish()?;
-                Ok(())
             }
         }
+
+        dst.finish()?;
+
+        Ok(())
     }
 
     /// Get the size in bytes of the type when serialized.
