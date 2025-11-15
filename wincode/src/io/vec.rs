@@ -38,7 +38,7 @@ impl<'a> Writer for TrustedVecWriter<'a> {
         Ok(())
     }
 
-    fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedVecWriter::new(self.inner))
     }
 }
@@ -82,7 +82,7 @@ impl Writer for Vec<u8> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         self.reserve(n_bytes);
         // `TrustedVecWriter` will update the length of the vector as it writes.
         Ok(TrustedVecWriter::new(self))
@@ -119,14 +119,12 @@ mod tests {
             let quarter = half / 2;
             vec.write(&bytes[..half]).unwrap();
 
-            let mut t1 = vec
-                .as_trusted_for(bytes.len() - half)
-                .unwrap();
+            let mut t1 = unsafe { vec.as_trusted_for(bytes.len() - half) }.unwrap();
             t1
                 .write(&bytes[half..half + quarter])
                 .unwrap();
 
-            let mut t2 = t1.as_trusted_for(quarter).unwrap();
+            let mut t2 = unsafe { t1.as_trusted_for(quarter) }.unwrap();
             t2.write(&bytes[half + quarter..]).unwrap();
 
             prop_assert_eq!(vec, bytes);
@@ -139,14 +137,12 @@ mod tests {
             let quarter = half / 2;
             vec.write(&bytes[..half]).unwrap();
 
-            let mut t1 = vec
-                .as_trusted_for(bytes.len() - half)
-                .unwrap();
+            let mut t1 = unsafe { vec.as_trusted_for(bytes.len() - half) }.unwrap();
             t1
                 .write(&bytes[half..half + quarter])
                 .unwrap();
 
-            let mut t2 = t1.as_trusted_for(quarter).unwrap();
+            let mut t2 = unsafe { t1.as_trusted_for(quarter) }.unwrap();
             t2.write(&bytes[half + quarter..]).unwrap();
 
             prop_assert_eq!(&vec[..5], &[0; 5]);

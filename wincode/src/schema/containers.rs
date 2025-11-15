@@ -355,7 +355,9 @@ where
         match T::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 #[allow(clippy::arithmetic_side_effects)]
-                let mut reader = reader.as_trusted_for(size * len)?;
+                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                // will consume `size * len` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
                 for i in 0..len {
                     T::read(&mut reader, unsafe { &mut *ptr })?;
                     unsafe {
@@ -608,8 +610,10 @@ macro_rules! impl_heap_slice {
 
                 match T::TYPE_META {
                     TypeMeta::Static { size, .. } => {
+                        // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                        // will consume `size * len` bytes, fully consuming the trusted window.
                         #[allow(clippy::arithmetic_side_effects)]
-                        let reader = &mut reader.as_trusted_for(size * len)?;
+                        let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
                         for i in 0..len {
                             let slot = unsafe { &mut *raw_base.add(i) };
                             T::read(reader, slot)?;

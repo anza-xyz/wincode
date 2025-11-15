@@ -167,8 +167,11 @@ where
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
-        let mut writer =
-            writer.as_trusted_for(Len::write_bytes_needed(src.len())? + size * src.len())?;
+        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
+        // SAFETY: `needed` is the size of the encoded length plus the size of the items.
+        // `Len::write` and len writes of `T::Src` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(&mut writer, src.len())?;
         for item in src {
             T::write(&mut writer, item)?;
@@ -195,7 +198,11 @@ where
     T::Src: Sized,
 {
     if type_equal::<T::Src, u8>() {
-        let writer = &mut writer.as_trusted_for(Len::write_bytes_needed(src.len())? + src.len())?;
+        let needed = Len::write_bytes_needed(src.len())? + src.len();
+        // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
+        // `Len::write` and `writer.write(src)` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer, src.len())?;
         writer.write(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
         writer.finish()?;
