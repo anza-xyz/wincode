@@ -117,7 +117,11 @@ fn impl_struct(
 
             match <Self as SchemaRead<'de>>::TYPE_META {
                 TypeMeta::Static { size, .. } => {
-                    let reader = &mut reader.as_trusted_for(size)?;
+                    // SAFETY: `size` is the serialized size of the struct, which is the sum
+                    // of the serialized sizes of the fields.
+                    // Calling `read` on each field will consume exactly `size` bytes,
+                    // fully consuming the trusted window.
+                    let reader = &mut unsafe { reader.as_trusted_for(size) }?;
                     #(#read_impl)*
                 }
                 _ => {
@@ -310,7 +314,12 @@ fn impl_enum(
                 quote! {
                     #discriminant => {
                         if let (#(TypeMeta::Static { size: #static_anon_idents, .. }),*) = (#(#static_targets),*) {
-                            let reader = &mut reader.as_trusted_for(#(#static_anon_idents)+*)?;
+                            let summed_sizes = #(#static_anon_idents)+*;
+                            // SAFETY: `summed_sizes` is the sum of the static sizes of the fields,
+                            // which is the serialized size of the variant.
+                            // Calling `read` on each field will consume exactly `summed_sizes` bytes,
+                            // fully consuming the trusted window.
+                            let reader = &mut unsafe { reader.as_trusted_for(summed_sizes) }?;
                             #(#read)*
                             dst.write(#constructor);
                         } else {

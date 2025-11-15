@@ -49,7 +49,11 @@ fn impl_struct(
         quote! {
             match <Self as SchemaWrite>::TYPE_META {
                 TypeMeta::Static { size, .. } => {
-                    let writer = &mut writer.as_trusted_for(size)?;
+                    // SAFETY: `size` is the serialized size of the struct, which is the sum
+                    // of the serialized sizes of the fields.
+                    // Calling `write` on each field will write exactly `size` bytes,
+                    // fully initializing the trusted window.
+                    let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                     #(#writes)*
                     writer.finish()?;
                 }
@@ -156,7 +160,12 @@ fn impl_enum(
                     quote! {
                         #match_case => {
                             if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite>::TYPE_META #(,#static_targets)*) {
-                                let writer = &mut writer.as_trusted_for(disc_size + #(#static_anon_idents)+*)?;
+                                let summed_sizes = disc_size + #(#static_anon_idents)+*;
+                                // SAFETY: `summed_sizes` is the sum of the static sizes of the fields + the discriminant size,
+                                // which is the serialized size of the variant.
+                                // Writing the discriminant and then calling `write` on each field will write
+                                // exactly `summed_sizes` bytes, fully initializing the trusted window.
+                                let writer = &mut unsafe { writer.as_trusted_for(summed_sizes) }?;
                                 #write_discriminant;
                                 #(#write)*
                                 writer.finish()?;

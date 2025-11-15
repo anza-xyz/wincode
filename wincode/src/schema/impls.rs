@@ -448,7 +448,9 @@ where
         let base = dst.as_mut_ptr();
         let mut guard = SliceDropGuard::<T::Dst>::new(base);
         if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            let reader = &mut reader.as_trusted_for(size)?;
+            // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
+            // `N` reads of `T` will consume `size` bytes, fully consuming the trusted window.
+            let reader = &mut unsafe { reader.as_trusted_for(size) }?;
             for i in 0..N {
                 let slot = unsafe { &mut *base.add(i) };
                 T::read(reader, slot)?;
@@ -504,7 +506,9 @@ where
         }
 
         if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            let writer = &mut writer.as_trusted_for(size)?;
+            // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
+            // `N` writes of `T` will write `size` bytes, fully initializing the trusted window.
+            let writer = &mut unsafe { writer.as_trusted_for(size) }?;
             for item in value {
                 T::write(writer, item)?;
             }
@@ -883,11 +887,13 @@ macro_rules! impl_seq {
             #[inline]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
                 if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                    let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
-                    let writer = &mut writer.as_trusted_for(
-                        <BincodeLen>::write_bytes_needed(src.len())? + (key_size + value_size) * src.len()
-                    )?;
-                    <BincodeLen>::write(writer, src.len())?;
+                    let needed = <BincodeLen>::write_bytes_needed(len)? + (key_size + value_size) * len;
+                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
+                    // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
+                    let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
+                    <BincodeLen>::write(writer, len)?;
                     for (k, v) in src.iter() {
                         $key::write(writer, k)?;
                         $value::write(writer, v)?;
@@ -919,7 +925,9 @@ macro_rules! impl_seq {
 
                 let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     #[allow(clippy::arithmetic_side_effects)]
-                    let reader = &mut reader.as_trusted_for((key_size + value_size) * len)?;
+                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
+                    // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
+                    let reader = &mut unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
                     (0..len)
                         .map(|_| {
                             let k = $key::get(reader)?;
@@ -977,7 +985,9 @@ macro_rules! impl_seq {
                 let map = match $key::TYPE_META {
                     TypeMeta::Static { size, .. } => {
                         #[allow(clippy::arithmetic_side_effects)]
-                        let reader = &mut reader.as_trusted_for(size * len)?;
+                        // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                        // will consume `size * len` bytes, fully consuming the trusted window.
+                        let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
                         (0..len)
                             .map(|_| $key::get(reader))
                             .collect::<ReadResult<_>>()?

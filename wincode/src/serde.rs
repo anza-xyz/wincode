@@ -52,7 +52,10 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { src.as_trusted_for(size) }?;
+                Self::read(&mut reader, dst)?;
             }
             _ => {
                 Self::read(&mut src, dst)?;
@@ -83,7 +86,10 @@ pub trait DeserializeOwned: SchemaReadOwned {
     ) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { src.as_trusted_for(size) }?;
+                Self::read(&mut reader, dst)?;
             }
             _ => {
                 Self::read(src, dst)?;
@@ -143,16 +149,19 @@ pub trait Serialize: SchemaWrite {
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
-                Self::write(&mut dst.as_trusted_for(size)?, src)?;
-                dst.finish()?;
-                Ok(())
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single write of `Self::Src`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut writer = unsafe { dst.as_trusted_for(size) }?;
+                Self::write(&mut writer, src)?;
+                writer.finish()?;
             }
             _ => {
                 Self::write(dst, src)?;
-                dst.finish()?;
-                Ok(())
             }
         }
+
+        dst.finish()?;
+        Ok(())
     }
 
     /// Get the size in bytes of the type when serialized.
