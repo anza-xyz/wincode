@@ -553,7 +553,7 @@ impl<'ast> VisitMut for InferGeneric<'ast> {
                 .pop_front()
                 .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
                 .clone();
-            array.elem = Box::new(ty);
+            *array.elem = ty;
         }
         visit_mut::visit_type_array_mut(self, array);
     }
