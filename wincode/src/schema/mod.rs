@@ -1583,7 +1583,7 @@ mod tests {
 
             let wincode_deserialized: Result<Vec<u8>, Error> = deserialize(&wincode_serialized).unwrap();
             let bincode_deserialized: Result<Vec<u8>, Error> = bincode::deserialize(&bincode_serialized).unwrap();
-            prop_assert_eq!(value, wincode_deserialized.clone());
+            prop_assert_eq!(&value, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
         });
     }
