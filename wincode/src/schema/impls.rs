@@ -583,6 +583,18 @@ where
 {
     type Dst = Result<T::Dst, E::Dst>;
 
+    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
+        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
+            if t_size == e_size =>
+        {
+            TypeMeta::Static {
+                size: size_of::<u32>() + t_size,
+                zero_copy: false,
+            }
+        }
+        _ => TypeMeta::Dynamic,
+    };
+
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = u32::get(reader)?;
@@ -619,13 +631,25 @@ where
 {
     type Src = Result<T::Src, E::Src>;
 
+    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
+        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
+            if t_size == e_size =>
+        {
+            TypeMeta::Static {
+                size: size_of::<u32>() + t_size,
+                zero_copy: false,
+            }
+        }
+        _ => TypeMeta::Dynamic,
+    };
+
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
             // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
-            Result::Ok(value) => Ok(4 + T::size_of(value)?),
-            Result::Err(error) => Ok(4 + E::size_of(error)?),
+            Result::Ok(value) => Ok(size_of::<u32>() + T::size_of(value)?),
+            Result::Err(error) => Ok(size_of::<u32>() + E::size_of(error)?),
         }
     }
 

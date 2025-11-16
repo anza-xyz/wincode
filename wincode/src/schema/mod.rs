@@ -1627,4 +1627,71 @@ mod tests {
         assert_eq!(value, deserialized);
     }
 
+    #[test]
+    fn test_result_type_meta_static() {
+        // Result<u64, u64> should be TypeMeta::Static because both T and E are Static with equal sizes
+        assert!(matches!(
+            <Result<u64, u64> as SchemaRead>::TYPE_META,
+            TypeMeta::Static { size: 12, zero_copy: false }
+        ));
+
+        let value: Result<u64, u64> = Ok(42);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, u64> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let bincode_serialized = bincode::serialize(&value).unwrap();
+        assert_eq!(serialized, bincode_serialized);
+
+        let value: Result<u64, u64> = Err(99);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, u64> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+        let bincode_serialized = bincode::serialize(&value).unwrap();
+        assert_eq!(serialized, bincode_serialized);
+    }
+
+    #[test]
+    fn test_result_type_meta_dynamic() {
+        // Result<u64, String> should be TypeMeta::Dynamic because String is Dynamic
+        assert!(matches!(
+            <Result<u64, String> as SchemaRead>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+
+        let value: Result<u64, String> = Ok(42);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let bincode_serialized = bincode::serialize(&value).unwrap();
+        assert_eq!(serialized, bincode_serialized);
+
+        let value: Result<u64, String> = Err("error message".to_string());
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+        let bincode_serialized = bincode::serialize(&value).unwrap();
+        assert_eq!(serialized, bincode_serialized);
+    }
+
+    #[test]
+    fn test_result_type_meta_different_sizes() {
+        // Result<u64, u32> should be TypeMeta::Dynamic because T and E have different sizes
+        assert!(matches!(
+            <Result<u64, u32> as SchemaRead>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+
+        let value: Result<u64, u32> = Ok(42);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, u32> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let value: Result<u64, u32> = Err(99);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, u32> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
 }
