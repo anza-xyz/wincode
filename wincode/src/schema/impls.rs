@@ -599,24 +599,10 @@ where
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = u32::get(reader)?;
         match variant {
-            0 => {
-                let mut value = MaybeUninit::uninit();
-                T::read(reader, &mut value)?;
-                // SAFETY:
-                // - `T::read` must properly initialize the `T::Dst`.
-                unsafe {
-                    dst.write(Result::Ok(value.assume_init()));
-                }
-            }
-            1 => {
-                let mut value = MaybeUninit::uninit();
-                E::read(reader, &mut value)?;
-                unsafe {
-                    dst.write(Result::Err(value.assume_init()));
-                }
-            }
+            0 => dst.write(Result::Ok(T::get(reader)?)),
+            1 => dst.write(Result::Err(E::get(reader)?)),
             _ => return Err(invalid_tag_encoding(variant as usize)),
-        }
+        };
 
         Ok(())
     }
