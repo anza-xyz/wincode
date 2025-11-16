@@ -1540,19 +1540,17 @@ mod tests {
     }
 
     #[test]
-    fn test_result_ok() {
-        let value: Result<u64, String> = Ok(42);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
-    }
+    fn test_result_basic() {
+        proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-    #[test]
-    fn test_result_err() {
-        let value: Result<u64, String> = Err("error message".to_string());
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+            let wincode_deserialized: Result<u64, String> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, String> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 
     #[test]
@@ -1590,41 +1588,32 @@ mod tests {
 
     #[test]
     fn test_result_nested() {
-        let value: Result<Result<u64, String>, u32> = Ok(Ok(42));
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+        proptest!(proptest_cfg(), |(value: Result<Result<u64, String>, u32>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-        let value: Result<Result<u64, String>, u32> = Ok(Err("inner error".to_string()));
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
-
-        let value: Result<Result<u64, String>, u32> = Err(99);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+            let wincode_deserialized: Result<Result<u64, String>, u32> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<Result<u64, String>, u32> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 
     #[test]
     fn test_result_with_complex_types() {
         use std::collections::HashMap;
 
-        let mut map = HashMap::new();
-        map.insert("key1".to_string(), vec![1, 2, 3]);
-        map.insert("key2".to_string(), vec![4, 5, 6]);
+        proptest!(proptest_cfg(), |(value: Result<HashMap<String, Vec<u32>>, bool>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-        let value: Result<HashMap<String, Vec<u32>>, bool> = Ok(map.clone());
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<HashMap<String, Vec<u32>>, bool> =
-            deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
-
-        let value: Result<HashMap<String, Vec<u32>>, bool> = Err(true);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<HashMap<String, Vec<u32>>, bool> =
-            deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+            let wincode_deserialized: Result<HashMap<String, Vec<u32>>, bool> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<HashMap<String, Vec<u32>>, bool> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 
     #[test]
@@ -1638,20 +1627,16 @@ mod tests {
             }
         ));
 
-        let value: Result<u64, u64> = Ok(42);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, u64> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+        proptest!(proptest_cfg(), |(value: Result<u64, u64>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-        let bincode_serialized = bincode::serialize(&value).unwrap();
-        assert_eq!(serialized, bincode_serialized);
-
-        let value: Result<u64, u64> = Err(99);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, u64> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
-        let bincode_serialized = bincode::serialize(&value).unwrap();
-        assert_eq!(serialized, bincode_serialized);
+            let wincode_deserialized: Result<u64, u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 
     #[test]
@@ -1662,20 +1647,16 @@ mod tests {
             TypeMeta::Dynamic
         ));
 
-        let value: Result<u64, String> = Ok(42);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+        proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-        let bincode_serialized = bincode::serialize(&value).unwrap();
-        assert_eq!(serialized, bincode_serialized);
-
-        let value: Result<u64, String> = Err("error message".to_string());
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
-        let bincode_serialized = bincode::serialize(&value).unwrap();
-        assert_eq!(serialized, bincode_serialized);
+            let wincode_deserialized: Result<u64, String> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, String> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 
     #[test]
@@ -1686,14 +1667,15 @@ mod tests {
             TypeMeta::Dynamic
         ));
 
-        let value: Result<u64, u32> = Ok(42);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, u32> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+        proptest!(proptest_cfg(), |(value: Result<u64, u32>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-        let value: Result<u64, u32> = Err(99);
-        let serialized = serialize(&value).unwrap();
-        let deserialized: Result<u64, u32> = deserialize(&serialized).unwrap();
-        assert_eq!(value, deserialized);
+            let wincode_deserialized: Result<u64, u32> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, u32> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 }
