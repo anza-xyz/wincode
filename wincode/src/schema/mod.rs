@@ -1632,7 +1632,10 @@ mod tests {
         // Result<u64, u64> should be TypeMeta::Static because both T and E are Static with equal sizes
         assert!(matches!(
             <Result<u64, u64> as SchemaRead>::TYPE_META,
-            TypeMeta::Static { size: 12, zero_copy: false }
+            TypeMeta::Static {
+                size: 12,
+                zero_copy: false
+            }
         ));
 
         let value: Result<u64, u64> = Ok(42);
@@ -1693,5 +1696,4 @@ mod tests {
         let deserialized: Result<u64, u32> = deserialize(&serialized).unwrap();
         assert_eq!(value, deserialized);
     }
-
 }
