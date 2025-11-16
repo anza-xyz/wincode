@@ -1538,4 +1538,93 @@ mod tests {
             prop_assert_eq!(val, schema_deserialized);
         }
     }
+
+    #[test]
+    fn test_result_ok() {
+        let value: Result<u64, String> = Ok(42);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
+    #[test]
+    fn test_result_err() {
+        let value: Result<u64, String> = Err("error message".to_string());
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<u64, String> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
+    #[test]
+    fn test_result_bincode_equivalence() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(
+            Serialize,
+            Deserialize,
+            Debug,
+            PartialEq,
+            Clone,
+            proptest_derive::Arbitrary,
+            SchemaWrite,
+            SchemaRead,
+        )]
+        #[wincode(internal)]
+        enum Error {
+            NotFound,
+            InvalidInput(String),
+            Other(u32),
+        }
+
+        proptest!(proptest_cfg(), |(value: Result<Vec<u8>, Error>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<Vec<u8>, Error> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<Vec<u8>, Error> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(value, wincode_deserialized.clone());
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_nested() {
+        let value: Result<Result<u64, String>, u32> = Ok(Ok(42));
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let value: Result<Result<u64, String>, u32> = Ok(Err("inner error".to_string()));
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let value: Result<Result<u64, String>, u32> = Err(99);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<Result<u64, String>, u32> = deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
+    #[test]
+    fn test_result_with_complex_types() {
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), vec![1, 2, 3]);
+        map.insert("key2".to_string(), vec![4, 5, 6]);
+
+        let value: Result<HashMap<String, Vec<u32>>, bool> = Ok(map.clone());
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<HashMap<String, Vec<u32>>, bool> =
+            deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+
+        let value: Result<HashMap<String, Vec<u32>>, bool> = Err(true);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Result<HashMap<String, Vec<u32>>, bool> =
+            deserialize(&serialized).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
 }
