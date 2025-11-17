@@ -15,7 +15,7 @@ pub struct TrustedVecWriter<'a> {
 }
 
 impl<'a> TrustedVecWriter<'a> {
-    pub fn new(inner: &'a mut Vec<u8>) -> Self {
+    pub const fn new(inner: &'a mut Vec<u8>) -> Self {
         Self { inner }
     }
 }

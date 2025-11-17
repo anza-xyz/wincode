@@ -381,7 +381,7 @@ pub struct TrustedVecWriter<'a> {
 
 #[cfg(feature = "alloc")]
 impl<'a> TrustedVecWriter<'a> {
-    pub fn new(inner: &'a mut [MaybeUninit<u8>], pos: &'a mut usize) -> Self {
+    pub const fn new(inner: &'a mut [MaybeUninit<u8>], pos: &'a mut usize) -> Self {
         Self { inner, pos }
     }
 }

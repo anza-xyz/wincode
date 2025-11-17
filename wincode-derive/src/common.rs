@@ -105,7 +105,7 @@ impl Field {
     ///
     /// If the field has a `with` attribute, return it.
     /// Otherwise, return the type.
-    pub(crate) fn target(&self) -> &Type {
+    pub(crate) const fn target(&self) -> &Type {
         if let Some(with) = &self.with {
             with
         } else {
@@ -447,7 +447,7 @@ impl StructRepr {
     /// Check if this `#[repr]` attribute is eligible for zero-copy deserialization.
     ///
     /// Zero-copy deserialization is only supported for `#[repr(transparent)]` and `#[repr(C)]` structs.
-    pub(crate) fn is_zero_copy_eligible(&self) -> bool {
+    pub(crate) const fn is_zero_copy_eligible(&self) -> bool {
         matches!(self.layout, Layout::Transparent | Layout::C)
     }
 }
@@ -492,7 +492,7 @@ pub(crate) fn extract_repr(input: &DeriveInput, trait_impl: TraitImpl) -> Result
 /// Visitor to recursively collect the generic arguments of a type.
 struct GenericStack<'ast>(VecDeque<&'ast Type>);
 impl<'ast> GenericStack<'ast> {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(VecDeque::new())
     }
 }
