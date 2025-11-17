@@ -366,12 +366,60 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
         }
 
         let buf = reader.fill_exact(len)?;
-        // TODO: Could implement a manual decoder that avoids UTF-8 validate + chars()
-        // and instead performs the UTF-8 validity checks and produces a `char` directly.
-        // Some quick micro-benchmarking revealed a roughly 2x speedup is possible,
-        // but this is on the order of a 1-2ns/byte delta.
-        let str = core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-        let c = str.chars().next().unwrap();
+
+        // Manual UTF-8 decoder for 2x speedup by avoiding intermediate str allocation
+        let code_point = match len {
+            2 => {
+                let b1 = buf[1];
+                // Validate continuation byte (must be 10xxxxxx)
+                if (b1 & 0xC0) != 0x80 {
+                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                    unreachable!();
+                }
+                ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
+            }
+            3 => {
+                let b1 = buf[1];
+                let b2 = buf[2];
+                if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
+                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                    unreachable!();
+                }
+                // Check for overlong encodings (< U+0800) and surrogates (U+D800..U+DFFF)
+                if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
+                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                    unreachable!();
+                }
+                ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
+            }
+            4 => {
+                let b1 = buf[1];
+                let b2 = buf[2];
+                let b3 = buf[3];
+                if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
+                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                    unreachable!();
+                }
+                if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
+                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                    unreachable!();
+                }
+                ((b0 & 0x07) as u32) << 18
+                    | ((b1 & 0x3F) as u32) << 12
+                    | ((b2 & 0x3F) as u32) << 6
+                    | ((b3 & 0x3F) as u32)
+            }
+            _ => unreachable!(),
+        };
+
+        let c = match char::from_u32(code_point) {
+            Some(c) => c,
+            None => {
+                core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
+                unreachable!();
+            }
+        };
+
         unsafe { reader.consume_unchecked(len) };
         dst.write(c);
         Ok(())
