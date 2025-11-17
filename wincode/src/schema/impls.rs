@@ -367,14 +367,20 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
 
         let buf = reader.fill_exact(len)?;
 
+        // We re-validate with from_utf8 only on error path to get proper Utf8Error.
+        #[inline]
+        #[cold]
+        fn utf8_error(buf: &[u8]) -> crate::error::ReadError {
+            invalid_utf8_encoding(core::str::from_utf8(buf).unwrap_err())
+        }
+
         // Manual UTF-8 decoder for 2x speedup by avoiding intermediate str allocation
         let code_point = match len {
             2 => {
                 let b1 = buf[1];
                 // Validate continuation byte (must be 10xxxxxx)
                 if (b1 & 0xC0) != 0x80 {
-                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                    unreachable!();
+                    return Err(utf8_error(buf));
                 }
                 ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
             }
@@ -382,13 +388,11 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 let b1 = buf[1];
                 let b2 = buf[2];
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
-                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                    unreachable!();
+                    return Err(utf8_error(buf));
                 }
                 // Check for overlong encodings (< U+0800) and surrogates (U+D800..U+DFFF)
                 if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
-                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                    unreachable!();
+                    return Err(utf8_error(buf));
                 }
                 ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
             }
@@ -397,12 +401,10 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 let b2 = buf[2];
                 let b3 = buf[3];
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
-                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                    unreachable!();
+                    return Err(utf8_error(buf));
                 }
                 if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
-                    core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                    unreachable!();
+                    return Err(utf8_error(buf));
                 }
                 ((b0 & 0x07) as u32) << 18
                     | ((b1 & 0x3F) as u32) << 12
@@ -412,13 +414,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
             _ => unreachable!(),
         };
 
-        let c = match char::from_u32(code_point) {
-            Some(c) => c,
-            None => {
-                core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-                unreachable!();
-            }
-        };
+        let c = char::from_u32(code_point).ok_or_else(|| utf8_error(buf))?;
 
         unsafe { reader.consume_unchecked(len) };
         dst.write(c);
