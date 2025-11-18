@@ -15,8 +15,9 @@ use {
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
-        DeriveInput, GenericArgument, Generics, Ident, Lifetime, Member, Path, Type, TypeImplTrait,
-        TypeParamBound, TypeReference, TypeTraitObject, Visibility,
+        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
+        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
+        Visibility,
     },
 };
 
@@ -287,6 +288,23 @@ fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone 
 pub(crate) struct Variant {
     pub(crate) ident: Ident,
     pub(crate) fields: Fields<Field>,
+    #[darling(default)]
+    pub(crate) tag: Option<Expr>,
+}
+
+impl Variant {
+    /// Get the discriminant expression for the variant.
+    ///
+    /// If the variant has a `tag` attribute, return it.
+    /// Otherwise, return an integer literal with the given field index (the bincode default).
+    pub(crate) fn discriminant(&self, field_index: usize) -> Cow<'_, Expr> {
+        self.tag.as_ref().map(Cow::Borrowed).unwrap_or_else(|| {
+            Cow::Owned(Expr::Lit(ExprLit {
+                lit: Lit::Int(LitInt::new(&field_index.to_string(), Span::call_site())),
+                attrs: vec![],
+            }))
+        })
+    }
 }
 
 pub(crate) type ImplBody = Data<Variant, Field>;
@@ -391,6 +409,24 @@ pub(crate) struct SchemaArgs {
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
+    /// Specifies the encoding to use for enum discriminants.
+    ///
+    /// If specified, the enum discriminants will be encoded using the given type's `SchemaWrite`
+    /// and `SchemaRead` implementations.
+    /// Otherwise, the enum discriminants will be encoded using the default encoding (`u32`).
+    #[darling(default)]
+    pub(crate) tag_encoding: Option<Type>,
+}
+
+/// The default encoding to use for enum discriminants.
+///
+/// Bincode's default discriminant encoding is `u32`.
+///
+/// Note in the public APIs we refer to `tag` to mean the discriminant encoding
+/// for friendlier naming.
+#[inline]
+pub(crate) fn default_tag_encoding() -> Type {
+    parse_quote!(u32)
 }
 
 /// Metadata about the `#[repr]` attribute on a struct.
@@ -517,7 +553,7 @@ impl<'ast> VisitMut for InferGeneric<'ast> {
                 .pop_front()
                 .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
                 .clone();
-            array.elem = Box::new(ty);
+            *array.elem = ty;
         }
         visit_mut::visit_type_array_mut(self, array);
     }

@@ -531,20 +531,10 @@ where
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = u8::get(reader)?;
         match variant {
-            0 => {
-                dst.write(Option::None);
-            }
-            1 => {
-                let mut value = MaybeUninit::uninit();
-                T::read(reader, &mut value)?;
-                // SAFETY:
-                // - `T::read` must properly initialize the `T::Dst`.
-                unsafe {
-                    dst.write(Option::Some(value.assume_init()));
-                }
-            }
+            0 => dst.write(Option::None),
+            1 => dst.write(Option::Some(T::get(reader)?)),
             _ => return Err(invalid_tag_encoding(variant as usize)),
-        }
+        };
 
         Ok(())
     }
@@ -575,6 +565,84 @@ where
                 T::write(writer, value)
             }
             Option::None => u8::write(writer, &0),
+        }
+    }
+}
+
+impl<'de, T, E> SchemaRead<'de> for Result<T, E>
+where
+    T: SchemaRead<'de>,
+    E: SchemaRead<'de>,
+{
+    type Dst = Result<T::Dst, E::Dst>;
+
+    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
+        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
+            if t_size == e_size =>
+        {
+            TypeMeta::Static {
+                size: size_of::<u32>() + t_size,
+                zero_copy: false,
+            }
+        }
+        _ => TypeMeta::Dynamic,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let variant = u32::get(reader)?;
+        match variant {
+            0 => dst.write(Result::Ok(T::get(reader)?)),
+            1 => dst.write(Result::Err(E::get(reader)?)),
+            _ => return Err(invalid_tag_encoding(variant as usize)),
+        };
+
+        Ok(())
+    }
+}
+
+impl<T, E> SchemaWrite for Result<T, E>
+where
+    T: SchemaWrite,
+    E: SchemaWrite,
+    T::Src: Sized,
+    E::Src: Sized,
+{
+    type Src = Result<T::Src, E::Src>;
+
+    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
+        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
+            if t_size == e_size =>
+        {
+            TypeMeta::Static {
+                size: size_of::<u32>() + t_size,
+                zero_copy: false,
+            }
+        }
+        _ => TypeMeta::Dynamic,
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        match src {
+            // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
+            Result::Ok(value) => Ok(size_of::<u32>() + T::size_of(value)?),
+            Result::Err(error) => Ok(size_of::<u32>() + E::size_of(error)?),
+        }
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+        match value {
+            Result::Ok(value) => {
+                u32::write(writer, &0)?;
+                T::write(writer, value)
+            }
+            Result::Err(error) => {
+                u32::write(writer, &1)?;
+                E::write(writer, error)
+            }
         }
     }
 }

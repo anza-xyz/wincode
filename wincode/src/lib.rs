@@ -296,6 +296,7 @@
 //! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
+//! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //!
 //! ### `no_suppress_unused`
 //!
@@ -310,6 +311,34 @@
 //!
 //! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
 //!
+//! ### `tag_encoding`
+//!
+//! Allows specifying the encoding/decoding schema to use for the variant discriminant. Only usable on enums.
+//!
+//! <div class="warning">
+//! There is no bincode analog to this attribute.
+//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
+//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
+//! <code>Serialize</code> impl for your enum on the serde / bincode side.
+//! </div>
+//!
+//! Example:
+//! ```
+//! # #[cfg(all(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! #[wincode(tag_encoding = "u8")]
+//! enum Enum {
+//!     A,
+//!     B,
+//!     C,
+//! }
+//!
+//! assert_eq!(&wincode::serialize(&Enum::B).unwrap(), &1u8.to_le_bytes());
+//! # }
+//! ```
 //!
 //! ### `struct_extensions`
 //!
@@ -407,6 +436,40 @@
 //! |---|---|---|---|
 //! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
 //!
+//! ## Variant level (enum variants)
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`tag`|`Expr`|`None`|Specifies the discriminant expression for the variant. Only usable on enums.|
+//!
+//! ### `tag`
+//!
+//! Specifies the discriminant expression for the variant. Only usable on enums.
+//!
+//! <div class="warning">
+//! There is no bincode analog to this attribute.
+//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
+//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
+//! <code>Serialize</code> impl for your enum on the serde / bincode side.
+//! </div>
+//!
+//! Example:
+//! ```
+//! # #[cfg(all(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! #[derive(SchemaWrite, SchemaRead)]
+//! enum Enum {
+//!     #[wincode(tag = 5)]
+//!     A,
+//!     #[wincode(tag = 8)]
+//!     B,
+//!     #[wincode(tag = 13)]
+//!     C,
+//! }
+//!
+//! assert_eq!(&wincode::serialize(&Enum::A).unwrap(), &5u32.to_le_bytes());
+//! # }
+//! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
 #[cfg(feature = "alloc")]
