@@ -981,6 +981,38 @@ mod tests {
     }
 
     #[test]
+    fn enum_unit_and_non_unit_dynamic() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        enum Enum {
+            Unit,
+            NonUnit(u8),
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let bincode_serialized = bincode::serialize(&e).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
     fn test_phantom_data() {
         let val = PhantomData::<StructStatic>;
         let serialized = serialize(&val).unwrap();
