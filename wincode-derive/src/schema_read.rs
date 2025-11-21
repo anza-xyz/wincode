@@ -89,18 +89,20 @@ fn impl_struct(
 
     let dst = get_src_dst_fully_qualified(args);
     let (impl_generics, ty_generics, _) = args.generics.split_for_impl();
+    let init_guard = quote! {
+        let dst_ptr = dst.as_mut_ptr();
+        let mut guard = DropGuard {
+            init_count: 0,
+            dst_ptr,
+        };
+        let init_count = &mut guard.init_count;
+    };
     (
         quote! {
-            let dst_ptr = dst.as_mut_ptr();
             struct DropGuard #impl_generics {
                 init_count: u8,
                 dst_ptr: *mut #dst,
             }
-            let mut guard = DropGuard {
-                init_count: 0,
-                dst_ptr,
-            };
-            let init_count = &mut guard.init_count;
 
             impl #impl_generics Drop for DropGuard #ty_generics {
                 #[cold]
@@ -116,15 +118,22 @@ fn impl_struct(
             }
 
             match <Self as SchemaRead<'de>>::TYPE_META {
-                TypeMeta::Static { size, .. } => {
+                TypeMeta::Static { zero_copy: true, .. } => {
+                    // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                    unsafe { reader.copy_into_t(dst)? };
+                }
+                TypeMeta::Static { size, zero_copy: false } => {
+                    #init_guard
                     let reader = &mut reader.as_trusted_for(size)?;
                     #(#read_impl)*
+                    mem::forget(guard);
                 }
-                _ => {
+                TypeMeta::Dynamic => {
+                    #init_guard
                     #(#read_impl)*
+                    mem::forget(guard);
                 }
             }
-            mem::forget(guard);
         },
         quote! {
             #type_meta_impl
