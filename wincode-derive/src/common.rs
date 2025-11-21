@@ -1,6 +1,6 @@
 use {
     darling::{
-        ast::{Data, Fields},
+        ast::{Data, Fields, Style},
         FromDeriveInput, FromField, FromVariant, Result,
     },
     proc_macro2::{Span, TokenStream},
@@ -193,8 +193,6 @@ pub(crate) trait FieldsExt {
 
 impl FieldsExt for Fields<Field> {
     /// Generate the `TYPE_META` implementation for a struct.
-    ///
-    /// Enums cannot have a statically known serialized size (unless all variants are unit enums), so don't use this for enums.
     fn type_meta_impl(&self, trait_impl: TraitImpl, repr: &StructRepr) -> TokenStream {
         let tuple_expansion = match trait_impl {
             TraitImpl::SchemaRead => {
@@ -304,6 +302,128 @@ impl Variant {
                 attrs: vec![],
             }))
         })
+    }
+}
+
+pub(crate) trait VariantsExt {
+    /// Generate the `TYPE_META` implementation for an enum.
+    fn type_meta_impl(&self, trait_impl: TraitImpl, tag_encoding: &Type) -> TokenStream;
+}
+
+impl VariantsExt for &[Variant] {
+    fn type_meta_impl(&self, trait_impl: TraitImpl, tag_encoding: &Type) -> TokenStream {
+        if self.is_empty() {
+            return quote! { TypeMeta::Static { size: 0, zero_copy: false } };
+        }
+
+        // Enums have a statically known size in a very specific case: all variants have the same serialized size.
+        // This holds trivially for enums where all variants are unit enums (the size is just the size of the discriminant).
+        // In other cases, we need to compute the size of each variant and check if they are all equal.
+        // Otherwise, the enum is dynamic.
+        //
+        // Enums are never zero-copy, as the discriminant may have invalid bit patterns.
+        let idents = anon_ident_iter(Some("variant_"))
+            .take(self.len())
+            .collect::<Vec<_>>();
+        let tag_expr = match trait_impl {
+            TraitImpl::SchemaRead => quote! { <#tag_encoding as SchemaRead<'de>>::TYPE_META },
+            TraitImpl::SchemaWrite => quote! { <#tag_encoding as SchemaWrite>::TYPE_META },
+        };
+        let variant_type_metas = self
+            .iter()
+            .zip(&idents)
+            .map(|(variant, ident)| match variant.fields.style {
+                Style::Struct | Style::Tuple => {
+                    // Gather the `TYPE_META` implementations for each field of the variant.
+                    let fields_type_meta_expansion = match trait_impl {
+                        TraitImpl::SchemaRead => {
+                            let items=  variant.fields.iter().map(|field| {
+                                let target = field.target_resolved().with_lifetime("de");
+                                quote! { <#target as SchemaRead<'de>>::TYPE_META }
+                            });
+                            quote! { #(#items),* }
+                        },
+                        TraitImpl::SchemaWrite => {
+                            let items= variant.fields.iter().map(|field| {
+                                let target = field.target_resolved();
+                                quote! { <#target as SchemaWrite>::TYPE_META }
+                            });
+                            quote! { #(#items),* }
+                        },
+                    };
+                    let anon_idents = variant.fields.member_anon_ident_iter(None).collect::<Vec<_>>();
+
+                    // Assign the `TYPE_META` to a local variant identifier (`#ident`).
+                    quote! {
+                        // Extract the discriminant size and the sizes of the fields.
+                        //
+                        // If all the fields are `TypeMeta::Static`, the variant is static.
+                        // Otherwise, the variant is dynamic.
+                        let #ident = if let (TypeMeta::Static { size: disc_size, .. }, #(TypeMeta::Static { size: #anon_idents, .. }),*) = (#tag_expr, #fields_type_meta_expansion) {
+                            // Sum the discriminant size and the sizes of the fields.
+                            TypeMeta::Static { size: disc_size + #(#anon_idents)+*, zero_copy: false }
+                        } else {
+                            TypeMeta::Dynamic
+                        };
+                    }
+                }
+                Style::Unit => {
+                    // For unit enums, the `TypeMeta` is just the `TypeMeta` of the discriminant.
+                    //
+                    // We always override the zero-copy flag to `false`, due to discriminants having potentially 
+                    // invalid bit patterns.
+                    quote! {
+                        let #ident = match #tag_expr {
+                            TypeMeta::Static { size, .. } => {
+                                TypeMeta::Static { size, zero_copy: false }
+                            }
+                            TypeMeta::Dynamic => TypeMeta::Dynamic,
+                        };
+                    }
+                }
+            });
+
+        quote! {
+            const {
+                // Declare the `TypeMeta` implementations for each variant.
+                #(#variant_type_metas)*
+                // Place the local bindings for the variant identifiers in an array for iteration.
+                let variant_sizes = [#(#idents),*];
+
+                /// Iterate over all the variant `TypeMeta`s and check if they are all `TypeMeta::Static`
+                /// and have the same size.
+                ///
+                /// This logic is broken into a function so that we can use `return`.
+                const fn choose(variant_sizes: &[TypeMeta]) -> TypeMeta {
+                    // If there is only one variant, it's safe to use that variant's `TypeMeta`.
+                    //
+                    // Note we check if there are 0 variants at the top of this function and exit early.
+                    if variant_sizes.len() == 1 {
+                        return variant_sizes[0];
+                    }
+                    let mut i = 1;
+                    // Can't use a `for` loop in a const context.
+                    while i < variant_sizes.len() {
+                        match (variant_sizes[i], variant_sizes[0]) {
+                            // Iff every variant is `TypeMeta::Static` and has the same size, we can assume the type is static.
+                            (TypeMeta::Static { size: s1, .. }, TypeMeta::Static { size: s2, .. }) if s1 == s2 => {
+                                // Check the next variant.
+                                i += 1;
+                            }
+                            _ => {
+                                // If any variant is not `TypeMeta::Static` or has a different size, the enum is dynamic.
+                                return TypeMeta::Dynamic;
+                            }
+                        }
+                    }
+
+                    // If we made it here, all variants are `TypeMeta::Static` and have the same size,
+                    // so we can return the first one.
+                    variant_sizes[0]
+                }
+                choose(&variant_sizes)
+            }
+        }
     }
 }
 
@@ -553,7 +673,7 @@ impl<'ast> VisitMut for InferGeneric<'ast> {
                 .pop_front()
                 .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
                 .clone();
-            array.elem = Box::new(ty);
+            *array.elem = ty;
         }
         visit_mut::visit_type_array_mut(self, array);
     }
