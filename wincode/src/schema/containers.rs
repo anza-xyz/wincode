@@ -442,7 +442,7 @@ pub(crate) struct SliceDropGuard<T> {
 }
 
 impl<T> SliceDropGuard<T> {
-    pub(crate) fn new(ptr: *mut MaybeUninit<T>) -> Self {
+    pub(crate) const fn new(ptr: *mut MaybeUninit<T>) -> Self {
         Self {
             ptr,
             initialized_len: 0,
@@ -451,7 +451,7 @@ impl<T> SliceDropGuard<T> {
 
     #[inline(always)]
     #[allow(clippy::arithmetic_side_effects)]
-    pub(crate) fn inc_len(&mut self) {
+    pub(crate) const fn inc_len(&mut self) {
         self.initialized_len += 1;
     }
 }
@@ -579,7 +579,7 @@ macro_rules! impl_heap_slice {
 
                 impl<T> DropGuard<T> {
                     #[inline(always)]
-                    fn new(fat: *mut [MaybeUninit<T>], raw: *mut MaybeUninit<T>) -> Self {
+                    const fn new(fat: *mut [MaybeUninit<T>], raw: *mut MaybeUninit<T>) -> Self {
                         Self {
                             inner: ManuallyDrop::new(SliceDropGuard::new(raw)),
                             // We need to store the fat pointer to deallocate the container.
