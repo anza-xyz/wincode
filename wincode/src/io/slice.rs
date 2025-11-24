@@ -1,7 +1,7 @@
 use {super::*, core::marker::PhantomData};
 
 /// Helpers for trusted slice operations.
-pub(crate) mod trusted_slice {
+pub(super) mod trusted_slice {
     use super::*;
 
     #[inline]
@@ -49,7 +49,7 @@ pub struct TrustedSliceReaderZeroCopy<'a> {
 }
 
 impl<'a> TrustedSliceReaderZeroCopy<'a> {
-    pub const fn new(bytes: &'a [u8]) -> Self {
+    pub(super) const fn new(bytes: &'a [u8]) -> Self {
         Self { cursor: bytes }
     }
 }
@@ -89,7 +89,7 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n_bytes)?))
     }
 }
@@ -110,7 +110,7 @@ pub struct TrustedSliceReader<'a, 'b> {
 }
 
 impl<'a, 'b> TrustedSliceReader<'a, 'b> {
-    pub const fn new(bytes: &'b [u8]) -> Self {
+    pub(super) const fn new(bytes: &'b [u8]) -> Self {
         Self {
             cursor: bytes,
             _marker: PhantomData,
@@ -146,7 +146,7 @@ impl<'a, 'b> Reader<'a> for TrustedSliceReader<'a, 'b> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         let (src, rest) = unsafe { self.cursor.split_at_unchecked(n_bytes) };
         self.cursor = rest;
         Ok(TrustedSliceReader::new(src))
@@ -197,7 +197,7 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n)?))
     }
 }
@@ -225,7 +225,7 @@ impl core::ops::Deref for TrustedSliceWriter<'_> {
 
 impl<'a> TrustedSliceWriter<'a> {
     #[inline(always)]
-    pub const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
+    pub(super) const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { buffer }
     }
 }
@@ -244,7 +244,7 @@ impl<'a> Writer for TrustedSliceWriter<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedSliceWriter::new(trusted_slice::get_slice_mut(
             &mut self.buffer,
             n_bytes,
@@ -277,7 +277,7 @@ impl Writer for &mut [MaybeUninit<u8>] {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedSliceWriter::new(get_slice_mut_checked(
             self, n_bytes,
         )?))
@@ -300,7 +300,7 @@ impl Writer for &mut [u8] {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         let buf = get_slice_mut_checked(self, n_bytes)?;
         // SAFETY: we just created a slice of `n_bytes` initialized bytes, so casting to
         // `&mut [MaybeUninit<u8>]` is safe.
@@ -387,8 +387,7 @@ mod tests {
                 let half = bytes.len() / 2;
                 let dst = vec.spare_capacity_mut();
                 reader.copy_into_slice(&mut dst[..half]).unwrap();
-                reader
-                    .as_trusted_for(bytes.len() - half)
+                unsafe { reader.as_trusted_for(bytes.len() - half) }
                     .unwrap()
                     .copy_into_slice(&mut dst[half..])
                     .unwrap();

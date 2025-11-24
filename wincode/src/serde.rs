@@ -60,7 +60,10 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
                 size,
                 zero_copy: false,
             } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { src.as_trusted_for(size) }?;
+                Self::read(&mut reader, dst)?;
             }
             TypeMeta::Dynamic => {
                 Self::read(&mut src, dst)?;
@@ -100,7 +103,10 @@ pub trait DeserializeOwned: SchemaReadOwned {
                 size,
                 zero_copy: false,
             } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { src.as_trusted_for(size) }?;
+                Self::read(&mut reader, dst)?;
             }
             TypeMeta::Dynamic => {
                 Self::read(src, dst)?;
@@ -168,9 +174,11 @@ pub trait Serialize: SchemaWrite {
                 size,
                 zero_copy: false,
             } => {
-                let trusted = &mut dst.as_trusted_for(size)?;
-                Self::write(trusted, src)?;
-                trusted.finish()?;
+                // SAFETY: `Self::TYPE_META` specifies a static size, so a single write of `Self::Src`
+                // will consume `size` bytes, fully consuming the trusted window.
+                let mut writer = unsafe { dst.as_trusted_for(size) }?;
+                Self::write(&mut writer, src)?;
+                writer.finish()?;
             }
             TypeMeta::Dynamic => {
                 Self::write(dst, src)?;
@@ -178,7 +186,6 @@ pub trait Serialize: SchemaWrite {
         }
 
         dst.finish()?;
-
         Ok(())
     }
 

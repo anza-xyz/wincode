@@ -1,7 +1,7 @@
 use {
     crate::common::{
         default_tag_encoding, extract_repr, get_crate_name, get_src_dst, suppress_unused_fields,
-        Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant,
+        Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -53,7 +53,11 @@ fn impl_struct(
                     unsafe { writer.write_t(src)? };
                 }
                 TypeMeta::Static { size, zero_copy: false } => {
-                    let writer = &mut writer.as_trusted_for(size)?;
+                    // SAFETY: `size` is the serialized size of the struct, which is the sum
+                    // of the serialized sizes of the fields.
+                    // Calling `write` on each field will write exactly `size` bytes,
+                    // fully initializing the trusted window.
+                    let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                     #(#writes)*
                     writer.finish()?;
                 }
@@ -79,20 +83,8 @@ fn impl_enum(
     let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
     let mut size_of_impl = Vec::with_capacity(variants.len());
     let mut write_impl = Vec::with_capacity(variants.len());
-    // Note that all enums except unit enums are never static.
-    let mut type_meta_impl = quote!(TypeMeta::Dynamic);
-    if variants.iter().all(|variant| variant.fields.is_unit()) {
-        // If all variants are unit, we know up front that the static size is the size of the discriminant.
-        type_meta_impl = quote! {
-            const {
-                match <#tag_encoding as SchemaWrite>::TYPE_META {
-                    // Unit enums are never zero-copy, as they have invalid bit patterns.
-                    TypeMeta::Static { size, .. } => TypeMeta::Static { size, zero_copy: false },
-                    TypeMeta::Dynamic => TypeMeta::Dynamic,
-                }
-            }
-        };
-    }
+
+    let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaWrite, tag_encoding);
 
     for (i, variant) in variants.iter().enumerate() {
         let variant_ident = &variant.ident;
@@ -160,7 +152,12 @@ fn impl_enum(
                     quote! {
                         #match_case => {
                             if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite>::TYPE_META #(,#static_targets)*) {
-                                let writer = &mut writer.as_trusted_for(disc_size + #(#static_anon_idents)+*)?;
+                                let summed_sizes = disc_size + #(#static_anon_idents)+*;
+                                // SAFETY: `summed_sizes` is the sum of the static sizes of the fields + the discriminant size,
+                                // which is the serialized size of the variant.
+                                // Writing the discriminant and then calling `write` on each field will write
+                                // exactly `summed_sizes` bytes, fully initializing the trusted window.
+                                let writer = &mut unsafe { writer.as_trusted_for(summed_sizes) }?;
                                 #write_discriminant;
                                 #(#write)*
                                 writer.finish()?;

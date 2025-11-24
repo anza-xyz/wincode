@@ -130,7 +130,11 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 {
                     use crate::io::Writer;
                     if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-                        let writer = &mut writer.as_trusted_for(size)?;
+                        // SAFETY: `size` is the serialized size of the tuple, which is the sum
+                        // of the serialized sizes of the members.
+                        // Calling `write` on each field will write exactly `size` bytes,
+                        // fully initializing the trusted window.
+                        let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                         #(#write_impl)*
                         writer.finish()?;
                     } else {
@@ -177,7 +181,11 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     let init_count = &mut guard.init_count;
 
                     if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-                        let reader = &mut reader.as_trusted_for(size)?;
+                        // SAFETY: `size` is the serialized size of the tuple, which is the sum
+                        // of the serialized sizes of the members.
+                        // Calling `read` on each field will consume exactly `size` bytes,
+                        // fully consuming the trusted window.
+                        let reader = &mut unsafe { reader.as_trusted_for(size) }?;
                         #(#read_impl)*
                     } else {
                         #(#read_impl)*

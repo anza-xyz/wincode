@@ -55,7 +55,7 @@ mod impls;
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
 /// Readers and writers may use this to optimize their behavior.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMeta {
     /// The type has a statically known serialized size.
     ///
@@ -164,8 +164,11 @@ where
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
-        let mut writer =
-            writer.as_trusted_for(Len::write_bytes_needed(src.len())? + size * src.len())?;
+        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
+        // SAFETY: `needed` is the size of the encoded length plus the size of the items.
+        // `Len::write` and len writes of `T::Src` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(&mut writer, src.len())?;
         for item in src {
             T::write(&mut writer, item)?;
@@ -196,8 +199,11 @@ where
         zero_copy: true,
     } = T::TYPE_META
     {
-        let writer =
-            &mut writer.as_trusted_for(Len::write_bytes_needed(src.len())? + src.len() * size)?;
+        let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
+        // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
+        // `Len::write` and `writer.write(src)` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer, src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
@@ -946,6 +952,132 @@ mod tests {
                 EnumRecordU8::C { .. } => 2,
             };
             prop_assert_eq!(&int.to_le_bytes(), &serialized[..1]);
+        });
+    }
+
+    #[test]
+    fn enum_static_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A {
+                a: u64,
+            },
+            B {
+                x: u32,
+                y: u32,
+            },
+            C {
+                a: u8,
+                b: u8,
+                c: u8,
+                d: u8,
+                e: u8,
+                f: u8,
+                g: u8,
+                h: u8,
+            },
+        }
+
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_dynamic_non_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u64 },
+            B { x: u32, y: u32 },
+            C { a: u8, b: u8 },
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_single_variant_type_meta_pass_thru() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u8, b: [u8; 32] },
+        }
+
+        // Single variant enums should use the `TypeMeta` of the variant, but the zero-copy
+        // flag should be `false`, due to the discriminant having potentially invalid bit patterns.
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
+    }
+
+    #[test]
+    fn enum_unit_and_non_unit_dynamic() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        enum Enum {
+            Unit,
+            NonUnit(u8),
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let bincode_serialized = bincode::serialize(&e).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(deserialized, e);
         });
     }
 
@@ -1718,5 +1850,145 @@ mod tests {
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
         }
+    }
+
+    #[test]
+    fn test_result_basic() {
+        proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<u64, String> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, String> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_bincode_equivalence() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(
+            Serialize,
+            Deserialize,
+            Debug,
+            PartialEq,
+            Clone,
+            proptest_derive::Arbitrary,
+            SchemaWrite,
+            SchemaRead,
+        )]
+        #[wincode(internal)]
+        enum Error {
+            NotFound,
+            InvalidInput(String),
+            Other(u32),
+        }
+
+        proptest!(proptest_cfg(), |(value: Result<Vec<u8>, Error>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<Vec<u8>, Error> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<Vec<u8>, Error> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_nested() {
+        proptest!(proptest_cfg(), |(value: Result<Result<u64, String>, u32>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<Result<u64, String>, u32> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<Result<u64, String>, u32> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_with_complex_types() {
+        use std::collections::HashMap;
+
+        proptest!(proptest_cfg(), |(value: Result<HashMap<String, Vec<u32>>, bool>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<HashMap<String, Vec<u32>>, bool> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<HashMap<String, Vec<u32>>, bool> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_type_meta_static() {
+        // Result<u64, u64> should be TypeMeta::Static because both T and E are Static with equal sizes
+        assert!(matches!(
+            <Result<u64, u64> as SchemaRead>::TYPE_META,
+            TypeMeta::Static {
+                size: 12,
+                zero_copy: false
+            }
+        ));
+
+        proptest!(proptest_cfg(), |(value: Result<u64, u64>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<u64, u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_type_meta_dynamic() {
+        // Result<u64, String> should be TypeMeta::Dynamic because String is Dynamic
+        assert!(matches!(
+            <Result<u64, String> as SchemaRead>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+
+        proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<u64, String> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, String> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_result_type_meta_different_sizes() {
+        // Result<u64, u32> should be TypeMeta::Dynamic because T and E have different sizes
+        assert!(matches!(
+            <Result<u64, u32> as SchemaRead>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+
+        proptest!(proptest_cfg(), |(value: Result<u64, u32>)| {
+            let wincode_serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Result<u64, u32> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Result<u64, u32> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&value, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
     }
 }

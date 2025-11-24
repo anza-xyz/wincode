@@ -334,7 +334,9 @@ where
             } => {
                 let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
                 #[allow(clippy::arithmetic_side_effects)]
-                let mut reader = reader.as_trusted_for(size * len)?;
+                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                // will consume `size * len` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
                 for i in 0..len {
                     T::read(&mut reader, unsafe { &mut *ptr })?;
                     unsafe {
@@ -510,8 +512,10 @@ macro_rules! impl_heap_slice {
                         let mut guard: DropGuardElemCopy<T::Dst> =
                             DropGuardElemCopy::new(fat, raw_base);
 
+                        // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                        // will consume `size * len` bytes, fully consuming the trusted window.
                         #[allow(clippy::arithmetic_side_effects)]
-                        let reader = &mut reader.as_trusted_for(size * len)?;
+                        let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
                         for i in 0..len {
                             // SAFETY:
                             // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
@@ -585,8 +589,11 @@ where
         } = T::TYPE_META
         {
             #[allow(clippy::arithmetic_side_effects)]
-            let writer = &mut writer
-                .as_trusted_for(Len::write_bytes_needed(src.len())? + src.len() * size)?;
+            let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
+            // SAFETY: `needed` is the size of the encoded length plus the size of the items.
+            // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
+            // fully initializing the trusted window.
+            let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
 
             Len::write(writer, src.len())?;
             let (front, back) = src.as_slices();
