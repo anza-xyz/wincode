@@ -8,7 +8,7 @@ homepage.workspace = true
 license.workspace = true
 edition.workspace = true
 categories = ["encoding", "network-programming"]
-keywords = ["binary", "encode", "decode", "serialize", "deserialize", "bincode"]
+keywords = ["binary", "encode", "serialize", "deserialize", "bincode"]
 
 [lints]
 workspace = true
