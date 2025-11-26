@@ -6,6 +6,19 @@ use {
 };
 
 /// Generate `SchemaWrite` and `SchemaRead` implementations for tuples up to the given arity.
+///
+/// # Purpose
+/// Since Rust doesn't support variadic generics, we must manually generate trait
+/// implementations for each tuple size. This function automates that process.
+///
+/// # Arguments
+/// * `arity` - Maximum tuple size to generate implementations for (must be 2-26)
+/// * `out` - Writer where generated code will be written (typically a file)
+///
+/// # Panics
+/// Panics if `arity` is less than 2 or greater than 26, since we use letters A-Z
+/// for type parameter names.
+
 #[allow(clippy::arithmetic_side_effects)]
 pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
     // Avoid single item tuples and avoid running out of alphabet.
