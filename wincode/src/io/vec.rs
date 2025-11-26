@@ -1,4 +1,4 @@
-use super::*;
+use {super::*, alloc::vec::Vec};
 
 /// Trusted writer for `Vec<u8>` that continues appending to the vector's spare capacity.
 ///
@@ -92,7 +92,7 @@ impl Writer for Vec<u8> {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
-    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+    use {super::*, crate::proptest_config::proptest_cfg, alloc::vec, proptest::prelude::*};
 
     proptest! {
         #![proptest_config(proptest_cfg())]

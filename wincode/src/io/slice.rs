@@ -312,7 +312,7 @@ impl Writer for &mut [u8] {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
-    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+    use {super::*, crate::proptest_config::proptest_cfg, alloc::vec::Vec, proptest::prelude::*};
 
     #[test]
     fn test_reader_peek() {

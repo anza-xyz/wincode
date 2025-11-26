@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(feature = "alloc")]
-use core::slice::from_raw_parts_mut;
+use {alloc::vec::Vec, core::slice::from_raw_parts_mut};
 
 /// `Cursor` wraps an in-memory buffer, providing [`Reader`] and [`Writer`] functionality
 /// for types implementing <code>[AsRef]<\[u8]></code>.
@@ -517,7 +517,7 @@ impl Writer for Cursor<Vec<u8>> {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
-    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+    use {super::*, crate::proptest_config::proptest_cfg, alloc::vec, proptest::prelude::*};
 
     proptest! {
         #![proptest_config(proptest_cfg())]
