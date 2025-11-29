@@ -751,6 +751,205 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_extensions_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let _ = TestUninitBuilder::from_maybe_uninit_mut(&mut test)
+                    .read_a(reader)?
+                    .read_b(reader)?;
+                // Struct is not fully initialized, so the two initialized fields should be dropped.
+            });
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        // Same test, but with a tuple struct.
+        struct TestTuple(DropCounted, DropCounted);
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: TestTuple)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<TestTuple>::uninit();
+                let reader = &mut serialized.as_slice();
+                let _ = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut test)
+                    .read_0(reader)?;
+                // Struct is not fully initialized, so the first initialized field should be dropped.
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions_nested_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Inner {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            inner: Inner,
+            b: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                unsafe {
+                    outer_builder.init_inner_with(|inner| {
+                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        inner_builder.read_a(reader)?;
+                        inner_builder.read_b(reader)?;
+                        inner_builder.read_c(reader)?;
+                        inner_builder.assume_init_forget();
+                        Ok(())
+                    })?;
+                }
+                // Outer struct is not fully initialized, so the inner struct should be dropped.
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions_nested_fully_initialized() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Inner {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            inner: Inner,
+            b: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                unsafe {
+                    outer_builder.init_inner_with(|inner| {
+                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        inner_builder.read_a(reader)?;
+                        inner_builder.read_b(reader)?;
+                        inner_builder.read_c(reader)?;
+                        inner_builder.assume_init_forget();
+                        Ok(())
+                    })?;
+                }
+                outer_builder.read_b(reader)?;
+                unsafe { outer_builder.assume_init_forget() };
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let reader = &mut serialized.as_slice();
+            let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader)?
+                .read_b(reader)?
+                .write_c(test.c);
+            unsafe { builder.assume_init_forget() };
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
+    fn test_struct_extensions_builder_fully_initialized() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                builder
+                    .read_a(reader)?
+                    .read_b(reader)?
+                    .read_c(reader)?;
+                let init = unsafe { builder.assume_init_mut() };
+                prop_assert_eq!(&test, init);
+
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        // Same test, but with a tuple struct.
+        struct TestTuple(DropCounted, DropCounted);
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: TestTuple)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<TestTuple>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                builder
+                    .read_0(reader)?
+                    .read_1(reader)?;
+                unsafe { builder.assume_init_forget() };
+
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+    }
+
+    #[test]
     fn test_struct_with_reference_equivalence() {
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,

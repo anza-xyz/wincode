@@ -8,9 +8,9 @@ use {
         ast::{Data, Fields, Style},
         Error, FromDeriveInput, Result,
     },
-    proc_macro2::TokenStream,
+    proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
+    syn::{parse_quote, DeriveInput, GenericParam, Generics, LitInt, LitStr, Path, Type},
 };
 
 fn impl_struct(
@@ -185,7 +185,7 @@ fn impl_struct(
 /// ```
 ///
 /// We cannot do this for enums, given the lack of facilities for placement initialization.
-fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
+fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenStream> {
     if !args.struct_extensions {
         return Ok(quote! {});
     }
@@ -205,6 +205,7 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
     let dst = get_src_dst(args);
     let impl_generics = append_de_lifetime(&args.generics);
     let (_, ty_generics, where_clause) = args.generics.split_for_impl();
+    let builder_ident = format_ident!("{struct_ident}UninitBuilder");
 
     let helpers = fields.iter().enumerate().map(|(i, field)| {
         let ty = field.ty.with_lifetime("de");
@@ -214,8 +215,12 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
         let uninit_mut_ident = format_ident!("uninit_{}_mut", ident_string);
         let read_field_ident = format_ident!("read_{}", ident_string);
         let write_uninit_field_ident = format_ident!("write_uninit_{}", ident_string);
+        let deprecated_note = LitStr::new(
+            &format!("Use `{builder_ident}` builder methods instead"),
+            Span::call_site(),
+        );
         let field_projection_type = if args.from.is_some() {
-            // If the user is defining a mapping type, we need the type system to resolve the 
+            // If the user is defining a mapping type, we need the type system to resolve the
             // projection destination.
             quote! { <#ty as SchemaRead<'de>>::Dst }
         } else {
@@ -225,27 +230,232 @@ fn impl_struct_extensions(args: &SchemaArgs) -> Result<TokenStream> {
         };
         quote! {
             #[inline(always)]
+            #[deprecated(since = "0.2.2", note = #deprecated_note)]
             #vis fn #uninit_mut_ident(dst: &mut MaybeUninit<#dst>) -> &mut MaybeUninit<#field_projection_type> {
                 unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).#ident).cast() }
             }
 
             #[inline(always)]
+            #[deprecated(since = "0.2.2", note = #deprecated_note)]
             #vis fn #read_field_ident(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<#dst>) -> ReadResult<()> {
                 <#target as SchemaRead<'de>>::read(reader, Self::#uninit_mut_ident(dst))
             }
 
             #[inline(always)]
+            #[deprecated(since = "0.2.2", note = #deprecated_note)]
             #vis fn #write_uninit_field_ident(val: #field_projection_type, dst: &mut MaybeUninit<#dst>) {
                 Self::#uninit_mut_ident(dst).write(val);
             }
         }
     });
 
-    Ok(quote!(
-        impl #impl_generics #struct_ident #ty_generics #where_clause {
-            #(#helpers)*
+    // We modify the generics to add a lifetime parameter for the inner `MaybeUninit` struct.
+    let mut builder_generics = args.generics.clone();
+    // Add the lifetime for the inner `&mut MaybeUninit` struct.
+    builder_generics
+        .params
+        .push(GenericParam::Lifetime(parse_quote!('_wincode_inner)));
+
+    let builder_dst = get_src_dst_fully_qualified(args);
+
+    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
+        builder_generics.split_for_impl();
+    // Determine how many bits are needed to track the initialization state of the fields.
+    let builder_bit_set_ty: Type = match fields.len() {
+        len if len <= 8 => parse_quote!(u8),
+        len if len <= 16 => parse_quote!(u16),
+        len if len <= 32 => parse_quote!(u32),
+        len if len <= 64 => parse_quote!(u64),
+        len if len <= 128 => parse_quote!(u128),
+        _ => {
+            return Err(Error::custom(
+                "`struct_extensions` is only supported for structs with up to 128 fields",
+            ))
         }
-    ))
+    };
+    let builder_struct_decl = {
+        // `split_for_impl` will strip default type and const parameters, so we collect them manually
+        // to preserve the declarations on the original struct.
+        let generic_type_params = builder_generics.type_params();
+        let generic_lifetimes = builder_generics.lifetimes();
+        let generic_const = builder_generics.const_params();
+        let where_clause = builder_generics.where_clause.as_ref();
+        quote! {
+            /// A helper struct that provides convenience methods for reading and writing to a `MaybeUninit` struct
+            /// with a bit-set tracking the initialization state of the fields.
+            ///
+            /// The builder will drop all initialized fields in reverse order on drop. When the struct is fully initialized,
+            /// you **must** call `assume_init_forget` or `assume_init_mut` to forget the builder. Otherwise, all the
+            /// initialized fields will be dropped when the builder is dropped.
+            #[must_use]
+            #vis struct #builder_ident < #(#generic_lifetimes,)* #(#generic_const,)* #(#generic_type_params,)* > #where_clause {
+                inner: &'_wincode_inner mut core::mem::MaybeUninit<#builder_dst>,
+                init_set: #builder_bit_set_ty,
+            }
+        }
+    };
+
+    let builder_drop_impl = {
+        // Drop all initialized fields in reverse order.
+        let drops = fields.iter().rev().enumerate().map(|(index, field)| {
+            // Compute the actual index relative to the reversed iterator.
+            let real_index = fields.len() - 1 - index;
+            let field_ident = field.struct_member_ident(real_index);
+            // The corresponding bit for the field.
+            let bit_set_index = LitInt::new(&(1 << real_index).to_string(), Span::call_site());
+            quote! {
+                if self.init_set & #bit_set_index != 0 {
+                    // SAFETY: We are dropping an initialized field.
+                    unsafe {
+                        ptr::drop_in_place(&raw mut (*dst_ptr).#field_ident);
+                    }
+                }
+            }
+        });
+        quote! {
+            impl #builder_impl_generics Drop for #builder_ident #builder_ty_generics #builder_where_clause {
+                fn drop(&mut self) {
+                    let dst_ptr = self.inner.as_mut_ptr();
+                    #(#drops)*
+                }
+            }
+        }
+    };
+
+    let builder_impl = quote! {
+        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+            #vis const fn from_maybe_uninit_mut(inner: &'_wincode_inner mut MaybeUninit<#builder_dst>) -> Self {
+                Self {
+                    inner,
+                    init_set: 0,
+                }
+            }
+
+            /// Assume the builder is fully initialized, and return a mutable reference to the inner `MaybeUninit` struct.
+            ///
+            /// The builder will be forgotten, so the drop logic will not longer run.
+            ///
+            /// # Safety
+            ///
+            /// Calling this when the content is not yet fully initialized causes undefined behavior: it is up to the caller
+            /// to guarantee that the `MaybeUninit<T>` really is in an initialized state.
+            #[inline]
+            #vis const unsafe fn assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
+                // SAFETY: reference lives beyond the scope of the builder, and builder is forgotten.
+                let inner = unsafe { ptr::read(&mut self.inner) };
+                mem::forget(self);
+                // SAFETY: Caller asserts the `MaybeUninit<T>` is in an initialized state.
+                unsafe {
+                    inner.assume_init_mut()
+                }
+            }
+
+            /// Forget the builder, disabling the drop logic.
+            ///
+            /// # Safety
+            ///
+            /// Assuming the source `MaybeUninit<T>` when the content is not yet fully initialized causes undefined behavior.
+            /// It is up to the caller to guarantee that the `MaybeUninit<T>` really is in an initialized state.
+            #[inline]
+            #vis const unsafe fn assume_init_forget(self) {
+                mem::forget(self);
+            }
+        }
+    };
+
+    // Generate the helper methods for the builder.
+    let builder_helpers = fields.iter().enumerate().map(|(i, field)| {
+        let target = field.target_resolved();
+        let target_reader_bound = target.with_lifetime("de");
+        let ident = field.struct_member_ident(i);
+        let ident_string = field.struct_member_ident_to_string(i);
+        let uninit_mut_ident = format_ident!("uninit_{ident_string}_mut");
+        let read_field_ident = format_ident!("read_{ident_string}");
+        let write_uninit_field_ident = format_ident!("write_{ident_string}");
+        let assume_init_field_ident = format_ident!("assume_init_{ident_string}");
+        let init_with_field_ident = format_ident!("init_{ident_string}_with");
+
+        // The bit index for the field.
+        let index_bit = LitInt::new(&(1 << i).to_string(), Span::call_site());
+        let set_index_bit = quote! {
+            self.init_set |= #index_bit;
+        };
+
+        quote! {
+            /// Get a mutable reference to the maybe uninitialized field.
+            #[inline]
+            #vis const fn #uninit_mut_ident(&mut self) -> &mut MaybeUninit<#target> {
+                // SAFETY:
+                // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
+                // - We return the field as `&mut MaybeUninit<#target>`, so
+                //   the field is never exposed as initialized.
+                unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
+            }
+
+            /// Write a value to the maybe uninitialized field.
+            #[inline]
+            #vis const fn #write_uninit_field_ident(&mut self, val: #target) -> &mut Self {
+                self.#uninit_mut_ident().write(val);
+                #set_index_bit
+                self
+            }
+
+            /// Read a value from the reader into the maybe uninitialized field.
+            #[inline]
+            #vis fn #read_field_ident <'de>(&mut self, reader: &mut impl Reader<'de>) -> ReadResult<&mut Self> {
+                // SAFETY:
+                // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
+                // - We return the field as `&mut MaybeUninit<#target>`, so
+                //   the field is never exposed as initialized.
+                let proj = unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() };
+                <#target_reader_bound as SchemaRead<'de>>::read(reader, proj)?;
+                #set_index_bit
+                Ok(self)
+            }
+
+            /// Initialize the field with a given initializer function.
+            ///
+            /// # Safety
+            ///
+            /// The caller must guarantee that the initializer function fully initializes the field.
+            #[inline]
+            #vis unsafe fn #init_with_field_ident(&mut self, mut initializer: impl FnMut(&mut MaybeUninit<#target>) -> ReadResult<()>) -> ReadResult<&mut Self> {
+                initializer(self.#uninit_mut_ident())?;
+                #set_index_bit
+                Ok(self)
+            }
+
+            /// Mark the field as initialized.
+            ///
+            /// # Safety
+            ///
+            /// Caller must guarantee the field has been fully initialized prior to calling this.
+            #[inline]
+            #vis const unsafe fn #assume_init_field_ident(&mut self) -> &mut Self {
+                #set_index_bit
+                self
+            }
+        }
+    });
+
+    Ok(quote! {
+        const _: () = {
+            use {
+                core::{mem::{MaybeUninit, self}, ptr, marker::PhantomData},
+                #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error,},
+            };
+            impl #impl_generics #struct_ident #ty_generics #where_clause {
+                #(#helpers)*
+            }
+            #builder_drop_impl
+            #builder_impl
+
+            impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+                #(#builder_helpers)*
+            }
+        };
+        #builder_struct_decl
+    })
 }
 
 fn impl_enum(
@@ -389,7 +599,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let crate_name = get_crate_name(&args);
     let src_dst = get_src_dst(&args);
     let field_suppress = suppress_unused_fields(&args);
-    let struct_extensions = impl_struct_extensions(&args)?;
+    let struct_extensions = impl_struct_extensions(&args, &crate_name)?;
 
     let (read_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
@@ -426,8 +636,8 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                     Ok(())
                 }
             }
-            #struct_extensions
         };
+        #struct_extensions
         #field_suppress
     })
 }
