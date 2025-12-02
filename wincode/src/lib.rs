@@ -255,8 +255,8 @@
 //! The builder struct has the following methods:
 //! - `from_maybe_uninit_mut`
 //!   - Creates a new builder from a mutable `MaybeUninit` reference to the type.
-//! - `assume_init_mut`
-//!   - Assumes the builder is fully initialized, and returns a mutable reference to the inner type.
+//! - `into_assume_init_mut`
+//!   - Assumes the builder is fully initialized, drops it, and returns a mutable reference to the inner type.
 //! - `assume_init_forget`
 //!   - Forgets the builder, disabling the drop logic.
 //! - `is_init`

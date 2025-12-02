@@ -356,7 +356,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                 /// Calling this when the content is not yet fully initialized causes undefined behavior: it is up to the caller
                 /// to guarantee that the `MaybeUninit<T>` really is in an initialized state.
                 #[inline]
-                #vis const unsafe fn assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
+                #vis const unsafe fn into_assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
                     // SAFETY: reference lives beyond the scope of the builder, and builder is forgotten.
                     let inner = unsafe { ptr::read(&mut self.inner) };
                     mem::forget(self);

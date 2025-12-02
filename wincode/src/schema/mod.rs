@@ -924,7 +924,7 @@ mod tests {
                     .read_b(reader)?
                     .read_c(reader)?;
                 prop_assert!(builder.is_init());
-                let init = unsafe { builder.assume_init_mut() };
+                let init = unsafe { builder.into_assume_init_mut() };
                 prop_assert_eq!(&test, init);
 
                 let init = unsafe { uninit.assume_init() };
