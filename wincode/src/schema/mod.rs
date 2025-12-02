@@ -766,9 +766,9 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
                 let reader = &mut serialized.as_slice();
-                let _ = TestUninitBuilder::from_maybe_uninit_mut(&mut test)
-                    .read_a(reader)?
-                    .read_b(reader)?;
+                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                builder.read_a(reader)?.read_b(reader)?;
+                prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
             });
         }
@@ -784,8 +784,9 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<TestTuple>::uninit();
                 let reader = &mut serialized.as_slice();
-                let _ = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut test)
-                    .read_0(reader)?;
+                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut test);
+                builder.read_0(reader)?;
+                prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the first initialized field should be dropped.
             });
         }
@@ -821,6 +822,7 @@ mod tests {
                         inner_builder.read_a(reader)?;
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
+                        assert!(inner_builder.is_init());
                         inner_builder.assume_init_forget();
                         Ok(())
                     })?;
@@ -860,11 +862,13 @@ mod tests {
                         inner_builder.read_a(reader)?;
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
+                        assert!(inner_builder.is_init());
                         inner_builder.assume_init_forget();
                         Ok(())
                     })?;
                 }
                 outer_builder.read_b(reader)?;
+                prop_assert!(outer_builder.is_init());
                 unsafe { outer_builder.assume_init_forget() };
                 let init = unsafe { uninit.assume_init() };
                 prop_assert_eq!(test, init);
@@ -891,6 +895,7 @@ mod tests {
                 .read_a(reader)?
                 .read_b(reader)?
                 .write_c(test.c);
+            prop_assert!(builder.is_init());
             unsafe { builder.assume_init_forget() };
             let init = unsafe { uninit.assume_init() };
             prop_assert_eq!(test, init);
@@ -918,6 +923,7 @@ mod tests {
                     .read_a(reader)?
                     .read_b(reader)?
                     .read_c(reader)?;
+                prop_assert!(builder.is_init());
                 let init = unsafe { builder.assume_init_mut() };
                 prop_assert_eq!(&test, init);
 
@@ -941,6 +947,7 @@ mod tests {
                 builder
                     .read_0(reader)?
                     .read_1(reader)?;
+                assert!(builder.is_init());
                 unsafe { builder.assume_init_forget() };
 
                 let init = unsafe { uninit.assume_init() };

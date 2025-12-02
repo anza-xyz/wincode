@@ -261,12 +261,12 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
     let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
         builder_generics.split_for_impl();
     // Determine how many bits are needed to track the initialization state of the fields.
-    let builder_bit_set_ty: Type = match fields.len() {
-        len if len <= 8 => parse_quote!(u8),
-        len if len <= 16 => parse_quote!(u16),
-        len if len <= 32 => parse_quote!(u32),
-        len if len <= 64 => parse_quote!(u64),
-        len if len <= 128 => parse_quote!(u128),
+    let (builder_bit_set_ty, builder_bit_set_bits): (Type, u32) = match fields.len() {
+        len if len <= 8 => (parse_quote!(u8), u8::BITS),
+        len if len <= 16 => (parse_quote!(u16), u16::BITS),
+        len if len <= 32 => (parse_quote!(u32), u32::BITS),
+        len if len <= 64 => (parse_quote!(u64), u64::BITS),
+        len if len <= 128 => (parse_quote!(u128), u128::BITS),
         _ => {
             return Err(Error::custom(
                 "`struct_extensions` is only supported for structs with up to 128 fields",
@@ -322,43 +322,60 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         }
     };
 
-    let builder_impl = quote! {
-        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
-            #vis const fn from_maybe_uninit_mut(inner: &'_wincode_inner mut MaybeUninit<#builder_dst>) -> Self {
-                Self {
-                    inner,
-                    init_set: 0,
-                }
-            }
+    let builder_impl = {
+        let is_fully_init_mask = if fields.len() as u32 == builder_bit_set_bits {
+            quote!(#builder_bit_set_ty::MAX)
+        } else {
+            let field_bits = LitInt::new(&fields.len().to_string(), Span::call_site());
+            quote!(((1 as #builder_bit_set_ty) << #field_bits) - 1)
+        };
 
-            /// Assume the builder is fully initialized, and return a mutable reference to the inner `MaybeUninit` struct.
-            ///
-            /// The builder will be forgotten, so the drop logic will not longer run.
-            ///
-            /// # Safety
-            ///
-            /// Calling this when the content is not yet fully initialized causes undefined behavior: it is up to the caller
-            /// to guarantee that the `MaybeUninit<T>` really is in an initialized state.
-            #[inline]
-            #vis const unsafe fn assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
-                // SAFETY: reference lives beyond the scope of the builder, and builder is forgotten.
-                let inner = unsafe { ptr::read(&mut self.inner) };
-                mem::forget(self);
-                // SAFETY: Caller asserts the `MaybeUninit<T>` is in an initialized state.
-                unsafe {
-                    inner.assume_init_mut()
+        quote! {
+            impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+                #vis const fn from_maybe_uninit_mut(inner: &'_wincode_inner mut MaybeUninit<#builder_dst>) -> Self {
+                    Self {
+                        inner,
+                        init_set: 0,
+                    }
                 }
-            }
 
-            /// Forget the builder, disabling the drop logic.
-            ///
-            /// # Safety
-            ///
-            /// Assuming the source `MaybeUninit<T>` when the content is not yet fully initialized causes undefined behavior.
-            /// It is up to the caller to guarantee that the `MaybeUninit<T>` really is in an initialized state.
-            #[inline]
-            #vis const unsafe fn assume_init_forget(self) {
-                mem::forget(self);
+                /// Check if the builder is fully initialized.
+                ///
+                /// This will check if all field initialization bits are set.
+                #[inline]
+                #vis const fn is_init(&self) -> bool {
+                    self.init_set == #is_fully_init_mask
+                }
+
+                /// Assume the builder is fully initialized, and return a mutable reference to the inner `MaybeUninit` struct.
+                ///
+                /// The builder will be forgotten, so the drop logic will not longer run.
+                ///
+                /// # Safety
+                ///
+                /// Calling this when the content is not yet fully initialized causes undefined behavior: it is up to the caller
+                /// to guarantee that the `MaybeUninit<T>` really is in an initialized state.
+                #[inline]
+                #vis const unsafe fn assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
+                    // SAFETY: reference lives beyond the scope of the builder, and builder is forgotten.
+                    let inner = unsafe { ptr::read(&mut self.inner) };
+                    mem::forget(self);
+                    // SAFETY: Caller asserts the `MaybeUninit<T>` is in an initialized state.
+                    unsafe {
+                        inner.assume_init_mut()
+                    }
+                }
+
+                /// Forget the builder, disabling the drop logic.
+                ///
+                /// # Safety
+                ///
+                /// Assuming the source `MaybeUninit<T>` when the content is not yet fully initialized causes undefined behavior.
+                /// It is up to the caller to guarantee that the `MaybeUninit<T>` really is in an initialized state.
+                #[inline]
+                #vis const unsafe fn assume_init_forget(self) {
+                    mem::forget(self);
+                }
             }
         }
     };

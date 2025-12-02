@@ -259,6 +259,8 @@
 //!   - Assumes the builder is fully initialized, and returns a mutable reference to the inner type.
 //! - `assume_init_forget`
 //!   - Forgets the builder, disabling the drop logic.
+//! - `is_init`
+//!   - Checks if the builder is fully initialized by checking if all field initialization bits are set.
 //!
 //! For each field, the builder struct provides the following methods:
 //! - `uninit_<field_name>_mut`
