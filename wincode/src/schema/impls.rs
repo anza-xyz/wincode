@@ -1003,7 +1003,6 @@ macro_rules! impl_seq {
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
                     // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
                     let reader = &mut unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
-                    #[allow(clippy::redundant_closure)]
                     let mut map = $with_capacity(len);
                     for _ in 0..len {
                         let k = $key::get(reader)?;
@@ -1012,7 +1011,6 @@ macro_rules! impl_seq {
                     }
                     map
                 } else {
-                    #[allow(clippy::redundant_closure)]
                     let mut map = $with_capacity(len);
                     for _ in 0..len {
                         let k = $key::get(reader)?;
@@ -1065,7 +1063,6 @@ macro_rules! impl_seq {
                         // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
                         let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
-                        #[allow(clippy::redundant_closure)]
                         let mut set = $with_capacity(len);
                         for _ in 0..len {
                             set.$insert($key::get(reader)?);
@@ -1073,7 +1070,6 @@ macro_rules! impl_seq {
                         set
                     }
                     TypeMeta::Dynamic => {
-                        #[allow(clippy::redundant_closure)]
                         let mut set = $with_capacity(len);
                         for _ in 0..len {
                             set.$insert($key::get(reader)?);
@@ -1090,9 +1086,9 @@ macro_rules! impl_seq {
 }
 
 impl_seq! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
-impl_seq! { "std", HashMap<K: Hash | Eq, V>, |len| HashMap::with_capacity(len) }
+impl_seq! { "std", HashMap<K: Hash | Eq, V>, HashMap::with_capacity }
 impl_seq! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
-impl_seq! { "std", HashSet<K: Hash | Eq>, |len| HashSet::with_capacity(len), insert }
+impl_seq! { "std", HashSet<K: Hash | Eq>, HashSet::with_capacity, insert }
 impl_seq! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
