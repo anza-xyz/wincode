@@ -31,11 +31,3 @@ Run benchmarks comparing `wincode` against `bincode`:
 ```bash
 cargo bench --features derive
 ```
-
-### Performance Results
-
-Preliminary benchmarks show `wincode` significantly outperforming `bincode`:
-
-- **Deserialization**: **3x faster** for simple structs (1.25ns vs 3.85ns)
-- **Vec<u64>**: **2x higher throughput** (28 GiB/s vs 12.8 GiB/s)
-- **Byte-array structs**: Optimized automatically for zero-copy deserialization
