@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use serde::{Deserialize, Serialize};
-use wincode::{deserialize, serialize, SchemaRead, SchemaWrite};
+use wincode::{deserialize, serialize, serialized_size, SchemaRead, SchemaWrite};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone)]
@@ -42,7 +42,8 @@ fn bench_vec_comparison(c: &mut Criterion) {
     
     for size in [100, 1_000, 10_000] {
         let data: Vec<u64> = (0..size).map(|i| i as u64).collect();
-        group.throughput(Throughput::Bytes((size * 8) as u64));
+        let bytes = serialized_size(&data).unwrap();
+        group.throughput(Throughput::Bytes(bytes));
         
         let serialized = bincode::serialize(&data).unwrap();
         assert_eq!(wincode::serialize(&data).unwrap(), serialized);
@@ -177,7 +178,7 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
             b: [i as u8; 16],
             c: [i as u8; 8],
         }).collect();
-        let bytes = (size * 56) as u64;
+        let bytes = serialized_size(&data).unwrap();
         group.throughput(Throughput::Bytes(bytes));
         
         let serialized = bincode::serialize(&data).unwrap();
