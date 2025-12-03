@@ -24,13 +24,21 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     
     let data = 0xDEADBEEFCAFEBABEu64;
     let serialized = bincode::serialize(&data).unwrap();
-    assert_eq!(wincode::serialize(&data).unwrap(), serialized);
+    assert_eq!(serialize(&data).unwrap(), serialized);
     
-    group.bench_function("u64/wincode", |b| {
-        b.iter(|| wincode::deserialize::<u64>(black_box(&serialized)).unwrap());
+    group.bench_function("u64/wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
     });
     
-    group.bench_function("u64/bincode", |b| {
+    group.bench_function("u64/bincode/serialize", |b| {
+        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
+    });
+    
+    group.bench_function("u64/wincode/deserialize", |b| {
+        b.iter(|| deserialize::<u64>(black_box(&serialized)).unwrap());
+    });
+    
+    group.bench_function("u64/bincode/deserialize", |b| {
         b.iter(|| bincode::deserialize::<u64>(black_box(&serialized)).unwrap());
     });
     
@@ -46,16 +54,28 @@ fn bench_vec_comparison(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(bytes));
         
         let serialized = bincode::serialize(&data).unwrap();
-        assert_eq!(wincode::serialize(&data).unwrap(), serialized);
+        assert_eq!(serialize(&data).unwrap(), serialized);
         
         group.bench_with_input(
-            BenchmarkId::new("wincode", size),
-            &serialized,
-            |b, s| b.iter(|| wincode::deserialize::<Vec<u64>>(black_box(s)).unwrap()),
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
         
         group.bench_with_input(
-            BenchmarkId::new("bincode", size),
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<Vec<u64>>(black_box(s)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("bincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| bincode::deserialize::<Vec<u64>>(black_box(s)).unwrap()),
         );
@@ -70,13 +90,22 @@ fn bench_struct_comparison(c: &mut Criterion) {
     
     let data = SimpleStruct { id: 12345, value: 0xDEADBEEF, flag: true };
     let serialized = bincode::serialize(&data).unwrap();
-    assert_eq!(wincode::serialize(&data).unwrap(), serialized);
+    assert_eq!(serialize(&data).unwrap(), serialized);
     
-    group.bench_function("wincode", |b| {
-        b.iter(|| wincode::deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
+    // Serialize benchmarks
+    group.bench_function("wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
     });
     
-    group.bench_function("bincode", |b| {
+    group.bench_function("bincode/serialize", |b| {
+        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
+    });
+    
+    group.bench_function("wincode/deserialize", |b| {
+        b.iter(|| deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
+    });
+    
+    group.bench_function("bincode/deserialize", |b| {
         b.iter(|| bincode::deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
     });
     
@@ -95,11 +124,19 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
     let serialized = bincode::serialize(&data).unwrap();
     assert_eq!(serialize(&data).unwrap(), serialized);
     
-    group.bench_function("wincode", |b| {
+    group.bench_function("wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
+    });
+    
+    group.bench_function("bincode/serialize", |b| {
+        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
+    });
+    
+    group.bench_function("wincode/deserialize", |b| {
         b.iter(|| deserialize::<PodStruct>(black_box(&serialized)).unwrap());
     });
     
-    group.bench_function("bincode", |b| {
+    group.bench_function("bincode/deserialize", |b| {
         b.iter(|| bincode::deserialize::<PodStruct>(black_box(&serialized)).unwrap());
     });
     
@@ -114,16 +151,28 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
         group.throughput(Throughput::Elements(size as u64));
         
         let serialized = bincode::serialize(&data).unwrap();
-        assert_eq!(wincode::serialize(&data).unwrap(), serialized);
+        assert_eq!(serialize(&data).unwrap(), serialized);
         
         group.bench_with_input(
-            BenchmarkId::new("wincode", size),
-            &serialized,
-            |b, s| b.iter(|| wincode::deserialize::<HashMap<u64, u64>>(black_box(s)).unwrap()),
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
         
         group.bench_with_input(
-            BenchmarkId::new("bincode", size),
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<HashMap<u64, u64>>(black_box(s)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("bincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| bincode::deserialize::<HashMap<u64, u64>>(black_box(s)).unwrap()),
         );
@@ -154,13 +203,25 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
         assert_eq!(serialize(&data).unwrap(), serialized);
         
         group.bench_with_input(
-            BenchmarkId::new("wincode", size),
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
         );
         
         group.bench_with_input(
-            BenchmarkId::new("bincode", size),
+            BenchmarkId::new("bincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| bincode::deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
         );
@@ -185,13 +246,25 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
         assert_eq!(serialize(&data).unwrap(), serialized);
         
         group.bench_with_input(
-            BenchmarkId::new("wincode", size),
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
         );
         
         group.bench_with_input(
-            BenchmarkId::new("bincode", size),
+            BenchmarkId::new("bincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| bincode::deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
         );
