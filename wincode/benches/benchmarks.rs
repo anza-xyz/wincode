@@ -147,8 +147,8 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("HashMap<u64, u64>");
     
     for size in [100, 1_000] {
-        let data: HashMap<u64, u64> = (0..size).map(|i| (i as u64, i * 2)).collect();
-        group.throughput(Throughput::Elements(size as u64));
+        let data: HashMap<u64, u64> = (0..size).map(|i: u64| (i, i.wrapping_mul(2))).collect();
+        group.throughput(Throughput::Elements(size));
         
         let serialized = bincode::serialize(&data).unwrap();
         assert_eq!(serialize(&data).unwrap(), serialized);
@@ -197,7 +197,7 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
                 })
             })
             .collect();
-        group.throughput(Throughput::Elements(size as u64));
+        group.throughput(Throughput::Elements(size));
         
         let serialized = bincode::serialize(&data).unwrap();
         assert_eq!(serialize(&data).unwrap(), serialized);
