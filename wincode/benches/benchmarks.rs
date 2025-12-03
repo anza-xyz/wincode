@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use serde::{Deserialize, Serialize};
-use wincode::{containers::Pod, deserialize, serialize, SchemaRead, SchemaWrite};
+use wincode::{deserialize, serialize, SchemaRead, SchemaWrite};
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone)]
@@ -10,13 +10,13 @@ struct SimpleStruct {
     flag: bool,
 }
 
-#[repr(transparent)]
+#[repr(C)]
 #[derive(Clone, Copy, SchemaWrite, SchemaRead, Serialize, Deserialize)]
-struct PodStruct([u8; 32]);
-
-// ============================================================================
-// COMPARISON BENCHMARKS (wincode vs bincode)
-// ============================================================================
+struct PodStruct {
+    a: [u8; 32],
+    b: [u8; 16],
+    c: [u8; 8],
+}
 
 fn bench_primitives_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Primitives");
@@ -82,6 +82,29 @@ fn bench_struct_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_pod_struct_single_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("PodStruct");
+    group.throughput(Throughput::Elements(1));
+    
+    let data = PodStruct {
+        a: [42u8; 32],
+        b: [17u8; 16],
+        c: [99u8; 8],
+    };
+    let serialized = bincode::serialize(&data).unwrap();
+    assert_eq!(serialize(&data).unwrap(), serialized);
+    
+    group.bench_function("wincode", |b| {
+        b.iter(|| deserialize::<PodStruct>(black_box(&serialized)).unwrap());
+    });
+    
+    group.bench_function("bincode", |b| {
+        b.iter(|| bincode::deserialize::<PodStruct>(black_box(&serialized)).unwrap());
+    });
+    
+    group.finish();
+}
+
 fn bench_hashmap_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("HashMap<u64, u64>");
     
@@ -108,39 +131,68 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
-// POD OPTIMIZATION BENCHMARKS
-// ============================================================================
+fn bench_hashmap_pod_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("HashMap<[u8; 16], PodStruct>");
+    
+    for size in [100, 1_000] {
+        let data: HashMap<[u8; 16], PodStruct> = (0..size)
+            .map(|i| {
+                let mut key = [0u8; 16];
+                key[0] = i as u8;
+                key[1] = (i >> 8) as u8;
+                (key, PodStruct {
+                    a: [i as u8; 32],
+                    b: [i as u8; 16],
+                    c: [i as u8; 8],
+                })
+            })
+            .collect();
+        group.throughput(Throughput::Elements(size as u64));
+        
+        let serialized = bincode::serialize(&data).unwrap();
+        assert_eq!(serialize(&data).unwrap(), serialized);
+        
+        group.bench_with_input(
+            BenchmarkId::new("wincode", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
+        );
+        
+        group.bench_with_input(
+            BenchmarkId::new("bincode", size),
+            &serialized,
+            |b, s| b.iter(|| bincode::deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
+        );
+    }
+    
+    group.finish();
+}
 
-fn bench_pod_optimization(c: &mut Criterion) {
-    let mut group = c.benchmark_group("Pod Optimization");
+fn bench_pod_struct_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Vec<PodStruct>");
     
     for size in [1_000, 10_000] {
-        let data: Vec<PodStruct> = (0..size).map(|i| PodStruct([i as u8; 32])).collect();
-        let bytes = (size * 32) as u64;
+        let data: Vec<PodStruct> = (0..size).map(|i| PodStruct {
+            a: [i as u8; 32],
+            b: [i as u8; 16],
+            c: [i as u8; 8],
+        }).collect();
+        let bytes = (size * 56) as u64;
         group.throughput(Throughput::Bytes(bytes));
         
-        // Regular Vec<PodStruct>
-        let serialized_regular = serialize(&data).unwrap();
+        let serialized = bincode::serialize(&data).unwrap();
+        assert_eq!(serialize(&data).unwrap(), serialized);
+        
         group.bench_with_input(
-            BenchmarkId::new("regular", size),
-            &serialized_regular,
+            BenchmarkId::new("wincode", size),
+            &serialized,
             |b, s| b.iter(|| deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
         );
         
-        // Vec<Pod<PodStruct>> - optimized
-        #[derive(SchemaWrite, SchemaRead)]
-        struct WithPod {
-            #[wincode(with = "wincode::containers::Vec<Pod<_>>")]
-            data: Vec<PodStruct>,
-        }
-        
-        let with_pod = WithPod { data: data.clone() };
-        let serialized_pod = serialize(&with_pod).unwrap();
         group.bench_with_input(
-            BenchmarkId::new("Pod optimized", size),
-            &serialized_pod,
-            |b, s| b.iter(|| deserialize::<WithPod>(black_box(s)).unwrap()),
+            BenchmarkId::new("bincode", size),
+            &serialized,
+            |b, s| b.iter(|| bincode::deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
         );
     }
     
@@ -152,8 +204,10 @@ criterion_group!(
     bench_primitives_comparison,
     bench_vec_comparison,
     bench_struct_comparison,
+    bench_pod_struct_single_comparison,
     bench_hashmap_comparison,
-    bench_pod_optimization,
+    bench_hashmap_pod_comparison,
+    bench_pod_struct_comparison,
 );
 
 criterion_main!(benches);

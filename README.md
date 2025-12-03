@@ -38,4 +38,4 @@ Preliminary benchmarks show `wincode` significantly outperforming `bincode`:
 
 - **Deserialization**: **3x faster** for simple structs (1.25ns vs 3.85ns)
 - **Vec<u64>**: **2x higher throughput** (28 GiB/s vs 12.8 GiB/s)
-- **Pod Optimization**: **2-3x faster** for large vectors of pod-compatible structs
+- **Byte-array structs**: Optimized automatically for zero-copy deserialization
