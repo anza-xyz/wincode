@@ -71,9 +71,52 @@ pub mod short_vec {
             mem::{transmute, MaybeUninit},
             ptr,
         },
-        solana_short_vec::decode_shortu16_len,
+        solana_short_vec::{decode_shortu16_len, ShortU16},
     };
-    pub struct ShortU16Len;
+
+    impl<'de> SchemaRead<'de> for ShortU16 {
+        type Dst = Self;
+
+        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            let Ok((len, read)) = decode_shortu16_len(reader.fill_buf(3)?) else {
+                return Err(read_length_encoding_overflow("u16::MAX"));
+            };
+
+            // SAFETY: `read` is the number of bytes visited by `decode_shortu16_len` to decode the length,
+            // which implies the reader had at least `read` bytes available.
+            unsafe { reader.consume_unchecked(read) };
+
+            // SAFETY: `dst` is a valid pointer to a `MaybeUninit<ShortU16>`.
+            let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast::<MaybeUninit<u16>>() };
+            // SAFETY: `len` is always a valid u16. `decode_shortu16_len` casts it to a usize before returning,
+            // so no risk of overflow.
+            slot.write(len as u16);
+            Ok(())
+        }
+    }
+
+    impl SchemaWrite for ShortU16 {
+        type Src = Self;
+
+        fn size_of(src: &Self::Src) -> WriteResult<usize> {
+            Ok(short_u16_bytes_needed(src.0))
+        }
+
+        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            let val = src.0;
+            let needed = short_u16_bytes_needed(val);
+            let mut buf = [MaybeUninit::<u8>::uninit(); 3];
+            // SAFETY: short_u16 uses a maximum of 3 bytes, so the buffer is always large enough.
+            unsafe { encode_short_u16(buf.as_mut_ptr().cast::<u8>(), needed, val) };
+            // SAFETY: encode_short_u16 writes exactly `needed` bytes.
+            let buf =
+                unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(buf.get_unchecked(..needed)) };
+            writer.write(buf)?;
+            Ok(())
+        }
+    }
+
+    pub type ShortU16Len = ShortU16;
 
     /// Branchless computation of the number of bytes needed to encode a short u16.
     ///
@@ -140,16 +183,7 @@ pub mod short_vec {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }
 
-            let len = len as u16;
-            let needed = short_u16_bytes_needed(len);
-            let mut buf = [MaybeUninit::<u8>::uninit(); 3];
-            // SAFETY: short_u16 uses a maximum of 3 bytes, so the buffer is always large enough.
-            unsafe { encode_short_u16(buf.as_mut_ptr().cast(), needed, len) };
-            // SAFETY: encode_short_u16 writes exactly `needed` bytes.
-            let buf =
-                unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(buf.get_unchecked(..needed)) };
-            writer.write(buf)?;
-            Ok(())
+            <ShortU16 as SchemaWrite>::write(writer, &ShortU16(len as u16))
         }
 
         #[inline(always)]
@@ -195,6 +229,12 @@ pub mod short_vec {
             ar: Vec<[u8; 32]>,
         }
 
+        #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize)]
+        #[wincode(internal)]
+        struct ShortVecAsSchema {
+            short_u16: ShortU16,
+        }
+
         fn strat_short_vec_struct() -> impl Strategy<Value = ShortVecStruct> {
             (
                 proptest::collection::vec(any::<u8>(), 0..=100),
@@ -222,6 +262,18 @@ pub mod short_vec {
                 let schema_deserialized: ShortVecStruct = crate::deserialize(&schema_serialized).unwrap();
                 prop_assert_eq!(&short_vec_struct, &bincode_deserialized);
                 prop_assert_eq!(short_vec_struct, schema_deserialized);
+            }
+
+            #[test]
+            fn test_short_vec_as_schema(sv in any::<u16>()) {
+                let val = ShortVecAsSchema { short_u16: ShortU16(sv) };
+                let bincode_serialized = bincode::serialize(&val).unwrap();
+                let wincode_serialized = crate::serialize(&val).unwrap();
+                prop_assert_eq!(&bincode_serialized, &wincode_serialized);
+                let bincode_deserialized: ShortVecAsSchema = bincode::deserialize(&bincode_serialized).unwrap();
+                let wincode_deserialized: ShortVecAsSchema = crate::deserialize(&wincode_serialized).unwrap();
+                prop_assert_eq!(val.short_u16.0, bincode_deserialized.short_u16.0);
+                prop_assert_eq!(val.short_u16.0, wincode_deserialized.short_u16.0);
             }
         }
     }
