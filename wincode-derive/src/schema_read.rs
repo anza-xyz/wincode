@@ -285,7 +285,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             /// with a bit-set tracking the initialization state of the fields.
             ///
             /// The builder will drop all initialized fields in reverse order on drop. When the struct is fully initialized,
-            /// you **must** call `assume_init_forget` or `assume_init_mut` to forget the builder. Otherwise, all the
+            /// you **must** call `finish` or `into_assume_init_mut` to forget the builder. Otherwise, all the
             /// initialized fields will be dropped when the builder is dropped.
             #[must_use]
             #vis struct #builder_ident < #(#generic_lifetimes,)* #(#generic_const,)* #(#generic_type_params,)* > #where_clause {

@@ -276,7 +276,7 @@
 //!
 //! #### Safety
 //!
-//! Correct code will call `assume_init_forget` or `assume_init_mut` once all fields have been initialized.
+//! Correct code will call `finish` or `into_assume_init_mut` once all fields have been initialized.
 //! Failing to do so will result in the initialized fields being dropped when the builder is dropped, which
 //! is undefined behavior if the `MaybeUninit` is later assumed to be initialized (e.g., on successful deserialization).
 //!
