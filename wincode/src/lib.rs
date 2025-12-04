@@ -257,7 +257,7 @@
 //!   - Creates a new builder from a mutable `MaybeUninit` reference to the type.
 //! - `into_assume_init_mut`
 //!   - Assumes the builder is fully initialized, drops it, and returns a mutable reference to the inner type.
-//! - `assume_init_forget`
+//! - `finish`
 //!   - Forgets the builder, disabling the drop logic.
 //! - `is_init`
 //!   - Checks if the builder is fully initialized by checking if all field initialization bits are set.
@@ -332,7 +332,7 @@
 //!                 header_builder.read_num_required_signatures(reader)?;
 //!                 header_builder.read_num_signed_accounts(reader)?;
 //!                 header_builder.read_num_unsigned_accounts(reader)?;
-//!                 unsafe { header_builder.assume_init_forget() };
+//!                 header_builder.finish();
 //!                 Ok(())
 //!             })?;
 //!         }
@@ -341,7 +341,7 @@
 //!         payload_builder.read_data(reader)?;
 //!         // Message is fully initialized, so we forget the builders
 //!         // to avoid dropping the initialized fields.
-//!         unsafe { payload_builder.assume_init_forget() };
+//!         payload_builder.finish();
 //!         Ok(())
 //!     }
 //! }

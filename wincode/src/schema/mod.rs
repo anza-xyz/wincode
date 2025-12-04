@@ -823,7 +823,7 @@ mod tests {
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
                         assert!(inner_builder.is_init());
-                        inner_builder.assume_init_forget();
+                        inner_builder.finish();
                         Ok(())
                     })?;
                 }
@@ -863,13 +863,13 @@ mod tests {
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
                         assert!(inner_builder.is_init());
-                        inner_builder.assume_init_forget();
+                        inner_builder.finish();
                         Ok(())
                     })?;
                 }
                 outer_builder.read_b(reader)?;
                 prop_assert!(outer_builder.is_init());
-                unsafe { outer_builder.assume_init_forget() };
+                outer_builder.finish();
                 let init = unsafe { uninit.assume_init() };
                 prop_assert_eq!(test, init);
             });
@@ -896,7 +896,7 @@ mod tests {
                 .read_b(reader)?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
-            unsafe { builder.assume_init_forget() };
+            builder.finish();
             let init = unsafe { uninit.assume_init() };
             prop_assert_eq!(test, init);
         });
@@ -948,7 +948,7 @@ mod tests {
                     .read_0(reader)?
                     .read_1(reader)?;
                 assert!(builder.is_init());
-                unsafe { builder.assume_init_forget() };
+                builder.finish();
 
                 let init = unsafe { uninit.assume_init() };
                 prop_assert_eq!(test, init);

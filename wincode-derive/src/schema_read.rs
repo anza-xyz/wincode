@@ -367,13 +367,8 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                 }
 
                 /// Forget the builder, disabling the drop logic.
-                ///
-                /// # Safety
-                ///
-                /// Assuming the source `MaybeUninit<T>` when the content is not yet fully initialized causes undefined behavior.
-                /// It is up to the caller to guarantee that the `MaybeUninit<T>` really is in an initialized state.
                 #[inline]
-                #vis const unsafe fn assume_init_forget(self) {
+                #vis const fn finish(self) {
                     mem::forget(self);
                 }
             }
