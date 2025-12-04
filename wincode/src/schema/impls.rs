@@ -25,7 +25,6 @@ use {
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
         schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite, ZeroCopy},
-        util::type_equal,
         TypeMeta,
     },
     core::{
@@ -37,7 +36,7 @@ use {
 #[cfg(feature = "alloc")]
 use {
     crate::{
-        containers::{self, Elem},
+        containers::{self},
         error::WriteError,
         schema::{size_of_elem_iter, write_elem_iter},
     },
@@ -341,12 +340,12 @@ where
 
     #[inline]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        <containers::Vec<Elem<T>, BincodeLen>>::size_of(value)
+        <containers::Vec<T, BincodeLen>>::size_of(value)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        <containers::Vec<Elem<T>, BincodeLen>>::write(writer, value)
+        <containers::Vec<T, BincodeLen>>::write(writer, value)
     }
 }
 
@@ -359,7 +358,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::Vec<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::Vec<T, BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -373,12 +372,12 @@ where
 
     #[inline]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        <containers::VecDeque<Elem<T>, BincodeLen>>::size_of(value)
+        <containers::VecDeque<T, BincodeLen>>::size_of(value)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        <containers::VecDeque<Elem<T>, BincodeLen>>::write(writer, value)
+        <containers::VecDeque<T, BincodeLen>>::write(writer, value)
     }
 }
 
@@ -391,7 +390,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::VecDeque<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::VecDeque<T, BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -436,22 +435,24 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        if type_equal::<T::Dst, u8>() {
-            unsafe {
-                reader.copy_into_array(transmute::<
-                    &mut MaybeUninit<Self::Dst>,
-                    &mut MaybeUninit<[u8; N]>,
-                >(dst))?
-            };
+        if let TypeMeta::Static {
+            zero_copy: true, ..
+        } = T::TYPE_META
+        {
+            // SAFETY: `T::Dst` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+            unsafe { reader.copy_into_t(dst)? };
             return Ok(());
         }
+
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
         let base = dst.as_mut_ptr();
         let mut guard = SliceDropGuard::<T::Dst>::new(base);
         if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            let reader = &mut reader.as_trusted_for(size)?;
+            // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
+            // `N` reads of `T` will consume `size` bytes, fully consuming the trusted window.
+            let reader = &mut unsafe { reader.as_trusted_for(size) }?;
             for i in 0..N {
                 let slot = unsafe { &mut *base.add(i) };
                 T::read(reader, slot)?;
@@ -501,22 +502,32 @@ where
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        if type_equal::<T::Src, u8>() {
-            unsafe { writer.write(transmute::<&[T::Src; N], &[u8; N]>(value))? };
-            return Ok(());
+        match Self::TYPE_META {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { writer.write_slice_t(value)? };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
+                // `N` writes of `T` will write `size` bytes, fully initializing the trusted window.
+                let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                for item in value {
+                    T::write(writer, item)?;
+                }
+                writer.finish()?;
+            }
+            TypeMeta::Dynamic => {
+                for item in value {
+                    T::write(writer, item)?;
+                }
+            }
         }
 
-        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            let writer = &mut writer.as_trusted_for(size)?;
-            for item in value {
-                T::write(writer, item)?;
-            }
-            writer.finish()?;
-            return Ok(());
-        }
-        for item in value {
-            T::write(writer, item)?;
-        }
         Ok(())
     }
 }
@@ -758,12 +769,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        <containers::Box<[Elem<T>], BincodeLen>>::size_of(src)
+        <containers::Box<[T], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        <containers::Box<[Elem<T>], BincodeLen>>::write(writer, value)
+        <containers::Box<[T], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -777,12 +788,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        <containers::Rc<[Elem<T>], BincodeLen>>::size_of(src)
+        <containers::Rc<[T], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        <containers::Rc<[Elem<T>], BincodeLen>>::write(writer, value)
+        <containers::Rc<[T], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -796,12 +807,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        <containers::Arc<[Elem<T>], BincodeLen>>::size_of(src)
+        <containers::Arc<[T], BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-        <containers::Arc<[Elem<T>], BincodeLen>>::write(writer, value)
+        <containers::Arc<[T], BincodeLen>>::write(writer, value)
     }
 }
 
@@ -814,7 +825,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::Box<[Elem<T>], BincodeLen>>::read(reader, dst)
+        <containers::Box<[T], BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -827,7 +838,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::Rc<[Elem<T>], BincodeLen>>::read(reader, dst)
+        <containers::Rc<[T], BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -840,7 +851,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::Arc<[Elem<T>], BincodeLen>>::read(reader, dst)
+        <containers::Arc<[T], BincodeLen>>::read(reader, dst)
     }
 }
 
@@ -919,7 +930,7 @@ impl<'de> SchemaRead<'de> for String {
 /// and where the most optimal implementation is simply iterating over the type to write or collecting
 /// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
 macro_rules! impl_seq {
-    ($feature: literal, $target: ident<$key: ident : $($constraint:path)|*, $value: ident>) => {
+    ($feature: literal, $target: ident<$key: ident : $($constraint:path)|*, $value: ident>, $with_capacity: expr) => {
         #[cfg(feature = $feature)]
         impl<$key, $value> SchemaWrite for $target<$key, $value>
         where
@@ -954,11 +965,13 @@ macro_rules! impl_seq {
             #[inline]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
                 if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                    let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
-                    let writer = &mut writer.as_trusted_for(
-                        <BincodeLen>::write_bytes_needed(src.len())? + (key_size + value_size) * src.len()
-                    )?;
-                    <BincodeLen>::write(writer, src.len())?;
+                    let needed = <BincodeLen>::write_bytes_needed(len)? + (key_size + value_size) * len;
+                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
+                    // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
+                    let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
+                    <BincodeLen>::write(writer, len)?;
                     for (k, v) in src.iter() {
                         $key::write(writer, k)?;
                         $value::write(writer, v)?;
@@ -990,22 +1003,24 @@ macro_rules! impl_seq {
 
                 let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     #[allow(clippy::arithmetic_side_effects)]
-                    let reader = &mut reader.as_trusted_for((key_size + value_size) * len)?;
-                    (0..len)
-                        .map(|_| {
-                            let k = $key::get(reader)?;
-                            let v = $value::get(reader)?;
-                            Ok::<_, crate::ReadError>((k, v))
-                        })
-                        .collect::<ReadResult<_>>()?
+                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
+                    // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
+                    let reader = &mut unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
+                    let mut map = $with_capacity(len);
+                    for _ in 0..len {
+                        let k = $key::get(reader)?;
+                        let v = $value::get(reader)?;
+                        map.insert(k, v);
+                    }
+                    map
                 } else {
-                    (0..len)
-                        .map(|_| {
-                            let k = $key::get(reader)?;
-                            let v = $value::get(reader)?;
-                            Ok::<_, crate::ReadError>((k, v))
-                        })
-                        .collect::<ReadResult<_>>()?
+                    let mut map = $with_capacity(len);
+                    for _ in 0..len {
+                        let k = $key::get(reader)?;
+                        let v = $value::get(reader)?;
+                        map.insert(k, v);
+                    }
+                    map
                 };
 
                 dst.write(map);
@@ -1014,7 +1029,7 @@ macro_rules! impl_seq {
         }
     };
 
-    ($feature: literal, $target: ident <$key: ident : $($constraint:path)|*>) => {
+    ($feature: literal, $target: ident <$key: ident : $($constraint:path)|*>, $with_capacity: expr, $insert: ident) => {
         #[cfg(feature = $feature)]
         impl<$key: SchemaWrite> SchemaWrite for $target<$key>
         where
@@ -1048,15 +1063,21 @@ macro_rules! impl_seq {
                 let map = match $key::TYPE_META {
                     TypeMeta::Static { size, .. } => {
                         #[allow(clippy::arithmetic_side_effects)]
-                        let reader = &mut reader.as_trusted_for(size * len)?;
-                        (0..len)
-                            .map(|_| $key::get(reader))
-                            .collect::<ReadResult<_>>()?
+                        // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                        // will consume `size * len` bytes, fully consuming the trusted window.
+                        let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
+                        let mut set = $with_capacity(len);
+                        for _ in 0..len {
+                            set.$insert($key::get(reader)?);
+                        }
+                        set
                     }
                     TypeMeta::Dynamic => {
-                        (0..len)
-                            .map(|_| $key::get(reader))
-                            .collect::<ReadResult<_>>()?
+                        let mut set = $with_capacity(len);
+                        for _ in 0..len {
+                            set.$insert($key::get(reader)?);
+                        }
+                        set
                     }
                 };
 
@@ -1067,11 +1088,11 @@ macro_rules! impl_seq {
     };
 }
 
-impl_seq! { "alloc", BTreeMap<K: Ord, V> }
-impl_seq! { "std", HashMap<K: Hash | Eq, V> }
-impl_seq! { "alloc", BTreeSet<K: Ord> }
-impl_seq! { "std", HashSet<K: Hash | Eq> }
-impl_seq! { "alloc", LinkedList<K:> }
+impl_seq! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
+impl_seq! { "std", HashMap<K: Hash | Eq, V>, HashMap::with_capacity }
+impl_seq! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
+impl_seq! { "std", HashSet<K: Hash | Eq>, HashSet::with_capacity, insert }
+impl_seq! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
 impl<T> SchemaWrite for BinaryHeap<T>
@@ -1083,12 +1104,12 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        <containers::BinaryHeap<Elem<T>, BincodeLen>>::size_of(src)
+        <containers::BinaryHeap<T, BincodeLen>>::size_of(src)
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        <containers::BinaryHeap<Elem<T>, BincodeLen>>::write(writer, src)
+        <containers::BinaryHeap<T, BincodeLen>>::write(writer, src)
     }
 }
 
@@ -1102,7 +1123,7 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        <containers::BinaryHeap<Elem<T>, BincodeLen>>::read(reader, dst)
+        <containers::BinaryHeap<T, BincodeLen>>::read(reader, dst)
     }
 }
 

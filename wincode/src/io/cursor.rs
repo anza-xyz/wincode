@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(feature = "alloc")]
-use core::slice::from_raw_parts_mut;
+use {alloc::vec::Vec, core::slice::from_raw_parts_mut};
 
 /// `Cursor` wraps an in-memory buffer, providing [`Reader`] and [`Writer`] functionality
 /// for types implementing <code>[AsRef]<\[u8]></code>.
@@ -162,7 +162,7 @@ where
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReader::new(
             self.consume_slice_checked(n_bytes)?,
         ))
@@ -237,7 +237,7 @@ impl Writer for Cursor<&mut [MaybeUninit<u8>]> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         uninit_slice::as_trusted_for(self.inner, &mut self.pos, n_bytes)
     }
 }
@@ -263,7 +263,7 @@ impl<const N: usize> Writer for Cursor<&mut MaybeUninit<[u8; N]>> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         uninit_slice::as_trusted_for(Self::transpose(self.inner), &mut self.pos, n_bytes)
     }
 }
@@ -408,7 +408,7 @@ impl<'a> Writer for TrustedVecWriter<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedVecWriter::new(self.inner, self.pos))
     }
 }
@@ -460,7 +460,7 @@ impl Writer for Cursor<&mut Vec<u8>> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         vec::as_trusted_for(self.inner, &mut self.pos, n_bytes)
     }
 }
@@ -509,7 +509,7 @@ impl Writer for Cursor<Vec<u8>> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         vec::as_trusted_for(&mut self.inner, &mut self.pos, n_bytes)
     }
 }
@@ -517,7 +517,7 @@ impl Writer for Cursor<Vec<u8>> {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
-    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+    use {super::*, crate::proptest_config::proptest_cfg, alloc::vec, proptest::prelude::*};
 
     proptest! {
         #![proptest_config(proptest_cfg())]
@@ -558,7 +558,7 @@ mod tests {
 
             // as_trusted_for(0) is always Ok and does not advance.
             let start2 = cursor.position();
-            let mut trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0).unwrap();
+            let mut trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
             // Trusted reader on a 0-window should behave like EOF for >0, but allow zero-length reads.
             prop_assert_eq!(trusted.fill_buf(1).unwrap(), &[]);
             prop_assert_eq!(trusted.fill_exact(0).unwrap().len(), 0);
@@ -573,7 +573,7 @@ mod tests {
             let mut cursor = Cursor::new_at(&bytes, pos);
             let remaining = len.saturating_sub(pos);
 
-            let _trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, remaining).unwrap();
+            let _trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, remaining) }.unwrap();
             // After consuming the exact remaining, position should be exactly len.
             prop_assert_eq!(cursor.position(), len);
         }
@@ -589,7 +589,7 @@ mod tests {
             let start = cursor.position();
             prop_assert!(cursor.fill_exact(0).is_ok());
             prop_assert!(cursor.consume(0).is_ok());
-            let _trusted = <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0).unwrap();
+            let _trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
             prop_assert_eq!(cursor.position(), start);
         }
 
@@ -659,7 +659,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len()]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half)
+            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();
@@ -672,7 +672,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len() / 2]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half)
+            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();
@@ -685,7 +685,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len() * 2]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half)
+            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();

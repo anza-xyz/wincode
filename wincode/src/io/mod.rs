@@ -101,11 +101,32 @@ pub trait Reader<'a> {
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
     ///
-    /// Implementations may use this to bulk prefetch bytes for the `n_bytes` window.
+    /// Implementors must:
+    /// - Ensure that either at least `n_bytes` bytes are available backing the
+    ///   returned reader, or return an error.
+    /// - Arrange that the returned `Trusted` reader's methods operate within
+    ///   that `n_bytes` window (it may buffer or prefetch arbitrarily).
     ///
-    /// Implementations must ensure at least `n_bytes` are available or return an error.
-    /// Callers must not read beyond `n_bytes` on the returned reader; behavior is unspecified beyond that.
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>>;
+    /// Note:
+    /// - `as_trusted_for` is intended for callers that know they will operate
+    ///   within a fixed-size window and want to avoid intermediate bounds checks.
+    /// - If you simply want to advance the parent by `n_bytes` without using
+    ///   a trusted window, prefer `consume(n_bytes)` instead.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that, through the returned reader, they do not
+    /// cause more than `n_bytes` bytes to be logically read or consumed
+    /// without performing additional bounds checks.
+    ///
+    /// Concretely:
+    /// - The total number of bytes accessed/consumed via the `Trusted` reader
+    ///   (`fill_*`, `copy_into_*`, `consume`, etc.) must be **<= `n_bytes`**.
+    ///
+    /// Violating this is undefined behavior, because `Trusted` readers are
+    /// permitted to elide bounds checks within the `n_bytes` window; reading past the
+    /// `n_bytes` window may read past the end of the underlying buffer.
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>>;
 
     /// Return a reference to the next byte without advancing.
     ///
@@ -241,9 +262,44 @@ pub trait Writer {
     /// Advance the parent by `n_bytes` and return a [`Writer`] that can elide bounds checks within
     /// that `n_bytes` window.
     ///
-    /// Implementations must ensure at least `n_bytes` are available for writing or return an error.
-    /// Callers must not write beyond `n_bytes` on the returned writer; behavior is unspecified beyond that.
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>>;
+    /// Implementors must:
+    /// - Ensure that either at least `n_bytes` bytes are available backing the
+    ///   returned writer, or return an error.
+    /// - Arrange that the returned `Trusted` writer's methods operate within
+    ///   that `n_bytes` window (it may buffer or prefetch arbitrarily).
+    ///
+    /// Note:
+    /// - `as_trusted_for` is intended for callers that know they will operate
+    ///   within an exact-size window and want to avoid intermediate bounds checks.
+    ///
+    /// # Safety
+    ///
+    /// The caller must treat the returned writer as having exclusive access to
+    /// exactly `n_bytes` bytes of **uninitialized** output space in the parent,
+    /// and must:
+    ///
+    /// - Ensure that no write performed through the `Trusted` writer can
+    ///   address memory outside of that `n_bytes` window.
+    /// - Ensure that, before the `Trusted` writer is finished or the parent
+    ///   writer is used again, **every byte** in that `n_bytes` window has
+    ///   been initialized at least once via the `Trusted` writer.
+    /// - Call [`Writer::finish`] on the `Trusted` writer when writing is complete and
+    ///   before the parent writer is used again.
+    ///
+    /// Concretely:
+    /// - All writes performed via the `Trusted` writer (`write`, `write_t`,
+    ///   `write_slice_t`, etc.) must stay within the `[0, n_bytes)` region of
+    ///   the reserved space.
+    /// - It is permitted to overwrite the same bytes multiple times, but the
+    ///   union of all bytes written must cover the entire `[0, n_bytes)` window.
+    ///
+    /// Violating this is undefined behavior, because:
+    /// - `Trusted` writers are permitted to elide bounds checks within the
+    ///   `n_bytes` window; writing past the window may write past the end of
+    ///   the underlying destination.
+    /// - Failing to initialize all `n_bytes` may leave uninitialized memory in
+    ///   the destination that later safe code assumes to be fully initialized.
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>>;
 
     /// Write `T` as bytes into the source.
     ///
@@ -251,8 +307,8 @@ pub trait Writer {
     ///
     /// - `T` must be plain ol' data.
     #[inline]
-    unsafe fn write_t<T>(&mut self, src: &T) -> WriteResult<()> {
-        let src = from_raw_parts((src as *const T).cast::<u8>(), size_of::<T>());
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        let src = from_raw_parts((src as *const T).cast::<u8>(), size_of_val(src));
         self.write(src)?;
         Ok(())
     }

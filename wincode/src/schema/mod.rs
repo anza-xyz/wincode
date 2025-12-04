@@ -45,9 +45,8 @@ use {
         error::{ReadResult, WriteResult},
         io::*,
         len::SeqLen,
-        util::type_equal,
     },
-    core::mem::{transmute, MaybeUninit},
+    core::mem::MaybeUninit,
 };
 
 pub mod containers;
@@ -56,6 +55,7 @@ mod impls;
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
 /// Readers and writers may use this to optimize their behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeMeta {
     /// The type has a statically known serialized size.
     ///
@@ -163,9 +163,6 @@ where
     T: SchemaWrite,
     T::Src: Sized,
 {
-    if type_equal::<T::Src, u8>() {
-        return Ok(Len::write_bytes_needed(value.len())? + value.len());
-    }
     size_of_elem_iter::<T, Len>(value.iter())
 }
 
@@ -180,8 +177,11 @@ where
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
-        let mut writer =
-            writer.as_trusted_for(Len::write_bytes_needed(src.len())? + size * src.len())?;
+        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
+        // SAFETY: `needed` is the size of the encoded length plus the size of the items.
+        // `Len::write` and len writes of `T::Src` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(&mut writer, src.len())?;
         for item in src {
             T::write(&mut writer, item)?;
@@ -207,10 +207,19 @@ where
     T: SchemaWrite,
     T::Src: Sized,
 {
-    if type_equal::<T::Src, u8>() {
-        let writer = &mut writer.as_trusted_for(Len::write_bytes_needed(src.len())? + src.len())?;
+    if let TypeMeta::Static {
+        size,
+        zero_copy: true,
+    } = T::TYPE_META
+    {
+        let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
+        // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
+        // `Len::write` and `writer.write(src)` will write `needed` bytes,
+        // fully initializing the trusted window.
+        let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer, src.len())?;
-        writer.write(unsafe { transmute::<&[T::Src], &[u8]>(src) })?;
+        // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        unsafe { writer.write_slice_t(src)? };
         writer.finish()?;
         return Ok(());
     }
@@ -219,7 +228,7 @@ where
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects)]
+    #![allow(clippy::arithmetic_side_effects, deprecated)]
 
     use {
         crate::{
@@ -227,7 +236,6 @@ mod tests {
             deserialize,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
-            len::BincodeLen,
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult,
@@ -243,6 +251,26 @@ mod tests {
             sync::Arc,
         },
     };
+
+    #[derive(
+        serde::Serialize,
+        serde::Deserialize,
+        Debug,
+        PartialEq,
+        Eq,
+        Ord,
+        PartialOrd,
+        SchemaWrite,
+        SchemaRead,
+        proptest_derive::Arbitrary,
+        Hash,
+    )]
+    #[wincode(internal)]
+    #[repr(C)]
+    struct StructZeroCopy {
+        byte: u8,
+        ar: [u8; 32],
+    }
 
     #[derive(
         serde::Serialize,
@@ -282,6 +310,48 @@ mod tests {
         a: u64,
         b: bool,
         e: String,
+    }
+
+    #[test]
+    fn struct_zero_copy_derive_size() {
+        let expected = TypeMeta::Static {
+            size: size_of::<u8>() + size_of::<[u8; 32]>(),
+            zero_copy: true,
+        };
+        assert_eq!(<StructZeroCopy as SchemaWrite>::TYPE_META, expected);
+        assert_eq!(<StructZeroCopy as SchemaRead<'_>>::TYPE_META, expected);
+    }
+
+    #[test]
+    fn struct_zero_copy_transparent_derive_size() {
+        #[derive(SchemaWrite, SchemaRead)]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct Address([u8; 32]);
+
+        let expected = TypeMeta::Static {
+            size: size_of::<[u8; 32]>(),
+            zero_copy: true,
+        };
+        assert_eq!(<Address as SchemaWrite>::TYPE_META, expected);
+        assert_eq!(<Address as SchemaRead<'_>>::TYPE_META, expected);
+    }
+
+    #[test]
+    fn struct_static_derive_size() {
+        let expected = TypeMeta::Static {
+            size: size_of::<u64>() + size_of::<bool>() + size_of::<[u8; 32]>(),
+            zero_copy: false,
+        };
+        assert_eq!(<StructStatic as SchemaWrite>::TYPE_META, expected);
+        assert_eq!(<StructStatic as SchemaRead<'_>>::TYPE_META, expected);
+    }
+
+    #[test]
+    fn struct_non_static_derive_size() {
+        let expected = TypeMeta::Dynamic;
+        assert_eq!(<StructNonStatic as SchemaWrite>::TYPE_META, expected);
+        assert_eq!(<StructNonStatic as SchemaRead<'_>>::TYPE_META, expected);
     }
 
     thread_local! {
@@ -746,6 +816,212 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_extensions_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                builder.read_a(reader)?.read_b(reader)?;
+                prop_assert!(!builder.is_init());
+                // Struct is not fully initialized, so the two initialized fields should be dropped.
+            });
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        // Same test, but with a tuple struct.
+        struct TestTuple(DropCounted, DropCounted);
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: TestTuple)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<TestTuple>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut test);
+                builder.read_0(reader)?;
+                prop_assert!(!builder.is_init());
+                // Struct is not fully initialized, so the first initialized field should be dropped.
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions_nested_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Inner {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            inner: Inner,
+            b: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut test = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                unsafe {
+                    outer_builder.init_inner_with(|inner| {
+                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        inner_builder.read_a(reader)?;
+                        inner_builder.read_b(reader)?;
+                        inner_builder.read_c(reader)?;
+                        assert!(inner_builder.is_init());
+                        inner_builder.finish();
+                        Ok(())
+                    })?;
+                }
+                // Outer struct is not fully initialized, so the inner struct should be dropped.
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions_nested_fully_initialized() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Inner {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            inner: Inner,
+            b: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                unsafe {
+                    outer_builder.init_inner_with(|inner| {
+                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        inner_builder.read_a(reader)?;
+                        inner_builder.read_b(reader)?;
+                        inner_builder.read_c(reader)?;
+                        assert!(inner_builder.is_init());
+                        inner_builder.finish();
+                        Ok(())
+                    })?;
+                }
+                outer_builder.read_b(reader)?;
+                prop_assert!(outer_builder.is_init());
+                outer_builder.finish();
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+    }
+
+    #[test]
+    fn test_struct_extensions() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let reader = &mut serialized.as_slice();
+            let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader)?
+                .read_b(reader)?
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
+    fn test_struct_extensions_builder_fully_initialized() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            a: DropCounted,
+            b: DropCounted,
+            c: DropCounted,
+        }
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: Test)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<Test>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                builder
+                    .read_a(reader)?
+                    .read_b(reader)?
+                    .read_c(reader)?;
+                prop_assert!(builder.is_init());
+                let init = unsafe { builder.into_assume_init_mut() };
+                prop_assert_eq!(&test, init);
+
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        // Same test, but with a tuple struct.
+        struct TestTuple(DropCounted, DropCounted);
+
+        {
+            let _guard = TLDropGuard::new();
+            proptest!(proptest_cfg(), |(test: TestTuple)| {
+                let serialized = serialize(&test).unwrap();
+                let mut uninit = MaybeUninit::<TestTuple>::uninit();
+                let reader = &mut serialized.as_slice();
+                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                builder
+                    .read_0(reader)?
+                    .read_1(reader)?;
+                assert!(builder.is_init());
+                builder.finish();
+
+                let init = unsafe { uninit.assume_init() };
+                prop_assert_eq!(test, init);
+            });
+        }
+    }
+
+    #[test]
     fn test_struct_with_reference_equivalence() {
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
@@ -951,6 +1227,132 @@ mod tests {
     }
 
     #[test]
+    fn enum_static_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A {
+                a: u64,
+            },
+            B {
+                x: u32,
+                y: u32,
+            },
+            C {
+                a: u8,
+                b: u8,
+                c: u8,
+                d: u8,
+                e: u8,
+                f: u8,
+                g: u8,
+                h: u8,
+            },
+        }
+
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                // (account for discriminant u32)
+                size: 8 + 4,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_dynamic_non_uniform_variants() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u64 },
+            B { x: u32, y: u32 },
+            C { a: u8, b: u8 },
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn enum_single_variant_type_meta_pass_thru() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A { a: u8, b: [u8; 32] },
+        }
+
+        // Single variant enums should use the `TypeMeta` of the variant, but the zero-copy
+        // flag should be `false`, due to the discriminant having potentially invalid bit patterns.
+        assert_eq!(
+            <Enum as SchemaWrite>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_>>::TYPE_META,
+            TypeMeta::Static {
+                size: 1 + 32 + 4,
+                zero_copy: false
+            }
+        );
+    }
+
+    #[test]
+    fn enum_unit_and_non_unit_dynamic() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        enum Enum {
+            Unit,
+            NonUnit(u8),
+        }
+
+        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let bincode_serialized = bincode::serialize(&e).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
     fn test_phantom_data() {
         let val = PhantomData::<StructStatic>;
         let serialized = serialize(&val).unwrap();
@@ -1056,6 +1458,7 @@ mod tests {
             let schema_serialized = serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
             prop_assert_eq!(char::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
+
             let bincode_deserialized: char = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: char = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
@@ -1063,15 +1466,49 @@ mod tests {
         }
 
         #[test]
-        fn test_vec_elem_static(vec in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
-            let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::Vec<Elem<StructStatic>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
+        fn test_elem_compat(val in any::<StructStatic>()) {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = <Elem<StructStatic>>::serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
+            let bincode_deserialized: StructStatic = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: StructStatic = <Elem<StructStatic>>::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&val, &bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        }
+
+        #[test]
+        fn test_elem_vec_compat(val in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = <containers::Vec<Elem<StructStatic>>>::serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized = <containers::Vec<Elem<StructStatic>>>::deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&val, &bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        }
+
+        #[test]
+        fn test_vec_elem_static(vec in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&vec).unwrap();
+            let schema_serialized = serialize(&vec).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Vec<StructStatic> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&vec, &bincode_deserialized);
+            prop_assert_eq!(vec, schema_deserialized);
+        }
+
+        #[test]
+        fn test_vec_elem_zero_copy(vec in proptest::collection::vec(any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&vec).unwrap();
+            let schema_serialized = serialize(&vec).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Vec<StructZeroCopy> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Vec<StructZeroCopy> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1080,13 +1517,11 @@ mod tests {
         #[test]
         fn test_vec_elem_non_static(vec in proptest::collection::vec(any::<StructNonStatic>(), 0..=16)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::Vec<Elem<StructNonStatic>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
-
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<StructNonStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: Vec<StructNonStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1094,13 +1529,11 @@ mod tests {
         #[test]
         fn test_vec_elem_bytes(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::Vec<Elem<u8>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
-
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<u8> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: Vec<u8> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1115,13 +1548,11 @@ mod tests {
         #[test]
         fn test_vec_pod(vec in proptest::collection::vec(any::<[u8; 32]>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::Vec<Pod<[u8; 32]>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
-
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<[u8; 32]> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: Vec<[u8; 32]> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1129,13 +1560,11 @@ mod tests {
         #[test]
         fn test_vec_deque_elem_static(vec in proptest::collection::vec_deque(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::VecDeque<Elem<StructStatic>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
-
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: VecDeque<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: VecDeque<StructStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1143,13 +1572,11 @@ mod tests {
         #[test]
         fn test_vec_deque_elem_non_static(vec in proptest::collection::vec_deque(any::<StructNonStatic>(), 0..=16)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::VecDeque<Elem<StructNonStatic>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
-
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: VecDeque<StructNonStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: VecDeque<StructNonStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
@@ -1157,13 +1584,25 @@ mod tests {
         #[test]
         fn test_vec_deque_elem_bytes(vec in proptest::collection::vec_deque(any::<u8>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
-            type Target = containers::VecDeque<Elem<u8>, BincodeLen>;
-            let schema_serialized = Target::serialize(&vec).unwrap();
+            let schema_serialized = serialize(&vec).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: VecDeque<u8> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized: VecDeque<u8> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
+        }
+
+        #[test]
+        fn test_hash_map_zero_copy(map in proptest::collection::hash_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&map).unwrap();
+            let schema_serialized = serialize(&map).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&map, &bincode_deserialized);
+            prop_assert_eq!(map, schema_deserialized);
         }
 
         #[test]
@@ -1171,6 +1610,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&map).unwrap();
             let schema_serialized = serialize(&map).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&map, &bincode_deserialized);
@@ -1183,6 +1623,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&map).unwrap();
             let schema_serialized = serialize(&map).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&map, &bincode_deserialized);
@@ -1190,10 +1631,23 @@ mod tests {
         }
 
         #[test]
+        fn test_hash_set_zero_copy(set in proptest::collection::hash_set(any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&set).unwrap();
+            let schema_serialized = serialize(&set).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&set, &bincode_deserialized);
+            prop_assert_eq!(set, schema_deserialized);
+        }
+
+        #[test]
         fn test_hash_set_static(set in proptest::collection::hash_set(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&set).unwrap();
             let schema_serialized = serialize(&set).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&set, &bincode_deserialized);
@@ -1205,6 +1659,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&set).unwrap();
             let schema_serialized = serialize(&set).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&set, &bincode_deserialized);
@@ -1212,10 +1667,23 @@ mod tests {
         }
 
         #[test]
+        fn test_btree_map_zero_copy(map in proptest::collection::btree_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&map).unwrap();
+            let schema_serialized = serialize(&map).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&map, &bincode_deserialized);
+            prop_assert_eq!(map, schema_deserialized);
+        }
+
+        #[test]
         fn test_btree_map_static(map in proptest::collection::btree_map(any::<u64>(), any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&map).unwrap();
             let schema_serialized = serialize(&map).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&map, &bincode_deserialized);
@@ -1227,6 +1695,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&map).unwrap();
             let schema_serialized = serialize(&map).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&map, &bincode_deserialized);
@@ -1234,10 +1703,23 @@ mod tests {
         }
 
         #[test]
+        fn test_btree_set_zero_copy(set in proptest::collection::btree_set(any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&set).unwrap();
+            let schema_serialized = serialize(&set).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&set, &bincode_deserialized);
+            prop_assert_eq!(set, schema_deserialized);
+        }
+
+        #[test]
         fn test_btree_set_static(set in proptest::collection::btree_set(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&set).unwrap();
             let schema_serialized = serialize(&set).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&set, &bincode_deserialized);
@@ -1249,6 +1731,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&map).unwrap();
             let schema_serialized = serialize(&map).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&map, &bincode_deserialized);
@@ -1256,10 +1739,23 @@ mod tests {
         }
 
         #[test]
+        fn test_binary_heap_zero_copy(heap in proptest::collection::binary_heap(any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&heap).unwrap();
+            let schema_serialized = serialize(&heap).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: BinaryHeap<StructZeroCopy> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: BinaryHeap<StructZeroCopy> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
+            prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
+        }
+
+        #[test]
         fn test_binary_heap_static(heap in proptest::collection::binary_heap(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&heap).unwrap();
             let schema_serialized = serialize(&heap).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: BinaryHeap<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: BinaryHeap<StructStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
@@ -1272,6 +1768,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&heap).unwrap();
             let schema_serialized = serialize(&heap).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: BinaryHeap<StructNonStatic> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: BinaryHeap<StructNonStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
@@ -1279,20 +1776,15 @@ mod tests {
         }
 
         #[test]
-        fn test_binary_heap_pod(heap in proptest::collection::binary_heap(any::<[u8; 32]>(), 0..=100)) {
-            let bincode_serialized = bincode::serialize(&heap).unwrap();
-            type TargetPod = containers::BinaryHeap<Pod<[u8; 32]>>;
-            type Target = containers::BinaryHeap<Elem<[u8; 32]>>;
-            let schema_serialized_pod = TargetPod::serialize(&heap).unwrap();
-            let schema_serialized = Target::serialize(&heap).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized_pod);
+        fn test_linked_list_zero_copy(list in proptest::collection::linked_list(any::<StructZeroCopy>(), 0..=100)) {
+            let bincode_serialized = bincode::serialize(&list).unwrap();
+            let schema_serialized = serialize(&list).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            let bincode_deserialized: BinaryHeap<[u8; 32]> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized_pod = TargetPod::deserialize(&schema_serialized_pod).unwrap();
-            let schema_deserialized = Target::deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
-            prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
-            prop_assert_eq!(heap.as_slice(), schema_deserialized_pod.as_slice());
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&list, &bincode_deserialized);
+            prop_assert_eq!(list, schema_deserialized);
         }
 
         #[test]
@@ -1300,6 +1792,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&list).unwrap();
             let schema_serialized = serialize(&list).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&list, &bincode_deserialized);
@@ -1311,6 +1804,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&list).unwrap();
             let schema_serialized = serialize(&list).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&list, &bincode_deserialized);
@@ -1320,9 +1814,9 @@ mod tests {
         #[test]
         fn test_array_bytes(array in any::<[u8; 32]>()) {
             let bincode_serialized = bincode::serialize(&array).unwrap();
-            type Target = [u8; 32];
-            let schema_serialized = Target::serialize(&array).unwrap();
+            let schema_serialized = serialize(&array).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: [u8; 32] = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: [u8; 32] = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&array, &bincode_deserialized);
@@ -1397,29 +1891,25 @@ mod tests {
         }
 
         #[test]
-        fn test_box(ar in any::<[u8; 32]>(), s in any::<StructStatic>()) {
-            let data = (Box::new(ar), Box::new(s));
-            let bincode_serialized = bincode::serialize(&data).unwrap();
-            type Target = (Box<[u8; 32]>, Box<StructStatic>);
-            type SchemaPodTarget = (Box<Pod<[u8; 32]>>, Box<StructStatic>);
-            let schema_serialized = Target::serialize(&data).unwrap();
-            let schema_pod_serialized = SchemaPodTarget::serialize(&data).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            prop_assert_eq!(&bincode_serialized, &schema_pod_serialized);
-            let bincode_deserialized: (Box<[u8; 32]>, Box<StructStatic>) = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: (Box<[u8; 32]>, Box<StructStatic>) = Target::deserialize(&schema_serialized).unwrap();
-            let schema_pod_deserialized: (Box<[u8; 32]>, Box<StructStatic>) = SchemaPodTarget::deserialize(&schema_pod_serialized).unwrap();
-            prop_assert_eq!(&data, &bincode_deserialized);
-            prop_assert_eq!(&data, &schema_deserialized);
-            prop_assert_eq!(&data, &schema_pod_deserialized);
-        }
-
-        #[test]
-        fn test_rc(ar in any::<StructStatic>()) {
-            let data = Rc::new(ar);
+        fn test_box(s in any::<StructStatic>()) {
+            let data = Box::new(s);
             let bincode_serialized = bincode::serialize(&data).unwrap();
             let schema_serialized = serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Box<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Box<StructStatic> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&data, &bincode_deserialized);
+            prop_assert_eq!(&data, &schema_deserialized);
+        }
+
+        #[test]
+        fn test_rc(s in any::<StructStatic>()) {
+            let data = Rc::new(s);
+            let bincode_serialized = bincode::serialize(&data).unwrap();
+            let schema_serialized = serialize(&data).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: Rc<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: Rc<StructStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&data, &bincode_deserialized);
@@ -1427,11 +1917,12 @@ mod tests {
         }
 
         #[test]
-        fn test_arc(ar in any::<StructStatic>()) {
-            let data = Arc::new(ar);
+        fn test_arc(s in any::<StructStatic>()) {
+            let data = Arc::new(s);
             let bincode_serialized = bincode::serialize(&data).unwrap();
             let schema_serialized = serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: Arc<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: Arc<StructStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&data, &bincode_deserialized);
@@ -1439,32 +1930,27 @@ mod tests {
         }
 
         #[test]
-        fn test_boxed_slice_bytes(vec in proptest::collection::vec(any::<u8>(), 0..=100)) {
+        fn test_boxed_slice_zero_copy(vec in proptest::collection::vec(any::<StructZeroCopy>(), 0..=100)) {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
-            type Target = Box<[u8]>;
-            type TargetPod = containers::Box<[Pod<u8>]>;
-            let schema_serialized = Target::serialize(&data).unwrap();
-            let schema_pod_serialized = TargetPod::serialize(&data).unwrap();
+            let schema_serialized = serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            prop_assert_eq!(&bincode_serialized, &schema_pod_serialized);
-            let bincode_deserialized: Box<[u8]> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: Box<[u8]> = Target::deserialize(&schema_serialized).unwrap();
-            let schema_pod_deserialized: Box<[u8]> = TargetPod::deserialize(&schema_pod_serialized).unwrap();
+
+            let bincode_deserialized: Box<[StructZeroCopy]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Box<[StructZeroCopy]> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&data, &bincode_deserialized);
             prop_assert_eq!(&data, &schema_deserialized);
-            prop_assert_eq!(&data, &schema_pod_deserialized);
         }
 
         #[test]
-        fn test_boxed_slice_static(vec in proptest::collection::vec(any::<u64>(), 0..=100)) {
+        fn test_boxed_slice_static(vec in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
             let data = vec.into_boxed_slice();
             let bincode_serialized = bincode::serialize(&data).unwrap();
-            type Target = Box<[u64]>;
             let schema_serialized = serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            let bincode_deserialized: Target = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: Target = Target::deserialize(&schema_serialized).unwrap();
+
+            let bincode_deserialized: Box<[StructStatic]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Box<[StructStatic]> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&data, &bincode_deserialized);
             prop_assert_eq!(&data, &schema_deserialized);
         }
@@ -1476,6 +1962,7 @@ mod tests {
             type Target = Box<[StructNonStatic]>;
             let schema_serialized = serialize(&data).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized: Target = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: Target = Target::deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&data, &bincode_deserialized);
@@ -1507,6 +1994,24 @@ mod tests {
             let schema_deserialized: Target = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+        }
+
+        #[test]
+        fn test_tuple_zero_copy(
+            tuple in (
+                any::<StructZeroCopy>(),
+                any::<[u8; 32]>(),
+            )
+        ) {
+            let bincode_serialized = bincode::serialize(&tuple).unwrap();
+            let schema_serialized = serialize(&tuple).unwrap();
+
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&tuple, &bincode_deserialized);
+            prop_assert_eq!(&tuple, &schema_deserialized);
+
         }
 
         #[test]
@@ -1565,10 +2070,23 @@ mod tests {
         }
 
         #[test]
+        fn test_struct_zero_copy(val in any::<StructZeroCopy>()) {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&val, &bincode_deserialized);
+            prop_assert_eq!(&val, &schema_deserialized);
+        }
+
+        #[test]
         fn test_struct_static(val in any::<StructStatic>()) {
             let bincode_serialized = bincode::serialize(&val).unwrap();
             let schema_serialized = serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
@@ -1580,6 +2098,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&val).unwrap();
             let schema_serialized = serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
@@ -1605,7 +2124,7 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_zero_copy() {
+    fn test_struct_zero_copy_refs() {
         // Owned zero-copy type.
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
