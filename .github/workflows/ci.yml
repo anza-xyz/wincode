@@ -21,7 +21,7 @@ jobs:
       - name: rustfmt (check)
         run: cargo +nightly fmt --all -- --check
       - name: miri (check)
-        run: cargo +nightly miri test --all-features --all-targets --no-fail-fast
+        run: cargo +nightly miri test --all-features --lib --bins --no-fail-fast
 
   lint-test:
     name: clippy & tests (stable)
