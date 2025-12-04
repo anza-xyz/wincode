@@ -302,7 +302,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             let real_index = fields.len() - 1 - index;
             let field_ident = field.struct_member_ident(real_index);
             // The corresponding bit for the field.
-            let bit_set_index = LitInt::new(&(1 << real_index).to_string(), Span::call_site());
+            let bit_set_index = LitInt::new(&(1u128 << real_index).to_string(), Span::call_site());
             quote! {
                 if self.init_set & #bit_set_index != 0 {
                     // SAFETY: We are dropping an initialized field.
@@ -388,7 +388,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
 
         // The bit index for the field.
-        let index_bit = LitInt::new(&(1 << i).to_string(), Span::call_site());
+        let index_bit = LitInt::new(&(1u128 << i).to_string(), Span::call_site());
         let set_index_bit = quote! {
             self.init_set |= #index_bit;
         };
