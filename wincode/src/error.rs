@@ -40,6 +40,8 @@ pub enum ReadError {
     InvalidBoolEncoding(u8),
     #[error("Sequence length would overflow length encoding scheme: {0}")]
     LengthEncodingOverflow(&'static str),
+    #[error("Invalid value: {0}")]
+    InvalidValue(&'static str),
     #[error("Invalid char lead: {0}")]
     InvalidCharLead(u8),
     #[error("Custom error: {0}")]
