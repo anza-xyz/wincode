@@ -20,7 +20,8 @@ use {
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, unaligned_pointer_read, ReadResult, WriteResult,
+            pointer_sized_decode_error, read_length_encoding_overflow, unaligned_pointer_read,
+            ReadResult, WriteResult,
         },
         io::{Reader, Writer},
         len::{BincodeLen, SeqLen},
@@ -1274,9 +1275,13 @@ where
             unreachable!("Type is not zero-copy");
         };
 
-        let len = <BincodeLen>::read::<T::Dst>(reader)?;
-        #[allow(clippy::arithmetic_side_effects)]
-        let bytes = reader.borrow_exact(len * size)?;
+        let Ok(len): Result<usize, _> = u64::get(reader)?.try_into() else {
+            return Err(pointer_sized_decode_error());
+        };
+        let Some(total_size) = len.checked_mul(size) else {
+            return Err(read_length_encoding_overflow("usize::MAX"));
+        };
+        let bytes = reader.borrow_exact(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact` ensures we read exactly `len * size` bytes.
