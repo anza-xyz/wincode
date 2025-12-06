@@ -903,6 +903,64 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_extensions_with_container() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, struct_extensions)]
+        struct Test {
+            #[wincode(with = "containers::Vec<Pod<_>>")]
+            a: Vec<u8>,
+            #[wincode(with = "containers::Pod<_>")]
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .write_a(test.a.clone())
+                .write_b(test.b)
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
+    fn test_struct_extensions_with_mapped_type() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        #[derive(SchemaWrite, SchemaRead)]
+        #[wincode(internal, from = "Test", struct_extensions)]
+        struct TestMapped {
+            a: containers::Vec<containers::Pod<u8>>,
+            b: containers::Pod<[u8; 32]>,
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestMappedUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .write_a(test.a.clone())
+                .write_b(test.b)
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
     fn test_struct_extensions_builder_fully_initialized() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal, struct_extensions)]

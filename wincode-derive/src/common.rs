@@ -50,7 +50,7 @@ pub(crate) trait TypeExt {
     /// ```ignore
     /// &'a str -> &'de str
     /// ```
-    fn with_lifetime(&self, ident: &'static str) -> Type;
+    fn with_lifetime(&self, ident: &str) -> Type;
 
     /// Replace any inference tokens on this type with the fully qualified generic arguments
     /// of the given `infer` type.
@@ -62,10 +62,13 @@ pub(crate) trait TypeExt {
     /// assert_eq!(target.with_infer(actual), parse_quote!(Pod<[u8; u64]>));
     /// ```
     fn with_infer(&self, infer: &Type) -> Type;
+
+    /// Gather all the lifetimes on this type.
+    fn lifetimes(&self) -> Vec<&Lifetime>;
 }
 
 impl TypeExt for Type {
-    fn with_lifetime(&self, ident: &'static str) -> Type {
+    fn with_lifetime(&self, ident: &str) -> Type {
         let mut this = self.clone();
         ReplaceLifetimes(ident).visit_type_mut(&mut this);
         this
@@ -85,6 +88,12 @@ impl TypeExt for Type {
         let mut infer = InferGeneric::from(stack);
         infer.visit_type_mut(&mut this);
         this
+    }
+
+    fn lifetimes(&self) -> Vec<&Lifetime> {
+        let mut lifetimes = Vec::new();
+        GatherLifetimes(&mut lifetimes).visit_type(self);
+        lifetimes
     }
 }
 
@@ -680,9 +689,9 @@ impl<'ast> VisitMut for InferGeneric<'ast> {
 }
 
 /// Visitor to recursively replace a given type's lifetimes with the given lifetime name.
-struct ReplaceLifetimes(&'static str);
+struct ReplaceLifetimes<'a>(&'a str);
 
-impl ReplaceLifetimes {
+impl ReplaceLifetimes<'_> {
     /// Replace the lifetime with `'de`, preserving the span.
     fn replace(&self, t: &mut Lifetime) {
         t.ident = Ident::new(self.0, t.ident.span());
@@ -696,7 +705,7 @@ impl ReplaceLifetimes {
     }
 }
 
-impl VisitMut for ReplaceLifetimes {
+impl VisitMut for ReplaceLifetimes<'_> {
     fn visit_type_reference_mut(&mut self, t: &mut TypeReference) {
         match &mut t.lifetime {
             Some(l) => self.replace(l),
@@ -732,6 +741,14 @@ impl VisitMut for ReplaceLifetimes {
             }
         }
         visit_mut::visit_type_impl_trait_mut(self, t);
+    }
+}
+
+struct GatherLifetimes<'a, 'ast>(&'a mut Vec<&'ast Lifetime>);
+
+impl<'ast> Visit<'ast> for GatherLifetimes<'_, 'ast> {
+    fn visit_lifetime(&mut self, l: &'ast Lifetime) {
+        self.0.push(l);
     }
 }
 
@@ -811,5 +828,16 @@ mod tests {
         assert_eq!(iter.nth(25).unwrap().to_string(), "a0");
         assert_eq!(iter.next().unwrap().to_string(), "b0");
         assert_eq!(iter.nth(24).unwrap().to_string(), "a1");
+    }
+
+    #[test]
+    fn test_gather_lifetimes() {
+        let ty: Type = parse_quote!(&'a Foo);
+        let lt: Lifetime = parse_quote!('a);
+        assert_eq!(ty.lifetimes(), vec![&lt]);
+
+        let ty: Type = parse_quote!(&'a Foo<'b, 'c>);
+        let (a, b, c) = (parse_quote!('a), parse_quote!('b), parse_quote!('c));
+        assert_eq!(ty.lifetimes(), vec![&a, &b, &c]);
     }
 }
