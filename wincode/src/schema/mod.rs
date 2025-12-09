@@ -922,8 +922,11 @@ mod tests {
                 .write_b(test.b)
                 .write_c(test.c);
             prop_assert!(builder.is_init());
-            let init = unsafe { builder.into_assume_init_mut() };
-            prop_assert_eq!(&test, init);
+            let init_mut = unsafe { builder.into_assume_init_mut() };
+            prop_assert_eq!(&test, init_mut);
+            // Ensure `uninit` is marked initialized so fields are dropped.
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
         });
     }
 
