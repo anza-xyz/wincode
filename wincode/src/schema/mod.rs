@@ -929,6 +929,36 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_extensions_with_reference() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: Option<String>,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal, struct_extensions)]
+        struct TestRef<'a> {
+            a: &'a [u8],
+            b: Option<&'a str>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let mut uninit = MaybeUninit::<TestRef>::uninit();
+            let mut builder = TestRefUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .write_a(test.a.as_slice())
+                .write_b(test.b.as_deref());
+            prop_assert!(builder.is_init());
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test.a.as_slice(), init.a);
+            prop_assert_eq!(test.b.as_deref(), init.b);
+        });
+    }
+
+    #[test]
     fn test_struct_extensions_with_mapped_type() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
