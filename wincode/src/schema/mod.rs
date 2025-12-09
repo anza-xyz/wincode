@@ -922,9 +922,8 @@ mod tests {
                 .write_b(test.b)
                 .write_c(test.c);
             prop_assert!(builder.is_init());
-            builder.finish();
-            let init = unsafe { uninit.assume_init() };
-            prop_assert_eq!(test, init);
+            let init = unsafe { builder.into_assume_init_mut() };
+            prop_assert_eq!(&test, init);
         });
     }
 
