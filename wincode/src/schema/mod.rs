@@ -2210,6 +2210,38 @@ mod tests {
     }
 
     #[test]
+    fn test_pod_zero_copy_explicit_ref() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy)]
+        #[repr(transparent)]
+        struct Address([u8; 64]);
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct MyStructRef<'a> {
+            #[wincode(with = "&'a Pod<Address>")]
+            address: &'a Address,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct MyStruct {
+            #[wincode(with = "Pod<_>")]
+            address: Address,
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<MyStruct>())| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized = MyStruct::deserialize(&serialized).unwrap();
+            assert_eq!(data, deserialized);
+
+            let serialized_ref = serialize(&MyStructRef { address: &data.address }).unwrap();
+            assert_eq!(serialized_ref, serialized);
+            let deserialized_ref = MyStructRef::deserialize(&serialized_ref).unwrap();
+            assert_eq!(data.address, *deserialized_ref.address);
+        });
+    }
+
+    #[test]
     fn test_result_basic() {
         proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
             let wincode_serialized = serialize(&value).unwrap();
