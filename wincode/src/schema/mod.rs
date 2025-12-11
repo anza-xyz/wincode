@@ -2132,6 +2132,8 @@ mod tests {
         struct Zc {
             a: u8,
             b: [u8; 64],
+            c: i8,
+            d: [i8; 64],
         }
 
         // `Zc`, mirrored with references.
@@ -2141,6 +2143,8 @@ mod tests {
         struct ZcRefs<'a> {
             a: &'a u8,
             b: &'a [u8; 64],
+            c: &'a i8,
+            d: &'a [i8; 64],
         }
 
         // `Zc`, wrapped in a reference.
@@ -2156,6 +2160,8 @@ mod tests {
                 Self {
                     a: *value.a,
                     b: *value.b,
+                    c: *value.c,
+                    d: *value.d,
                 }
             }
         }
@@ -2165,7 +2171,7 @@ mod tests {
             let deserialized = Zc::deserialize(&serialized).unwrap();
             assert_eq!(data, deserialized);
 
-            let serialized_ref = serialize(&ZcRefs { a: &data.a, b: &data.b }).unwrap();
+            let serialized_ref = serialize(&ZcRefs { a: &data.a, b: &data.b, c: &data.c, d: &data.d }).unwrap();
             assert_eq!(serialized_ref, serialized);
             let deserialized_ref = ZcRefs::deserialize(&serialized_ref).unwrap();
             assert_eq!(data, (&deserialized_ref).into());
