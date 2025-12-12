@@ -1144,7 +1144,7 @@ mod zero_copy {
     #[inline(always)]
     fn cast_ensure_aligned<T, U>(ptr: *const T) -> ReadResult<*const U> {
         let ptr = ptr.cast::<U>();
-        if align_of::<T>() > 1 && !ptr.is_aligned() {
+        if align_of::<U>() > 1 && !ptr.is_aligned() {
             return Err(unaligned_pointer_read());
         }
         Ok(ptr)
