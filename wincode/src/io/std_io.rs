@@ -1,6 +1,7 @@
 use {
-    crate::io::{read_size_limit, ReadError, ReadResult, Reader, TrustedSliceReader},
+    crate::io::{read_size_limit, ReadError, ReadResult, Reader},
     core::{
+        marker::PhantomData,
         mem::{transmute, MaybeUninit},
         ops::Range,
         ptr,
@@ -21,7 +22,7 @@ use {
 /// large amounts at once, or reading just one or a few times. It also provides no advantage
 /// when reading from a source that is already in memory, like a [`Vec<u8>`].
 pub struct BufReader<R: ?Sized> {
-    buf: Vec<u8>,
+    buf: Box<[MaybeUninit<u8>]>,
     filled: Range<usize>,
     inner: R,
 }
@@ -34,7 +35,7 @@ impl<R> BufReader<R> {
     /// The default buffer capacity is currently 8KiB.
     pub fn new(inner: R) -> Self {
         Self {
-            buf: Vec::with_capacity(DEFAULT_BUF_SIZE),
+            buf: Box::new_uninit_slice(DEFAULT_BUF_SIZE),
             filled: 0..0,
             inner,
         }
@@ -43,7 +44,7 @@ impl<R> BufReader<R> {
     /// Create a new [`BufReader<R>`] with the specified capacity.
     pub fn with_capacity(inner: R, capacity: usize) -> Self {
         Self {
-            buf: Vec::with_capacity(capacity),
+            buf: Box::new_uninit_slice(capacity),
             filled: 0..0,
             inner,
         }
@@ -57,16 +58,42 @@ impl<R> BufReader<R> {
     }
 }
 
+#[inline]
+fn buffer<'a>(buf: &'a [MaybeUninit<u8>], filled: &Range<usize>) -> &'a [u8] {
+    // SAFETY: `filled` always points to an initialized portion of the buffer.
+    unsafe { from_raw_parts(buf.as_ptr().cast::<u8>().add(filled.start), filled.len()) }
+}
+
+#[inline]
+#[expect(clippy::arithmetic_side_effects)]
+fn consume_unchecked(filled: &mut Range<usize>, amt: usize) {
+    filled.start += amt;
+    // Reset the range if we've consumed all the bytes.
+    if (*filled).is_empty() {
+        *filled = 0..0;
+    }
+}
+
+#[inline]
+fn consume(filled: &mut Range<usize>, amt: usize) -> ReadResult<()> {
+    if filled.len() < amt {
+        return Err(read_size_limit(amt));
+    }
+    // SAFETY: We just checked that `filled.len() >= amt`.
+    consume_unchecked(filled, amt);
+    Ok(())
+}
+
 /// Fill the buffer with up to `n_bytes` from the reader.
 ///
-/// Note this implementation differs than [`std::io::BufRead`]
-/// semantics in that wincode [`Reader`]s take an `n_bytes` argument.
+/// Note this implementation differs from the semantics of [`std::io::BufRead`]
+/// in that wincode [`Reader`]s take an `n_bytes` argument.
 /// Importantly, implementations should try to read at least `n_bytes`
 /// bytes, retrying until either `n_bytes` are read or EOF is hit.
 #[expect(clippy::arithmetic_side_effects)]
-fn fill_buf<'a, R: Read + ?Sized>(
+fn fill_buf<'a, R: ?Sized + Read>(
     r: &mut R,
-    buf: &'a mut Vec<u8>,
+    buf: &'a mut [MaybeUninit<u8>],
     filled: &mut Range<usize>,
     n_bytes: usize,
 ) -> ReadResult<&'a [u8]> {
@@ -75,51 +102,40 @@ fn fill_buf<'a, R: Read + ?Sized>(
     // We already have sufficient bytes in the buffer.
     if buffered_len >= n_bytes {
         // SAFETY: `filled` always points to an initialized portion of the buffer.
-        return Ok(unsafe { from_raw_parts(buf.as_ptr().add(filled.start), n_bytes) });
+        return Ok(unsafe { from_raw_parts(buf.as_ptr().cast::<u8>().add(filled.start), n_bytes) });
     }
-    let needed = n_bytes - buffered_len;
 
-    // User requested more bytes than we have space for in the buffer.
+    #[cold]
+    fn out_of_memory() -> ReadError {
+        ReadError::Io(ErrorKind::OutOfMemory.into())
+    }
+    if n_bytes > buf.len() {
+        return Err(out_of_memory());
+    }
+
+    let needed = n_bytes - buffered_len;
+    let capacity = buf.len();
+
+    // User requested more bytes than we have space for relative to the filled
+    // range in the buffer.
     //
     // In this case, we need to shift the existing bytes to the beginning of the buffer.
-    // This may allow us to skip a reallocation if buf.capacity() - filled.len() >= needed.
-    if needed > buf.capacity() - filled.end {
-        // Check if we need to reallocate the buffer.
-        if n_bytes > buf.capacity() {
-            // Need to reallocate - copy directly to new buffer rather than shifting (copying) and reallocating.
-            let mut new_buf = Vec::with_capacity(n_bytes.next_power_of_two());
-            // Copy the existing bytes to the new buffer.
+    if needed > capacity - filled.end {
+        let base = buf.as_mut_ptr().cast::<u8>();
+        // SAFETY: `filled` always points to an initialized portion of the buffer.
+        let src = unsafe { base.add(filled.start) };
+        let dst = base;
+        // Use `copy_nonoverlapping` if we can, otherwise use `copy`.
+        if filled.start >= buffered_len {
             // SAFETY:
             // - `filled` always points to an initialized portion of the buffer.
-            // - `new_buf` is valid for `buffered_len` bytes.
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    buf.as_ptr().add(filled.start),
-                    new_buf.as_mut_ptr(),
-                    buffered_len,
-                );
-                new_buf.set_len(buffered_len);
-            }
-            *buf = new_buf;
+            // - we checked that `filled.start >= len`, src and dst don't overlap.
+            unsafe { ptr::copy_nonoverlapping(src, dst, buffered_len) };
         } else {
-            // Just need to compact the buffer.
-
-            // SAFETY: `filled` always points to an initialized portion of the buffer.
-            let src = unsafe { buf.as_ptr().add(filled.start) };
-            let dst = buf.as_mut_ptr();
-            // Use `copy_nonoverlapping` if we can, otherwise use `copy`.
-            if filled.start >= buffered_len {
-                // SAFETY:
-                // - `filled` always points to an initialized portion of the buffer.
-                // - we checked that `filled.start >= len`, src and dst don't overlap.
-                unsafe { ptr::copy_nonoverlapping(src, dst, buffered_len) };
-            } else {
-                // SAFETY:
-                // - `filled` always points to an initialized portion of the buffer.
-                // - we checked that `filled.start < len`, src and dst overlap.
-                unsafe { ptr::copy(src, dst, buffered_len) };
-            }
-            unsafe { buf.set_len(buffered_len) }
+            // SAFETY:
+            // - `filled` always points to an initialized portion of the buffer.
+            // - we checked that `filled.start < len`, src and dst overlap.
+            unsafe { ptr::copy(src, dst, buffered_len) };
         }
 
         *filled = 0..buffered_len;
@@ -127,14 +143,10 @@ fn fill_buf<'a, R: Read + ?Sized>(
 
     let mut read = 0;
     // SAFETY:
-    // - `filled.end` is always less than `buf.capacity()`.
+    // - `filled.end` is always less than `capacity`.
     // - We've verified above that we have enough capacity for `needed` relative to `filled.end`.
-    let mut dst = unsafe {
-        from_raw_parts_mut(
-            buf.as_mut_ptr().cast::<MaybeUninit<u8>>().add(filled.end),
-            buf.capacity() - filled.end,
-        )
-    };
+    let mut dst =
+        unsafe { from_raw_parts_mut(buf.as_mut_ptr().add(filled.end), capacity - filled.end) };
     while read < needed {
         // SAFETY: `read` only writes to uninitialized bytes.
         match r.read(unsafe { transmute::<&mut [MaybeUninit<u8>], &mut [u8]>(dst) }) {
@@ -152,8 +164,124 @@ fn fill_buf<'a, R: Read + ?Sized>(
     filled.end += read;
 
     // SAFETY: `filled` always points to an initialized portion of the buffer.
-    let out = unsafe { from_raw_parts(buf.as_ptr().add(filled.start), filled.len().min(n_bytes)) };
+    let out = unsafe {
+        from_raw_parts(
+            buf.as_ptr().cast::<u8>().add(filled.start),
+            filled.len().min(n_bytes),
+        )
+    };
     Ok(out)
+}
+
+fn copy_into_slice<R: ?Sized + Read>(
+    r: &mut R,
+    buf: &mut [MaybeUninit<u8>],
+    filled: &mut Range<usize>,
+    mut dst: &mut [MaybeUninit<u8>],
+) -> ReadResult<()> {
+    // The `Reader` trait provides a default implementation of `copy_into_slice`, but we provide
+    // an optimization here that will avoid excessive copying and reallocation
+    // when the required reads are large.
+
+    let len_buffered = filled.len();
+    let needed = dst.len();
+    let capacity = buf.len();
+    // Drain whatever we have in the buffer to dst.
+    if len_buffered > 0 {
+        let to_copy = needed.min(len_buffered);
+        let src = buffer(buf, filled);
+        // SAFETY:
+        // - `src` is valid for `len_buffered`
+        // - `dst` is valid for `needed`
+        // - `to_copy` is min of both.
+        unsafe {
+            ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), to_copy);
+            consume_unchecked(filled, to_copy);
+        }
+
+        if to_copy == needed {
+            return Ok(());
+        }
+
+        // Advance dst
+        // SAFETY: `to_copy` < `dst.len()` checked above.
+        dst = unsafe { dst.get_unchecked_mut(to_copy..) };
+    }
+
+    // If the remaining requirement is large (>= capacity), read directly.
+    // Note: buffer is guaranteed empty here because we drained it above and didn't return.
+    if needed >= capacity {
+        while !dst.is_empty() {
+            // SAFETY: `read` only writes to uninitialized bytes.
+            match r.read(unsafe { transmute::<&mut [MaybeUninit<u8>], &mut [u8]>(dst) }) {
+                Ok(0) => break,
+                Ok(n) => {
+                    // SAFETY: `n` bytes were written to `dst`, so `dst` is advanced by `n` bytes.
+                    dst = unsafe { dst.get_unchecked_mut(n..) };
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        if !dst.is_empty() {
+            return Err(ReadError::Io(ErrorKind::UnexpectedEof.into()));
+        }
+        return Ok(());
+    }
+
+    // Otherwise, the remaining requirement is small (< capacity).
+    //
+    // Refill the buffer and copy.
+    let src = fill_buf(r, buf, filled, needed)?;
+    if src.len() != needed {
+        return Err(read_size_limit(needed));
+    }
+    // SAFETY:
+    // - `src.len() == needed`
+    unsafe {
+        ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), needed);
+        consume_unchecked(filled, needed);
+    }
+    Ok(())
+}
+
+#[inline]
+fn copy_into_slice_t<R: ?Sized + Read, T>(
+    r: &mut R,
+    buf: &mut [MaybeUninit<u8>],
+    filled: &mut Range<usize>,
+    dst: &mut [MaybeUninit<T>],
+) -> ReadResult<()> {
+    // Similar to `copy_into_slice`, the `Reader` trait provides a default implementation of `copy_into_slice_t`,
+    // but we override here and pass through to `copy_into_slice` so we can perform direct writes to destinations if
+    // requested read sizes are larger than the buffer capacity.
+    let len = size_of_val(dst);
+    // SAFETY:
+    // - `dst` is plain old data, safe to treat as bytes.
+    let slice = unsafe { from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), len) };
+    copy_into_slice(r, buf, filled, slice)?;
+    Ok(())
+}
+
+#[inline]
+fn as_trusted_for<'a: 'b, 'b, R: ?Sized + Read>(
+    r: &'b mut R,
+    buf: &'b mut [MaybeUninit<u8>],
+    filled: &'b mut Range<usize>,
+    n_bytes: usize,
+) -> ReadResult<TrustedBufReader<'a, 'b, R>> {
+    // Prefetch as much as we can (up to n_bytes, limited by buffer capacity).
+    let to_prefetch = n_bytes.min(buf.len());
+    fill_buf(r, buf, filled, to_prefetch)?;
+
+    Ok(TrustedBufReader {
+        inner: BufReaderMut {
+            buf,
+            filled,
+            inner: r,
+        },
+        _marker: PhantomData,
+    })
 }
 
 impl<R: ?Sized> BufReader<R> {
@@ -163,13 +291,13 @@ impl<R: ?Sized> BufReader<R> {
     #[inline]
     pub fn buffer(&self) -> &[u8] {
         // SAFETY: `filled` always points to an initialized portion of the buffer.
-        unsafe { from_raw_parts(self.buf.as_ptr().add(self.filled.start), self.filled.len()) }
+        buffer(&self.buf, &self.filled)
     }
 }
 
 impl<'a, R: ?Sized + Read> Reader<'a> for BufReader<R> {
     type Trusted<'b>
-        = TrustedSliceReader<'a, 'b>
+        = TrustedBufReader<'a, 'b, R>
     where
         Self: 'b;
 
@@ -179,115 +307,121 @@ impl<'a, R: ?Sized + Read> Reader<'a> for BufReader<R> {
     }
 
     #[inline]
-    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
-        self.filled.start += amt;
-        // Reset the range if we've consumed all the bytes.
-        if self.filled.is_empty() {
-            self.filled = 0..0;
-        }
+        consume_unchecked(&mut self.filled, amt);
     }
 
+    #[inline]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        if self.filled.len() < amt {
-            return Err(read_size_limit(amt));
-        }
-        // SAFETY: We just checked that `filled.len() >= amt`.
-        unsafe { self.consume_unchecked(amt) };
-        Ok(())
+        consume(&mut self.filled, amt)
     }
 
-    #[expect(clippy::arithmetic_side_effects)]
+    #[inline]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
-        let buffer = fill_buf(&mut self.inner, &mut self.buf, &mut self.filled, n_bytes)?;
-        if buffer.len() != n_bytes {
-            return Err(read_size_limit(n_bytes));
-        }
-        // Contract of `as_trusted_for` specifies that the returned reader will consume all `n_bytes`.
-        self.filled.start += n_bytes;
-        if self.filled.is_empty() {
-            self.filled = 0..0;
-        }
-        Ok(TrustedSliceReader::new(buffer))
+        as_trusted_for(&mut self.inner, &mut self.buf, &mut self.filled, n_bytes)
     }
 
-    fn copy_into_slice(&mut self, mut dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
-        // The `Reader` trait provides a default implementation of `copy_into_slice`, but we provide
-        // an optimization here that will avoid excessive copying and reallocation
-        // when the required reads are large.
-
-        // Drain whatever we have in the buffer to dst.
-        let len_buffered = self.filled.len();
-        if len_buffered > 0 {
-            let to_copy = dst.len().min(len_buffered);
-            let src = self.buffer();
-            // SAFETY:
-            // - `src` is valid for `len_buffered`
-            // - `dst` is valid for `dst.len()`
-            // - `to_copy` is min of both.
-            unsafe {
-                ptr::copy_nonoverlapping(src.as_ptr().cast(), dst.as_mut_ptr(), to_copy);
-                self.consume_unchecked(to_copy);
-            }
-
-            if to_copy == dst.len() {
-                return Ok(());
-            }
-
-            // Advance dst
-            // SAFETY: `to_copy` < `dst.len()` checked above.
-            dst = unsafe { dst.get_unchecked_mut(to_copy..) };
-        }
-
-        // If the remaining requirement is large (>= capacity), read directly.
-        // Note: buffer is guaranteed empty here because we drained it above and didn't return.
-        if dst.len() >= self.buf.capacity() {
-            while !dst.is_empty() {
-                // SAFETY: `read` only writes to uninitialized bytes.
-                match self
-                    .inner
-                    .read(unsafe { transmute::<&mut [MaybeUninit<u8>], &mut [u8]>(dst) })
-                {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        // SAFETY: `n` bytes were written to `dst`, so `dst` is advanced by `n` bytes.
-                        dst = unsafe { dst.get_unchecked_mut(n..) };
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::Interrupted => {}
-                    Err(e) => return Err(e.into()),
-                }
-            }
-            if !dst.is_empty() {
-                return Err(ReadError::Io(ErrorKind::UnexpectedEof.into()));
-            }
-            return Ok(());
-        }
-
-        // Otherwise, the remaining requirement is small (< capacity).
-        //
-        // Refill the buffer and copy.
-        // Since `dst.len() < capacity`, this will not trigger reallocation in `fill_buf`.
-        let src = self.fill_exact(dst.len())?;
-        // SAFETY:
-        // - `fill_exact` guarantees `src.len() == dst.len()`
-        unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr().cast(), dst.as_mut_ptr(), dst.len());
-            self.consume_unchecked(dst.len());
-        }
-        Ok(())
+    #[inline]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        copy_into_slice(&mut self.inner, &mut self.buf, &mut self.filled, dst)
     }
 
     #[inline]
     unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
-        // Similar to `copy_into_slice`, the `Reader` trait provides a default implementation of `copy_into_slice_t`,
-        // but we override here and pass through to `copy_into_slice` so we can perform direct writes to destinations if
-        // requested read sizes are larger than the buffer capacity.
-        let len = size_of_val(dst);
-        // SAFETY:
-        // - `dst` is plain old data, safe to treat as bytes.
-        let slice = unsafe { from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), len) };
-        self.copy_into_slice(slice)?;
+        copy_into_slice_t(&mut self.inner, &mut self.buf, &mut self.filled, dst)
+    }
+}
+
+pub struct BufReaderMut<'a, R: ?Sized> {
+    buf: &'a mut [MaybeUninit<u8>],
+    filled: &'a mut Range<usize>,
+    inner: &'a mut R,
+}
+
+impl<'a, R: ?Sized + Read> Reader<'a> for BufReaderMut<'a, R> {
+    type Trusted<'b>
+        = TrustedBufReader<'a, 'b, R>
+    where
+        Self: 'b;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        // Same as BufReader - buffer opportunistically, don't limit based on quota.
+        fill_buf(self.inner, self.buf, self.filled, n_bytes)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        consume_unchecked(self.filled, amt);
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        consume(self.filled, amt)
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        as_trusted_for(self.inner, self.buf, self.filled, n_bytes)
+    }
+
+    #[inline]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        copy_into_slice(self.inner, self.buf, self.filled, dst)
+    }
+
+    #[inline]
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        copy_into_slice_t(self.inner, self.buf, self.filled, dst)
+    }
+}
+
+pub struct TrustedBufReader<'a, 'b, R: ?Sized> {
+    inner: BufReaderMut<'b, R>,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a, 'b, R: ?Sized + Read> Reader<'a> for TrustedBufReader<'a, 'b, R> {
+    type Trusted<'c>
+        = TrustedBufReader<'a, 'c, R>
+    where
+        Self: 'c;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        self.inner.fill_buf(n_bytes)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        self.inner.consume_unchecked(amt);
+    }
+
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        unsafe { self.inner.consume_unchecked(amt) };
         Ok(())
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, _n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedBufReader {
+            inner: BufReaderMut {
+                buf: self.inner.buf,
+                filled: self.inner.filled,
+                inner: self.inner.inner,
+            },
+            _marker: PhantomData,
+        })
+    }
+
+    #[inline]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        self.inner.copy_into_slice(dst)
+    }
+
+    #[inline]
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        self.inner.copy_into_slice_t(dst)
     }
 }
 
@@ -297,18 +431,10 @@ mod tests {
     use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
 
     #[test]
-    fn with_capacity_zero_realloc() {
-        proptest!(proptest_cfg(), |(bytes in any::<Vec<u8>>())| {
-            let mut reader = BufReader::with_capacity(bytes.as_slice(), 0);
-            let data = reader.fill_buf(bytes.len()).unwrap();
-            prop_assert_eq!(data, bytes.as_slice());
-            // fill_buf does not consume
-            let data = reader.fill_buf(bytes.len()).unwrap();
-            prop_assert_eq!(data, bytes.as_slice());
-            reader.consume(bytes.len()).unwrap();
-            let data = reader.fill_buf(bytes.len()).unwrap();
-            prop_assert_eq!(data, &[]);
-        });
+    fn with_capacity_zero_errors() {
+        let mut reader = BufReader::with_capacity(&[1u8, 2, 3][..], 0);
+        let result = reader.fill_buf(1);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -404,15 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn as_trusted_for_errors_when_insufficient() {
-        proptest!(proptest_cfg(), |(bytes in any::<Vec<u8>>())| {
-            let mut reader = BufReader::new(bytes.as_slice());
-            let result = unsafe { reader.as_trusted_for(bytes.len() + 1) };
-            prop_assert!(result.is_err());
-        });
-    }
-
-    #[test]
     fn copy_into_slice_transition_from_buffer_to_direct() {
         proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 21..100))| {
             // - Capacity is 10 bytes
@@ -470,6 +587,52 @@ mod tests {
             let buf = reader.fill_buf(request).unwrap();
 
             prop_assert_eq!(buf, &bytes[consume_amt..consume_amt + request]);
+        });
+    }
+
+    #[test]
+    fn trusted_reader_streams_beyond_capacity() {
+        // Test that TrustedBufReader can handle a quota larger than buffer capacity
+        // by refilling the buffer multiple times.
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 50..200))| {
+            let capacity = 16; // Small buffer
+            let mut reader = BufReader::with_capacity(bytes.as_slice(), capacity);
+
+            // Request a trusted window larger than buffer capacity
+            let mut trusted = unsafe { reader.as_trusted_for(bytes.len()).unwrap() };
+
+            // Read all bytes in small chunks, forcing multiple buffer refills
+            let mut collected = Vec::new();
+            let chunk_size = 8;
+            let mut remaining = bytes.len();
+
+            while remaining > 0 {
+                let to_read = chunk_size.min(remaining);
+                let data = trusted.fill_exact(to_read).unwrap();
+                collected.extend_from_slice(data);
+                trusted.consume(to_read).unwrap();
+                remaining -= to_read;
+            }
+
+            prop_assert_eq!(collected, bytes);
+        });
+    }
+
+    #[test]
+    fn trusted_reader_copy_into_slice_direct_read() {
+        // Test that TrustedBufReader's copy_into_slice bypasses buffer for large reads.
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 50..200))| {
+            let capacity = 16; // Small buffer
+            let mut reader = BufReader::with_capacity(bytes.as_slice(), capacity);
+
+            let mut trusted = unsafe { reader.as_trusted_for(bytes.len()).unwrap() };
+
+            // Large copy_into_slice should use direct read path
+            let mut dst = Vec::with_capacity(bytes.len());
+            trusted.copy_into_slice(dst.spare_capacity_mut()).unwrap();
+            unsafe { dst.set_len(bytes.len()) };
+
+            prop_assert_eq!(dst, bytes);
         });
     }
 }
