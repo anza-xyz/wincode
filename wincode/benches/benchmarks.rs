@@ -2,7 +2,6 @@ use {
     criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
-    // `serialize` is only used in `verify_serialize_into` for verification purposes, not in benchmarks
     wincode::{deserialize, serialize, serialize_into, serialized_size, SchemaRead, SchemaWrite},
 };
 
@@ -21,7 +20,7 @@ struct PodStruct {
     c: [u8; 8],
 }
 
-/// this function is used for verification only and is not part of the benchmarked code.
+/// verification helper: ensures wincode output matches bincode 
 fn verify_serialize_into<T>(data: &T) -> Vec<u8>
 where
     T: SchemaWrite<Src = T> + Serialize + ?Sized,
@@ -32,11 +31,13 @@ where
     let size = serialized_size(data).unwrap() as usize;
     let mut buffer = vec![0u8; size];
     serialize_into(&mut buffer.as_mut_slice(), data).unwrap();
+
     assert_eq!(&buffer[..], &serialized[..]);
 
     serialized
 }
 
+/// this allocation happens outside the benchmark loop to measure only
 fn create_bench_buffer<T>(data: &T) -> Vec<u8>
 where
     T: SchemaWrite<Src = T> + ?Sized,
@@ -52,18 +53,32 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     let data = 0xDEADBEEFCAFEBABEu64;
     let serialized = verify_serialize_into(&data);
 
+    // In-place serialization (measures pure serialization, no allocation)
     group.bench_function("u64/wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+    });
+
+    group.bench_function("u64/bincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
+        b.iter(|| {
+            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
+                .unwrap()
+        });
+    });
+
+    group.bench_function("u64/wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
+    });
+
+    group.bench_function("u64/bincode/serialize", |b| {
+        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
     });
 
     group.bench_function("u64/wincode/serialized_size", |b| {
         b.iter(|| serialized_size(black_box(&data)).unwrap());
     });
 
-    group.bench_function("u64/bincode/serialize", |b| {
-        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
-    });
 
     group.bench_function("u64/wincode/deserialize", |b| {
         b.iter(|| deserialize::<u64>(black_box(&serialized)).unwrap());
@@ -98,15 +113,34 @@ fn bench_vec_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("wincode/serialized_size", size),
+            BenchmarkId::new("bincode/serialize_into", size),
             &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        // Allocating serialization
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("bincode/serialize", size),
             &data,
             |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
@@ -136,20 +170,30 @@ fn bench_struct_comparison(c: &mut Criterion) {
     };
     let serialized = verify_serialize_into(&data);
 
-    // Serialize benchmarks
     group.bench_function("wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
-    group.bench_function("wincode/serialized_size", |b| {
-        b.iter(|| serialized_size(black_box(&data)).unwrap());
+    group.bench_function("bincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
+        b.iter(|| {
+            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
+                .unwrap()
+        });
+    });
+
+    group.bench_function("wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize", |b| {
         b.iter(|| bincode::serialize(black_box(&data)).unwrap());
     });
 
+    group.bench_function("wincode/serialized_size", |b| {
+        b.iter(|| serialized_size(black_box(&data)).unwrap());
+    });
     group.bench_function("wincode/deserialize", |b| {
         b.iter(|| deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
     });
@@ -177,12 +221,24 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
-    group.bench_function("wincode/serialized_size", |b| {
-        b.iter(|| serialized_size(black_box(&data)).unwrap());
+    group.bench_function("bincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
+        b.iter(|| {
+            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
+                .unwrap()
+        });
+    });
+
+    group.bench_function("wincode/serialize", |b| {
+        b.iter(|| serialize(black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize", |b| {
         b.iter(|| bincode::serialize(black_box(&data)).unwrap());
+    });
+
+    group.bench_function("wincode/serialized_size", |b| {
+        b.iter(|| serialized_size(black_box(&data)).unwrap());
     });
 
     group.bench_function("wincode/deserialize", |b| {
@@ -217,15 +273,33 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("wincode/serialized_size", size),
+            BenchmarkId::new("bincode/serialize_into", size),
             &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("bincode/serialize", size),
             &data,
             |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
@@ -279,15 +353,33 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("wincode/serialized_size", size),
+            BenchmarkId::new("bincode/serialize_into", size),
             &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("bincode/serialize", size),
             &data,
             |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
@@ -326,6 +418,7 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
 
         let serialized = verify_serialize_into(&data);
 
+        // In-place serialization
         group.bench_with_input(
             BenchmarkId::new("wincode/serialize_into", size),
             &data,
@@ -338,15 +431,33 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("wincode/serialized_size", size),
+            BenchmarkId::new("bincode/serialize_into", size),
             &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
             BenchmarkId::new("bincode/serialize", size),
             &data,
             |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
