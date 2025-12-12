@@ -2,6 +2,7 @@ use {
     criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
+    // `serialize` is only used in `verify_serialize_into` for verification purposes, not in benchmarks
     wincode::{deserialize, serialize, serialize_into, serialized_size, SchemaRead, SchemaWrite},
 };
 
@@ -21,6 +22,7 @@ struct PodStruct {
 }
 
 
+/// this function is used for verification only and is not part of the benchmarked code.
 fn verify_serialize_into<T>(data: &T) -> Vec<u8>
 where
     T: SchemaWrite<Src = T> + Serialize + ?Sized,
@@ -50,9 +52,9 @@ fn bench_primitives_comparison(c: &mut Criterion) {
 
     let data = 0xDEADBEEFCAFEBABEu64;
     let serialized = verify_serialize_into(&data);
-    let mut buffer = create_bench_buffer(&data);
 
     group.bench_function("u64/wincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
@@ -132,10 +134,10 @@ fn bench_struct_comparison(c: &mut Criterion) {
         flag: true,
     };
     let serialized = verify_serialize_into(&data);
-    let mut buffer = create_bench_buffer(&data);
 
     // Serialize benchmarks
     group.bench_function("wincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
@@ -168,9 +170,9 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
         c: [99u8; 8],
     };
     let serialized = verify_serialize_into(&data);
-    let mut buffer = create_bench_buffer(&data);
 
     group.bench_function("wincode/serialize_into", |b| {
+        let mut buffer = create_bench_buffer(&data);
         b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
