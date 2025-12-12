@@ -241,7 +241,7 @@ pub mod short_vec {
         if b2 == 0 {
             return Err(non_canonical_err());
         }
-        if b2 > 3 || b2 >= 0x80 {
+        if b2 > 3 {
             return Err(overflow_err());
         }
         let val = ((b0 & 0x7f) as u16) | (((b1 & 0x7f) as u16) << 7) | ((b2 as u16) << 14);
