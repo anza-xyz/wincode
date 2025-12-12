@@ -21,7 +21,6 @@ struct PodStruct {
     c: [u8; 8],
 }
 
-
 /// this function is used for verification only and is not part of the benchmarked code.
 fn verify_serialize_into<T>(data: &T) -> Vec<u8>
 where
@@ -29,12 +28,12 @@ where
 {
     let serialized = bincode::serialize(data).unwrap();
     assert_eq!(serialize(data).unwrap(), serialized);
-    
+
     let size = serialized_size(data).unwrap() as usize;
     let mut buffer = vec![0u8; size];
     serialize_into(&mut buffer.as_mut_slice(), data).unwrap();
     assert_eq!(&buffer[..], &serialized[..]);
-    
+
     serialized
 }
 
@@ -92,7 +91,9 @@ fn bench_vec_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap())
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
             },
         );
 
@@ -209,7 +210,9 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap())
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
             },
         );
 
@@ -269,7 +272,9 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap())
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
             },
         );
 
@@ -326,7 +331,9 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap())
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
             },
         );
 
