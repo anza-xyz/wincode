@@ -252,6 +252,39 @@ mod tests {
         },
     };
 
+    #[cfg(target_endian = "little")]
+    #[derive(
+        serde::Serialize,
+        serde::Deserialize,
+        Debug,
+        PartialEq,
+        Eq,
+        Ord,
+        PartialOrd,
+        SchemaWrite,
+        SchemaRead,
+        proptest_derive::Arbitrary,
+        Hash,
+    )]
+    #[wincode(internal)]
+    #[repr(C)]
+    struct StructZeroCopy {
+        a: u128,
+        b: i128,
+        c: u64,
+        d: i64,
+        e: u32,
+        f: i32,
+        ar1: [u8; 8],
+        g: u16,
+        h: i16,
+        ar2: [u8; 12],
+        i: u8,
+        j: i8,
+        ar3: [u8; 14],
+    }
+
+    #[cfg(not(target_endian = "little"))]
     #[derive(
         serde::Serialize,
         serde::Deserialize,
@@ -314,8 +347,24 @@ mod tests {
 
     #[test]
     fn struct_zero_copy_derive_size() {
+        #[cfg(target_endian = "little")]
+        let size = size_of::<u128>()
+            + size_of::<i128>()
+            + size_of::<u64>()
+            + size_of::<i64>()
+            + size_of::<u32>()
+            + size_of::<i32>()
+            + size_of::<[u8; 8]>()
+            + size_of::<u16>()
+            + size_of::<i16>()
+            + size_of::<[u8; 12]>()
+            + size_of::<u8>()
+            + size_of::<i8>()
+            + size_of::<[u8; 14]>();
+        #[cfg(not(target_endian = "little"))]
+        let size = size_of::<u8>() + size_of::<[u8; 32]>();
         let expected = TypeMeta::Static {
-            size: size_of::<u8>() + size_of::<[u8; 32]>(),
+            size,
             zero_copy: true,
         };
         assert_eq!(<StructZeroCopy as SchemaWrite>::TYPE_META, expected);

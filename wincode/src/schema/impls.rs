@@ -58,6 +58,9 @@ macro_rules! impl_int {
 
             const TYPE_META: TypeMeta = TypeMeta::Static {
                 size: size_of::<$type>(),
+                #[cfg(target_endian = "little")]
+                zero_copy: true,
+                #[cfg(not(target_endian = "little"))]
                 zero_copy: $zero_copy,
             };
 
@@ -77,6 +80,9 @@ macro_rules! impl_int {
 
             const TYPE_META: TypeMeta = TypeMeta::Static {
                 size: size_of::<$type>(),
+                #[cfg(target_endian = "little")]
+                zero_copy: true,
+                #[cfg(not(target_endian = "little"))]
                 zero_copy: $zero_copy,
             };
 
@@ -152,6 +158,19 @@ unsafe impl ZeroCopy for u8 {}
 // SAFETY:
 // - i8 is similarly a canonical zero-copy type: no endianness, no layout, no validation.
 unsafe impl ZeroCopy for i8 {}
+
+macro_rules! impl_numeric_zero_copy {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            unsafe impl ZeroCopy for $ty {}
+        )+
+    };
+}
+
+// SAFETY: Primitive numeric types with fixed size. Only valid on little endian
+// platforms because Bincode specifies little endian integer encoding.
+#[cfg(target_endian = "little")]
+impl_numeric_zero_copy!(u16, i16, u32, i32, u64, i64, u128, i128, f32, f64);
 
 impl_int!(u8, zero_copy: true);
 impl_int!(i8, zero_copy: true);
