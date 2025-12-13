@@ -1,7 +1,7 @@
 use {
-    criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     serde::{Deserialize, Serialize},
-    std::collections::HashMap,
+    std::{collections::HashMap, hint::black_box},
     wincode::{deserialize, serialize, serialize_into, serialized_size, SchemaRead, SchemaWrite},
 };
 
@@ -79,6 +79,9 @@ fn bench_primitives_comparison(c: &mut Criterion) {
         b.iter(|| serialized_size(black_box(&data)).unwrap());
     });
 
+    group.bench_function("u64/bincode/serialized_size", |b| {
+        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
+    });
 
     group.bench_function("u64/wincode/deserialize", |b| {
         b.iter(|| deserialize::<u64>(black_box(&serialized)).unwrap());
@@ -144,6 +147,12 @@ fn bench_vec_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
             BenchmarkId::new("wincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| deserialize::<Vec<u64>>(black_box(s)).unwrap()),
@@ -194,6 +203,11 @@ fn bench_struct_comparison(c: &mut Criterion) {
     group.bench_function("wincode/serialized_size", |b| {
         b.iter(|| serialized_size(black_box(&data)).unwrap());
     });
+
+    group.bench_function("bincode/serialized_size", |b| {
+        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
+    });
+
     group.bench_function("wincode/deserialize", |b| {
         b.iter(|| deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
     });
@@ -239,6 +253,10 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
 
     group.bench_function("wincode/serialized_size", |b| {
         b.iter(|| serialized_size(black_box(&data)).unwrap());
+    });
+
+    group.bench_function("bincode/serialized_size", |b| {
+        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
     });
 
     group.bench_function("wincode/deserialize", |b| {
@@ -300,6 +318,12 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             BenchmarkId::new("wincode/serialized_size", size),
             &data,
             |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
@@ -383,6 +407,12 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
         );
 
         group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
             BenchmarkId::new("wincode/deserialize", size),
             &serialized,
             |b, s| b.iter(|| deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
@@ -458,6 +488,12 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
             BenchmarkId::new("wincode/serialized_size", size),
             &data,
             |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
         );
 
         group.bench_with_input(
