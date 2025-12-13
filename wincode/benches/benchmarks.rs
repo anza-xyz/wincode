@@ -20,7 +20,7 @@ struct PodStruct {
     c: [u8; 8],
 }
 
-/// verification helper: ensures wincode output matches bincode 
+/// verification helper: ensures wincode output matches bincode
 fn verify_serialize_into<T>(data: &T) -> Vec<u8>
 where
     T: SchemaWrite<Src = T> + Serialize + ?Sized,
