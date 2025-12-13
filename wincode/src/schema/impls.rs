@@ -153,16 +153,26 @@ unsafe impl ZeroCopy for u8 {}
 // - i8 is similarly a canonical zero-copy type: no endianness, no layout, no validation.
 unsafe impl ZeroCopy for i8 {}
 
+// SAFETY: Primitive integer types with fixed size.
+unsafe impl ZeroCopy for u16 {}
+unsafe impl ZeroCopy for i16 {}
+unsafe impl ZeroCopy for u32 {}
+unsafe impl ZeroCopy for i32 {}
+unsafe impl ZeroCopy for u64 {}
+unsafe impl ZeroCopy for i64 {}
+unsafe impl ZeroCopy for u128 {}
+unsafe impl ZeroCopy for i128 {}
+
 impl_int!(u8, zero_copy: true);
 impl_int!(i8, zero_copy: true);
-impl_int!(u16, zero_copy: false);
-impl_int!(i16, zero_copy: false);
-impl_int!(u32, zero_copy: false);
-impl_int!(i32, zero_copy: false);
-impl_int!(u64, zero_copy: false);
-impl_int!(i64, zero_copy: false);
-impl_int!(u128, zero_copy: false);
-impl_int!(i128, zero_copy: false);
+impl_int!(u16, zero_copy: true);
+impl_int!(i16, zero_copy: true);
+impl_int!(u32, zero_copy: true);
+impl_int!(i32, zero_copy: true);
+impl_int!(u64, zero_copy: true);
+impl_int!(i64, zero_copy: true);
+impl_int!(u128, zero_copy: true);
+impl_int!(i128, zero_copy: true);
 impl_int!(f32, zero_copy: false);
 impl_int!(f64, zero_copy: false);
 impl_int!(usize as u64);
