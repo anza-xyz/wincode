@@ -253,12 +253,56 @@ impl<'de> SchemaRead<'de> for char {
         }
 
         let buf = reader.fill_exact(len)?;
-        // TODO: Could implement a manual decoder that avoids UTF-8 validate + chars()
-        // and instead performs the UTF-8 validity checks and produces a `char` directly.
-        // Some quick micro-benchmarking revealed a roughly 2x speedup is possible,
-        // but this is on the order of a 1-2ns/byte delta.
-        let str = core::str::from_utf8(buf).map_err(invalid_utf8_encoding)?;
-        let c = str.chars().next().unwrap();
+
+        // We re-validate with from_utf8 only on error path to get proper Utf8Error.
+        #[inline]
+        #[cold]
+        fn utf8_error(buf: &[u8]) -> crate::error::ReadError {
+            invalid_utf8_encoding(core::str::from_utf8(buf).unwrap_err())
+        }
+
+        // Manual UTF-8 decoder for 2x speedup by avoiding intermediate str allocation
+        let code_point = match len {
+            2 => {
+                let b1 = buf[1];
+                // Validate continuation byte (must be 10xxxxxx)
+                if (b1 & 0xC0) != 0x80 {
+                    return Err(utf8_error(buf));
+                }
+                ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
+            }
+            3 => {
+                let b1 = buf[1];
+                let b2 = buf[2];
+                if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
+                    return Err(utf8_error(buf));
+                }
+                // Check for overlong encodings (< U+0800) and surrogates (U+D800..U+DFFF)
+                if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
+                    return Err(utf8_error(buf));
+                }
+                ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
+            }
+            4 => {
+                let b1 = buf[1];
+                let b2 = buf[2];
+                let b3 = buf[3];
+                if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
+                    return Err(utf8_error(buf));
+                }
+                if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
+                    return Err(utf8_error(buf));
+                }
+                ((b0 & 0x07) as u32) << 18
+                    | ((b1 & 0x3F) as u32) << 12
+                    | ((b2 & 0x3F) as u32) << 6
+                    | ((b3 & 0x3F) as u32)
+            }
+            _ => unreachable!(),
+        };
+
+        let c = char::from_u32(code_point).ok_or_else(|| utf8_error(buf))?;
+
         unsafe { reader.consume_unchecked(len) };
         dst.write(c);
         Ok(())
