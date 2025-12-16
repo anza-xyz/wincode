@@ -14,8 +14,8 @@ use {
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
     syn::{
-        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, LitInt, LitStr,
-        Path, PredicateType, Type, WhereClause, WherePredicate,
+        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, LitInt, Path,
+        PredicateType, Type, WhereClause, WherePredicate,
     },
 };
 
@@ -56,7 +56,7 @@ fn impl_struct(
                 quote! { *init_count += 1; }
             };
             quote! {
-                <#target as SchemaRead<'de>>::read(
+                <#target as SchemaRead<'de, WincodeConfig>>::read(
                     reader,
                     unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
                 )?;
@@ -123,7 +123,7 @@ fn impl_struct(
                 }
             }
 
-            match <Self as SchemaRead<'de>>::TYPE_META {
+            match <Self as SchemaRead<'de, WincodeConfig>>::TYPE_META {
                 TypeMeta::Static { size, .. } => {
                     // SAFETY: `size` is the serialized size of the struct, which is the sum
                     // of the serialized sizes of the fields.
@@ -204,52 +204,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
 
     let struct_ident = &args.ident;
     let vis = &args.vis;
-    let dst = get_src_dst(args);
-    let impl_generics = append_de_lifetime(&args.generics);
-    let (_, ty_generics, where_clause) = args.generics.split_for_impl();
     let builder_ident = format_ident!("{struct_ident}UninitBuilder");
-
-    let helpers = fields.iter().enumerate().map(|(i, field)| {
-        let ty = field.ty.with_lifetime("de");
-        let target = field.target_resolved().with_lifetime("de");
-        let ident = field.struct_member_ident(i);
-        let ident_string = field.struct_member_ident_to_string(i);
-        let uninit_mut_ident = format_ident!("uninit_{}_mut", ident_string);
-        let read_field_ident = format_ident!("read_{}", ident_string);
-        let write_uninit_field_ident = format_ident!("write_uninit_{}", ident_string);
-        let deprecated_note = LitStr::new(
-            &format!("Use `{builder_ident}` builder methods instead"),
-            Span::call_site(),
-        );
-        let field_projection_type = if args.from.is_some() {
-            // If the user is defining a mapping type, we need the type system to resolve the
-            // projection destination.
-            quote! { <#ty as SchemaRead<'de>>::Dst }
-        } else {
-            // Otherwise we can use the type directly.
-            // This makes the generated type more scrutable.
-            quote! { #ty }
-        };
-        quote! {
-            #[inline(always)]
-            #[deprecated(since = "0.2.2", note = #deprecated_note)]
-            #vis fn #uninit_mut_ident(dst: &mut MaybeUninit<#dst>) -> &mut MaybeUninit<#field_projection_type> {
-                unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).#ident).cast() }
-            }
-
-            #[inline(always)]
-            #[deprecated(since = "0.2.2", note = #deprecated_note)]
-            #vis fn #read_field_ident(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<#dst>) -> ReadResult<()> {
-                <#target as SchemaRead<'de>>::read(reader, Self::#uninit_mut_ident(dst))
-            }
-
-            #[inline(always)]
-            #[deprecated(since = "0.2.2", note = #deprecated_note)]
-            #vis fn #write_uninit_field_ident(val: #field_projection_type, dst: &mut MaybeUninit<#dst>) {
-                Self::#uninit_mut_ident(dst).write(val);
-            }
-        }
-    });
 
     // We modify the generics to add a lifetime parameter for the inner `MaybeUninit` struct.
     let mut builder_generics = args.generics.clone();
@@ -257,6 +212,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
     builder_generics
         .params
         .push(GenericParam::Lifetime(parse_quote!('_wincode_inner)));
+    builder_generics.params.push(GenericParam::Type(
+        parse_quote!(WincodeConfig: #crate_name::config::Config),
+    ));
 
     let builder_dst = get_src_dst_fully_qualified(args);
 
@@ -293,6 +251,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             #vis struct #builder_ident < #(#generic_lifetimes,)* #(#generic_const,)* #(#generic_type_params,)* > #where_clause {
                 inner: &'_wincode_inner mut core::mem::MaybeUninit<#builder_dst>,
                 init_set: #builder_bit_set_ty,
+                _config: core::marker::PhantomData<WincodeConfig>,
             }
         }
     };
@@ -338,6 +297,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                     Self {
                         inner,
                         init_set: 0,
+                        _config: core::marker::PhantomData,
                     }
                 }
 
@@ -393,14 +353,14 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self` 
         // (e.g., in the case of container types).
         let field_projection_type = if lifetimes.is_empty() {
-            quote!(<#ty as SchemaRead<'_>>::Dst)
+            quote!(<#ty as SchemaRead<'_, WincodeConfig>>::Dst)
         } else {
             let lt = lifetimes[0];
             // Even though a type may have multiple distinct lifetimes, we force them to be uniform
             // for a `SchemaRead` cast because an implementation of `SchemaRead` must bind all lifetimes
             // to the lifetime of the reader (and will not be implemented over multiple distinct lifetimes).
             let ty = ty.with_lifetime(&lt.ident.to_string());
-            quote!(<#ty as SchemaRead<#lt>>::Dst)
+            quote!(<#ty as SchemaRead<#lt, WincodeConfig>>::Dst)
         };
 
         // The bit index for the field.
@@ -436,7 +396,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                 // - We return the field as `&mut MaybeUninit<#target>`, so
                 //   the field is never exposed as initialized.
                 let proj = unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() };
-                <#target_reader_bound as SchemaRead<'de>>::read(reader, proj)?;
+                <#target_reader_bound as SchemaRead<'de, WincodeConfig>>::read(reader, proj)?;
                 #set_index_bit
                 Ok(self)
             }
@@ -470,11 +430,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         const _: () = {
             use {
                 core::{mem::{MaybeUninit, ManuallyDrop, self}, ptr, marker::PhantomData},
-                #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error,},
+                #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, config::Config},
             };
-            impl #impl_generics #struct_ident #ty_generics #where_clause {
-                #(#helpers)*
-            }
+
             #builder_drop_impl
             #builder_impl
 
@@ -523,7 +481,7 @@ fn impl_enum(
                         // could be used to facilitate direct reads. The user would have to guarantee layout on
                         // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
                         quote! {
-                            let #ident = <#target as SchemaRead<'de>>::get(reader)?;
+                            let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
                         }
                     })
                     .collect::<Vec<_>>();
@@ -532,7 +490,7 @@ fn impl_enum(
                 let static_anon_idents = fields.member_anon_ident_iter(None).collect::<Vec<_>>();
                 let static_targets = fields.iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
-                    quote! {<#target as SchemaRead<'de>>::TYPE_META}
+                    quote! {<#target as SchemaRead<'de, WincodeConfig>>::TYPE_META}
                 });
 
                 let constructor = if style.is_struct() {
@@ -574,7 +532,7 @@ fn impl_enum(
 
     (
         quote! {
-            let discriminant = #tag_encoding::get(reader)?;
+            let discriminant = <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader)?;
             match discriminant {
                 #(#read_impl)*
                 _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
@@ -600,13 +558,12 @@ fn impl_enum(
 /// ```
 ///
 /// We must ensure `'de` outlives all other lifetimes in the generics.
-fn append_de_lifetime(generics: &Generics) -> Generics {
-    let mut generics = generics.clone();
+fn append_de_lifetime(generics: &mut Generics) {
     if generics.lifetimes().next().is_none() {
         generics
             .params
             .push(GenericParam::Lifetime(parse_quote!('de)));
-        return generics;
+        return;
     }
 
     let lifetimes = generics.lifetimes();
@@ -614,15 +571,27 @@ fn append_de_lifetime(generics: &Generics) -> Generics {
     generics
         .params
         .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
+}
+
+fn append_config(generics: &mut Generics) {
+    generics
+        .params
+        .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
+}
+
+fn append_generics(generics: &Generics) -> Generics {
+    let mut generics = generics.clone();
+    append_de_lifetime(&mut generics);
+    append_config(&mut generics);
     generics
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let appended_generics = append_de_lifetime(&args.generics);
-    let (impl_generics, _, _) = appended_generics.split_for_impl();
-    let (_, ty_generics, where_clause) = args.generics.split_for_impl();
+    let appended_generics = append_generics(&args.generics);
+    let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
+    let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
     let crate_name = get_crate_name(&args);
     let src_dst = get_src_dst(&args);
@@ -670,7 +639,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 bounded_ty: parse_quote!(
                     Assert<
                         {
-                            matches!(<#ident as SchemaRead<'_>>::TYPE_META, TypeMeta::Static { zero_copy: true, .. })
+                            matches!(<#ident as SchemaRead<'_, DefaultConfig>>::TYPE_META, TypeMeta::Static { zero_copy: true, .. })
                         },
                     >
                 ),
@@ -706,11 +675,11 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}};
-            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, ZeroCopy};
+            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, ZeroCopy, config::{Config, DefaultConfig}};
 
             #zero_copy_impl
 
-            impl #impl_generics SchemaRead<'de> for #ident #ty_generics #where_clause {
+            impl #impl_generics SchemaRead<'de, WincodeConfig> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;
 
                 #[allow(clippy::arithmetic_side_effects)]

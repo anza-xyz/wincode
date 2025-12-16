@@ -26,17 +26,16 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         let params_tuple = quote! { ( #(#params),* ) };
 
         let size_impl = {
-            let parts = params
-                .iter()
-                .zip(&idxs)
-                .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::size_of(&value.#i)? ));
+            let parts = params.iter().zip(&idxs).map(
+                |(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::size_of(&value.#i)? ),
+            );
             quote!(#(#parts)+*)
         };
 
         let write_impl = params
             .iter()
             .zip(&idxs)
-            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite>::write(writer, &value.#i)?; ))
+            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::write(writer, &value.#i)?; ))
             .collect::<Vec<_>>();
 
         let read_impl = params
@@ -50,7 +49,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     quote! { *init_count += 1; }
                 };
                 quote! {
-                    <#ident as crate::SchemaRead<'de>>::read(
+                    <#ident as crate::SchemaRead<'de, Cfg>>::read(
                         reader,
                         unsafe { &mut *(&raw mut (*dst_ptr).#index).cast() }
                     )?;
@@ -60,10 +59,10 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
             .collect::<Vec<_>>();
 
         let write_static_size = params.iter().map(|ident| {
-            quote! { <#ident as crate::SchemaWrite>::TYPE_META }
+            quote! { <#ident as crate::SchemaWrite<Cfg>>::TYPE_META }
         });
         let read_static_size = params.iter().map(|ident| {
-            quote! { <#ident as crate::SchemaRead<'de>>::TYPE_META }
+            quote! { <#ident as crate::SchemaRead<'de, Cfg>>::TYPE_META }
         });
 
         let mut alpha = 'a'..='z';
@@ -106,9 +105,9 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         });
 
         let stream = quote! {
-            impl<#(#params),*> crate::SchemaWrite for #params_tuple
+            impl<Cfg: crate::config::Config, #(#params),*> crate::SchemaWrite<Cfg> for #params_tuple
             where
-                #(#params: crate::SchemaWrite,)*
+                #(#params: crate::SchemaWrite<Cfg>,)*
                 #(#params::Src: Sized,)*
             {
                 type Src = (#(#params::Src),*);
@@ -118,7 +117,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects)]
                 fn size_of(value: &Self::Src) -> crate::WriteResult<usize> {
-                    if let TypeMeta::Static { size, .. } = <Self as crate::SchemaWrite>::TYPE_META {
+                    if let TypeMeta::Static { size, .. } = <Self as crate::SchemaWrite<Cfg>>::TYPE_META {
                         Ok(size)
                     } else {
                         Ok(#size_impl)
@@ -144,9 +143,9 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 }
             }
 
-            impl<'de, #(#params),*> crate::SchemaRead<'de> for #params_tuple
+            impl<'de, Cfg: crate::config::Config, #(#params),*> crate::SchemaRead<'de, Cfg> for #params_tuple
             where
-                #(#params: crate::SchemaRead<'de>,)*
+                #(#params: crate::SchemaRead<'de, Cfg>,)*
             {
                 type Dst = (#(#params::Dst),*);
 

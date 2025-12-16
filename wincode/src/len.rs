@@ -1,8 +1,9 @@
 //! Support for heterogenous sequence length encoding.
 use crate::{
+    config::ConfigCore,
     error::{pointer_sized_decode_error, preallocation_size_limit, ReadResult, WriteResult},
     io::{Reader, Writer},
-    schema::{SchemaRead, SchemaWrite},
+    SchemaRead, SchemaWrite,
 };
 
 /// Behavior to support heterogenous sequence length encoding.
@@ -10,7 +11,7 @@ use crate::{
 /// It is possible for sequences to have different length encoding schemes.
 /// This trait abstracts over that possibility, allowing users to specify
 /// the length encoding scheme for a sequence.
-pub trait SeqLen {
+pub trait SeqLen<C: ConfigCore> {
     /// Read the length of a sequence from the reader, where
     /// `T` is the type of the sequence elements. This can be used to
     /// enforce size constraints for preallocations.
@@ -26,34 +27,29 @@ pub trait SeqLen {
     fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
-const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
 /// [`SeqLen`] implementation for bincode's default fixint encoding.
-///
-/// The `MAX_SIZE` constant is a limit on the maximum preallocation size
-/// (in bytes) for heap allocated structures. This is a safety precaution
-/// against malicious input causing OOM. The default is 4 MiB. Users are
-/// free to override this limit by passing a different constant or by
-/// implementing their own `SeqLen` implementation.
-pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
+pub struct BincodeLen;
 
-impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
+impl<C: ConfigCore> SeqLen<C> for BincodeLen {
     #[inline(always)]
     fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
         // Bincode's default fixint encoding writes lengths as `u64`.
-        let len = u64::get(reader)
+        let len = <u64 as SchemaRead<'de, C>>::get(reader)
             .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
-        let needed = len
-            .checked_mul(size_of::<T>())
-            .ok_or_else(|| preallocation_size_limit(usize::MAX, MAX_SIZE))?;
-        if needed > MAX_SIZE {
-            return Err(preallocation_size_limit(needed, MAX_SIZE));
+        if let Some(prealloc_limit) = C::PREALLOCATION_SIZE_LIMIT {
+            let needed = len
+                .checked_mul(size_of::<T>())
+                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
+            if needed > prealloc_limit {
+                return Err(preallocation_size_limit(needed, prealloc_limit));
+            }
         }
         Ok(len)
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
-        u64::write(writer, &(len as u64))
+        <u64 as SchemaWrite<C>>::write(writer, &(len as u64))
     }
 
     #[inline(always)]
@@ -74,7 +70,7 @@ pub mod short_vec {
         solana_short_vec::ShortU16,
     };
 
-    impl<'de> SchemaRead<'de> for ShortU16 {
+    impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
         type Dst = Self;
 
         #[inline]
@@ -87,7 +83,7 @@ pub mod short_vec {
         }
     }
 
-    impl SchemaWrite for ShortU16 {
+    impl<C: ConfigCore> SchemaWrite<C> for ShortU16 {
         type Src = Self;
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -257,7 +253,7 @@ pub mod short_vec {
         Ok(len)
     }
 
-    impl SeqLen for ShortU16Len {
+    impl<C: ConfigCore> SeqLen<C> for ShortU16Len {
         #[inline(always)]
         fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
             Ok(decode_short_u16_from_reader(reader)? as usize)
@@ -269,7 +265,7 @@ pub mod short_vec {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }
 
-            <ShortU16 as SchemaWrite>::write(writer, &ShortU16(len as u16))
+            <ShortU16 as SchemaWrite<C>>::write(writer, &ShortU16(len as u16))
         }
 
         #[inline(always)]
