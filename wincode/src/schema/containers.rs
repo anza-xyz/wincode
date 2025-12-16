@@ -58,6 +58,7 @@
 //! ```
 use {
     crate::{
+        config::ConfigCore,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
@@ -210,7 +211,7 @@ pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 //   - Does not contain references or pointers.
 unsafe impl<T> ZeroCopy for Pod<T> where T: Copy + 'static {}
 
-impl<T> SchemaWrite for Pod<T>
+impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -233,7 +234,7 @@ where
     }
 }
 
-impl<'de, T> SchemaRead<'de> for Pod<T>
+impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -255,9 +256,9 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<T> SchemaWrite for Elem<T>
+impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
 where
-    T: SchemaWrite,
+    T: SchemaWrite<C>,
 {
     type Src = T::Src;
 
@@ -279,9 +280,9 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<'de, T> SchemaRead<'de> for Elem<T>
+impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
 where
-    T: SchemaRead<'de>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = T::Dst;
 
@@ -294,30 +295,30 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for Vec<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = vec::Vec<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_slice::<T, Len>(src)
+        size_of_elem_slice::<T, Len, C>(src)
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len>(writer, src)
+        write_elem_slice::<T, Len, C>(writer, src)
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for Vec<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = vec::Vec<T::Dst>;
 
@@ -408,30 +409,30 @@ impl<T> Drop for SliceDropGuard<T> {
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident) => {
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaWrite for $container<[T], Len>
+        impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
         where
-            Len: SeqLen,
-            T: SchemaWrite,
+            Len: SeqLen<C>,
+            T: SchemaWrite<C>,
             T::Src: Sized,
         {
             type Src = $target<[T::Src]>;
 
             #[inline(always)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                size_of_elem_slice::<T, Len>(src)
+                size_of_elem_slice::<T, Len, C>(src)
             }
 
             #[inline(always)]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_slice::<T, Len>(writer, src)
+                write_elem_slice::<T, Len, C>(writer, src)
             }
         }
 
         #[cfg(feature = "alloc")]
-        impl<'de, T, Len> SchemaRead<'de> for $container<[T], Len>
+        impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for $container<[T], Len>
         where
-            Len: SeqLen,
-            T: SchemaRead<'de>,
+            Len: SeqLen<C>,
+            T: SchemaRead<'de, C>,
         {
             type Dst = $target<[T::Dst]>;
 
@@ -575,17 +576,17 @@ impl_heap_slice!(Rc => AllocRc);
 impl_heap_slice!(Arc => AllocArc);
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for VecDeque<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = collections::VecDeque<T::Src>;
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len>(value.iter())
+        size_of_elem_iter::<T, Len, C>(value.iter())
     }
 
     #[inline(always)]
@@ -617,15 +618,15 @@ where
             return Ok(());
         }
 
-        write_elem_iter::<T, Len>(writer, src.iter())
+        write_elem_iter::<T, Len, C>(writer, src.iter())
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for VecDeque<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for VecDeque<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = collections::VecDeque<T::Dst>;
 
@@ -644,30 +645,30 @@ where
 pub struct BinaryHeap<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for BinaryHeap<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for BinaryHeap<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = collections::BinaryHeap<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_slice::<T, Len>(src.as_slice())
+        size_of_elem_slice::<T, Len, C>(src.as_slice())
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len>(writer, src.as_slice())
+        write_elem_slice::<T, Len, C>(writer, src.as_slice())
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for BinaryHeap<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for BinaryHeap<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
     T::Dst: Ord,
 {
     type Dst = collections::BinaryHeap<T::Dst>;
