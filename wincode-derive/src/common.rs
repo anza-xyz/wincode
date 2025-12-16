@@ -207,14 +207,14 @@ impl FieldsExt for Fields<Field> {
             TraitImpl::SchemaRead => {
                 let items = self.iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
-                    quote! { <#target as SchemaRead<'de>>::TYPE_META }
+                    quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
                 });
                 quote! { #(#items),* }
             }
             TraitImpl::SchemaWrite => {
                 let items = self.iter().map(|field| {
                     let target = field.target_resolved();
-                    quote! { <#target as SchemaWrite>::TYPE_META }
+                    quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
                 });
                 quote! { #(#items),* }
             }
@@ -335,8 +335,12 @@ impl VariantsExt for &[Variant] {
             .take(self.len())
             .collect::<Vec<_>>();
         let tag_expr = match trait_impl {
-            TraitImpl::SchemaRead => quote! { <#tag_encoding as SchemaRead<'de>>::TYPE_META },
-            TraitImpl::SchemaWrite => quote! { <#tag_encoding as SchemaWrite>::TYPE_META },
+            TraitImpl::SchemaRead => {
+                quote! { <#tag_encoding as SchemaRead<'de, WincodeConfig>>::TYPE_META }
+            }
+            TraitImpl::SchemaWrite => {
+                quote! { <#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META }
+            }
         };
         let variant_type_metas = self
             .iter()
@@ -348,14 +352,14 @@ impl VariantsExt for &[Variant] {
                         TraitImpl::SchemaRead => {
                             let items=  variant.fields.iter().map(|field| {
                                 let target = field.target_resolved().with_lifetime("de");
-                                quote! { <#target as SchemaRead<'de>>::TYPE_META }
+                                quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },
                         TraitImpl::SchemaWrite => {
                             let items= variant.fields.iter().map(|field| {
                                 let target = field.target_resolved();
-                                quote! { <#target as SchemaWrite>::TYPE_META }
+                                quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },

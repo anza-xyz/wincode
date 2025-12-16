@@ -404,7 +404,7 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult};
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config};
 //! # use serde::{Serialize, Deserialize};
 //! # use core::mem::MaybeUninit;
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -431,7 +431,7 @@
 //! }
 //!
 //! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
-//! impl<'de> SchemaRead<'de> for Message {
+//! impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
 //!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -443,12 +443,12 @@
 //!         // Note that the order matters here. Values are dropped in reverse
 //!         // declaration order, and we need to ensure `header_builder` is dropped
 //!         // before `payload_builder` in the event of an error or panic.
-//!         let mut payload_builder = PayloadUninitBuilder::from_maybe_uninit_mut(payload);
+//!         let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
 //!         unsafe {
 //!             // payload.header will be marked as initialized if the function succeeds.
 //!             payload_builder.init_header_with(|header| {
 //!                 // Read directly into the projected MaybeUninit<Header> slot.
-//!                 let mut header_builder = HeaderUninitBuilder::from_maybe_uninit_mut(header);
+//!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
 //!                 header_builder.read_num_required_signatures(reader)?;
 //!                 header_builder.read_num_signed_accounts(reader)?;
 //!                 header_builder.read_num_unsigned_accounts(reader)?;
@@ -534,6 +534,7 @@ mod schema;
 pub use schema::*;
 mod serde;
 pub use serde::*;
+pub mod config;
 #[cfg(test)]
 mod proptest_config;
 #[cfg(feature = "derive")]

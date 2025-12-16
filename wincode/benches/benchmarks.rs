@@ -2,7 +2,10 @@ use {
     criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, hint::black_box},
-    wincode::{deserialize, serialize, serialize_into, serialized_size, SchemaRead, SchemaWrite},
+    wincode::{
+        config::DefaultConfig, deserialize, serialize, serialize_into, serialized_size, SchemaRead,
+        SchemaWrite,
+    },
 };
 
 #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone)]
@@ -23,7 +26,7 @@ struct PodStruct {
 /// verification helper: ensures wincode output matches bincode
 fn verify_serialize_into<T>(data: &T) -> Vec<u8>
 where
-    T: SchemaWrite<Src = T> + Serialize + ?Sized,
+    T: SchemaWrite<DefaultConfig, Src = T> + Serialize + ?Sized,
 {
     let serialized = bincode::serialize(data).unwrap();
     assert_eq!(serialize(data).unwrap(), serialized);
@@ -40,7 +43,7 @@ where
 /// this allocation happens outside the benchmark loop to measure only
 fn create_bench_buffer<T>(data: &T) -> Vec<u8>
 where
-    T: SchemaWrite<Src = T> + ?Sized,
+    T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {
     let size = serialized_size(data).unwrap() as usize;
     vec![0u8; size]
