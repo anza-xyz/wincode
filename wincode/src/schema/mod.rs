@@ -246,7 +246,7 @@ mod tests {
     use {
         crate::{
             containers::{self, Elem, Pod},
-            deserialize,
+            deserialize, deserialize_mut, deserialize_ref,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
             proptest_config::proptest_cfg,
@@ -2536,6 +2536,59 @@ mod tests {
             let bincode_deserialized: Result<u64, u32> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(&value, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_zero_copy_mut_roundrip() {
+        use rand::random;
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct Zc {
+            a: u8,
+            b: [u8; 64],
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<Zc>())| {
+            let mut serialized = serialize(&data).unwrap();
+            let deserialized: Zc = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, data);
+
+            let rand_a = random();
+            let rand_b = std::array::from_fn(|_| random());
+            // Mutate the serialized data in place
+            {
+                let ref_mut: &mut Zc = deserialize_mut(&mut serialized).unwrap();
+                ref_mut.a = rand_a;
+                ref_mut.b = rand_b;
+            }
+            // Deserialize again on the same serialized data to
+            // verify the changes were persisted
+            let deserialized: Zc = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, Zc { a: rand_a, b: rand_b });
+        });
+    }
+
+    #[test]
+    fn test_zero_copy_deserialize_ref() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy,
+        )]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct Zc {
+            a: u8,
+            b: [u8; 64],
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<Zc>())| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized: Zc = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, data);
+
+            let ref_data: &Zc = deserialize_ref(&serialized).unwrap();
+            prop_assert_eq!(ref_data, &data);
         });
     }
 }
