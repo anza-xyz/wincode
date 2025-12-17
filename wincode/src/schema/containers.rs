@@ -323,7 +323,7 @@ where
     type Dst = vec::Vec<T::Dst>;
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = Len::read::<T::Dst>(reader)?;
+        let len = Len::read_prealloc_check::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
 
         match T::TYPE_META {
@@ -496,7 +496,7 @@ macro_rules! impl_heap_slice {
                     }
                 }
 
-                let len = Len::read::<T::Dst>(reader)?;
+                let len = Len::read_prealloc_check::<T::Dst>(reader)?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
 
