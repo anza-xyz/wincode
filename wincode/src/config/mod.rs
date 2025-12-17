@@ -1,5 +1,5 @@
 use {
-    crate::len::{BincodeLen, SeqLen},
+    crate::len::{BincodeFixInt, SeqLen},
     core::marker::PhantomData,
 };
 
@@ -11,11 +11,11 @@ pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 /// Defaults:
 /// - Zero-copy alignment check is enabled.
 /// - Preallocation size limit is 4 MiB.
-/// - Length encoding is [`BincodeLen`].
+/// - Length encoding is [`BincodeFixInt`].
 pub struct ConfigBuilder<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
-    LengthEncoding = BincodeLen,
+    LengthEncoding = BincodeFixInt,
 > {
     _l: PhantomData<LengthEncoding>,
 }
@@ -47,7 +47,7 @@ impl ConfigBuilder {
     /// Defaults:
     /// - Zero-copy alignment check is enabled.
     /// - Preallocation size limit is 4 MiB.
-    /// - Length encoding is [`BincodeLen`].
+    /// - Length encoding is [`BincodeFixInt`].
     pub const fn default() -> DefaultConfig {
         generate()
     }
@@ -65,7 +65,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
 
     /// Use the given [`SeqLen`] implementation for sequence length encoding.
     ///
-    /// Default is [`BincodeLen`].
+    /// Default is [`BincodeFixInt`].
     ///
     /// Note that this default can be overridden for individual cases by using
     /// [`containers`](crate::containers).
