@@ -1,9 +1,15 @@
 //! Support for heterogenous sequence length encoding.
-use crate::{
-    config::ConfigCore,
-    error::{pointer_sized_decode_error, preallocation_size_limit, ReadResult, WriteResult},
-    io::{Reader, Writer},
-    SchemaRead, SchemaWrite,
+use {
+    crate::{
+        config::ConfigCore,
+        error::{
+            pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
+            ReadResult, WriteResult,
+        },
+        io::{Reader, Writer},
+        SchemaRead, SchemaWrite, TypeMeta,
+    },
+    core::{any::type_name, marker::PhantomData},
 };
 
 /// Behavior to support heterogenous sequence length encoding.
@@ -43,33 +49,51 @@ pub trait SeqLen<C: ConfigCore> {
     fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
-/// [`SeqLen`] implementation for bincode's default fixint encoding.
-pub struct BincodeLen;
+/// Fixed-width integer length encoding.
+pub struct FixInt<T>(PhantomData<T>);
 
-impl<C: ConfigCore> SeqLen<C> for BincodeLen {
+impl<T, C: ConfigCore> SeqLen<C> for FixInt<T>
+where
+    T: SchemaWrite<C> + for<'de> SchemaRead<'de, C>,
+    T::Src: TryFrom<usize>,
+    usize: for<'de> TryFrom<<T as SchemaRead<'de, C>>::Dst>,
+{
     #[inline(always)]
     fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
-        // Bincode's default fixint encoding writes lengths as `u64`.
-        <u64 as SchemaRead<'de, C>>::get(reader)
-            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))
+        let len = T::get(reader)?;
+        let Ok(len) = usize::try_from(len) else {
+            return Err(pointer_sized_decode_error());
+        };
+        Ok(len)
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
-        <u64 as SchemaWrite<C>>::write(writer, &(len as u64))
+        let Ok(len) = T::Src::try_from(len) else {
+            return Err(write_length_encoding_overflow(type_name::<T::Src>()));
+        };
+        T::write(writer, &len)
     }
 
     #[inline(always)]
-    fn write_bytes_needed(_len: usize) -> WriteResult<usize> {
-        Ok(size_of::<u64>())
+    fn write_bytes_needed(len: usize) -> WriteResult<usize> {
+        if let TypeMeta::Static { size, .. } = <T as SchemaWrite<C>>::TYPE_META {
+            return Ok(size);
+        }
+        let Ok(len) = T::Src::try_from(len) else {
+            return Err(write_length_encoding_overflow(type_name::<T::Src>()));
+        };
+        T::size_of(&len)
     }
 }
+
+pub type BincodeFixInt = FixInt<u64>;
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
     use {
         super::*,
-        crate::error::write_length_encoding_overflow,
+        crate::error::{read_length_encoding_overflow, write_length_encoding_overflow},
         core::{
             mem::{transmute, MaybeUninit},
             ptr,

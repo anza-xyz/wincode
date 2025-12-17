@@ -7,7 +7,7 @@
 //! which will certainly speed things up for POD elements of sequences, but
 //! the optimization will only be _per_ element.
 //!
-//! Additionally, we have to assume [`BincodeLen`] for all sequences, because
+//! Additionally, we have to assume [`BincodeFixInt`] for all sequences, because
 //! there is no way to specify a different length encoding without one of the
 //! [`containers`].
 #[cfg(feature = "std")]
@@ -989,7 +989,7 @@ macro_rules! impl_seq {
                     #[allow(clippy::arithmetic_side_effects)]
                     let needed = C::LengthEncoding::write_bytes_needed(len)? + (key_size + value_size) * len;
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
-                    // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
+                    // and `<BincodeFixInt>::write` will write `needed` bytes, fully initializing the trusted window.
                     let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
                     C::LengthEncoding::write(writer, len)?;
                     for (k, v) in src.iter() {
