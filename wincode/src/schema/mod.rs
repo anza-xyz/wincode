@@ -5,7 +5,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
 //! # use rand::prelude::*;
-//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16Len}, containers::{self, Pod}};
+//! # use wincode::{Serialize, Deserialize, len::{BincodeFixInt, ShortU16Len}, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
 //!
@@ -20,7 +20,7 @@
 //!
 //! # #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 //! struct MyStruct {
-//!     #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
+//!     #[wincode(with = "containers::Vec<Pod<_>, BincodeFixInt>")]
 //!     signature: Vec<Signature>,
 //!     #[serde(with = "solana_short_vec")]
 //!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16Len>")]
@@ -346,6 +346,7 @@ mod tests {
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
+            len::FixInt,
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
@@ -2797,6 +2798,18 @@ mod tests {
             } else {
                 prop_assert!(wincode_deserialized.is_err());
             }
+        });
+    }
+
+    #[test]
+    fn test_custom_length_encoding() {
+        let c = ConfigBuilder::default().with_length_encoding::<FixInt<u32>>();
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let wincode_serialized = serialize_with_config(&value, c).unwrap();
+            let wincode_deserialized: Vec<u8> = deserialize_with_config(&wincode_serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_le_bytes(wincode_serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, wincode_deserialized);
         });
     }
 }
