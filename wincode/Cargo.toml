@@ -1,6 +1,6 @@
 [package]
 name = "wincode"
-version = "0.2.2"
+version = "0.2.3"
 authors.workspace = true
 description = "Fast bincode de/serialization with placement initialization"
 repository.workspace = true
@@ -46,4 +46,3 @@ quote.workspace = true
 name = "benchmarks"
 harness = false
 required-features = ["std", "derive"]
-
