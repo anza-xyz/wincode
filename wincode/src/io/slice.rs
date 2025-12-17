@@ -94,6 +94,64 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
     }
 }
 
+/// In-memory [`Reader`] for mutable slices that does not perform bounds checking,
+/// with zero-copy support.
+///
+/// # Safety
+///
+/// - The inner buffer must have sufficient capacity for all reads. It is UB if this is not upheld.
+pub struct TrustedSliceReaderZeroCopyMut<'a> {
+    cursor: &'a mut [u8],
+}
+
+impl<'a> TrustedSliceReaderZeroCopyMut<'a> {
+    pub(super) const fn new(bytes: &'a mut [u8]) -> Self {
+        Self { cursor: bytes }
+    }
+}
+
+impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
+    type Trusted<'b>
+        = Self
+    where
+        Self: 'b;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        Ok(trusted_slice::fill_buf(self.cursor, n_bytes))
+    }
+
+    #[inline]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        Ok(trusted_slice::fill_exact(self.cursor, n_bytes))
+    }
+
+    #[inline]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        let (src, rest) = unsafe { mem::take(&mut self.cursor).split_at_mut_unchecked(len) };
+        self.cursor = rest;
+        Ok(src)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        self.cursor = unsafe { mem::take(&mut self.cursor).get_unchecked_mut(amt..) };
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        unsafe { Self::consume_unchecked(self, amt) };
+        Ok(())
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReaderZeroCopyMut::new(
+            self.borrow_exact_mut(n_bytes)?,
+        ))
+    }
+}
+
 /// In-memory [`Reader`] that does not perform bounds checking.
 ///
 /// Generally this should not be constructed directly, but rather by calling [`Reader::as_trusted_for`]
@@ -199,6 +257,57 @@ impl<'a> Reader<'a> for &'a [u8] {
     #[inline]
     unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n)?))
+    }
+}
+
+impl<'a> Reader<'a> for &'a mut [u8] {
+    type Trusted<'b>
+        = TrustedSliceReaderZeroCopyMut<'a>
+    where
+        Self: 'b;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        // SAFETY: we clamp the end bound to the length of the slice.
+        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+    }
+
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        let Some(src) = self.get(..n_bytes) else {
+            return Err(read_size_limit(n_bytes));
+        };
+        Ok(src)
+    }
+
+    #[inline]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        let Some((src, rest)) = mem::take(self).split_at_mut_checked(len) else {
+            return Err(read_size_limit(len));
+        };
+        *self = rest;
+        Ok(src)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        *self = unsafe { mem::take(self).get_unchecked_mut(amt..) };
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        if self.len() < amt {
+            return Err(read_size_limit(amt));
+        }
+        // SAFETY: we just checked that self.len() >= amt.
+        unsafe { self.consume_unchecked(amt) };
+        Ok(())
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReaderZeroCopyMut::new(
+            self.borrow_exact_mut(n)?,
+        ))
     }
 }
 

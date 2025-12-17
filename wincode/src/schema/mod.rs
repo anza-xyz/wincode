@@ -82,6 +82,19 @@ pub enum TypeMeta {
     Dynamic,
 }
 
+impl TypeMeta {
+    #[inline(always)]
+    pub(crate) const fn size_assert_zero_copy(self) -> usize {
+        match self {
+            TypeMeta::Static {
+                size,
+                zero_copy: true,
+            } => size,
+            _ => panic!("Type is not zero-copy"),
+        }
+    }
+}
+
 /// Types that can be written (serialized) to a [`Writer`].
 pub trait SchemaWrite {
     type Src: ?Sized;

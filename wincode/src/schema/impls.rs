@@ -31,7 +31,6 @@ use {
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
-        slice::from_raw_parts,
     },
 };
 #[cfg(feature = "alloc")]
@@ -1148,20 +1147,36 @@ where
 }
 
 mod zero_copy {
-    use super::*;
+    use {
+        super::*,
+        core::slice::{from_raw_parts, from_raw_parts_mut},
+    };
 
-    // Ensure proper alignment for forming a reference of type `U` from a
-    // pointer of type `T`.
-    //
-    // This should trivially hold for all types supported by the crate,
-    // as we only mark zero-copy on `u8`, `i8`, and `[u/i8; N]` types.
-    // Additionally, all derived zero-copy types must be comprised entirely
-    // of aforementioned align-1 types.
-    //
-    // Note we include the `align_of > 1` check because it can be DCEd out
-    // for types we support (all align `1`).
+    /// Ensure proper alignment for forming a reference of type `U` from a
+    /// pointer of type `T`.
+    ///
+    /// This should trivially hold for all types supported by the crate,
+    /// as we only mark zero-copy on `u8`, `i8`, and `[u/i8; N]` types.
+    /// Additionally, all derived zero-copy types must be comprised entirely
+    /// of aforementioned align-1 types.
+    ///
+    /// Note we include the `align_of > 1` check because it can be DCEd out
+    /// for types we support (all align `1`).
     #[inline(always)]
     fn cast_ensure_aligned<T, U>(ptr: *const T) -> ReadResult<*const U> {
+        let ptr = ptr.cast::<U>();
+        if align_of::<U>() > 1 && !ptr.is_aligned() {
+            return Err(unaligned_pointer_read());
+        }
+        Ok(ptr)
+    }
+
+    /// Ensure proper alignment for forming a mutable reference of type `U` from a
+    /// pointer of type `T`.
+    ///
+    /// See [`cast_ensure_aligned`] for more details.
+    #[inline(always)]
+    fn cast_ensure_aligned_mut<T, U>(ptr: *mut T) -> ReadResult<*mut U> {
         let ptr = ptr.cast::<U>();
         if align_of::<U>() > 1 && !ptr.is_aligned() {
             return Err(unaligned_pointer_read());
@@ -1192,6 +1207,20 @@ mod zero_copy {
         Ok(val)
     }
 
+    /// Cast a `&mut [u8]` to a `&mut T` of a zero-copy type `T`.
+    ///
+    /// Like [`cast_slice_to_t`], but for mutable slices.
+    #[inline(always)]
+    pub(super) unsafe fn cast_slice_to_t_mut<T>(bytes: &mut [u8]) -> ReadResult<&mut T> {
+        debug_assert_eq!(bytes.len(), size_of::<T>());
+        let ptr = cast_ensure_aligned_mut::<u8, T>(bytes.as_mut_ptr())?;
+        // SAFETY:
+        // - The pointer is non-null, properly aligned for `&T`, and the length is valid.
+        // - T is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        let val = unsafe { &mut *ptr };
+        Ok(val)
+    }
+
     /// Cast a `&[u8]` to a `&[T]` of a zero-copy type `T`.
     ///
     /// Errors if the pointer is not properly aligned for reads of `T`.
@@ -1215,6 +1244,94 @@ mod zero_copy {
         let slice = unsafe { from_raw_parts(ptr, len) };
         Ok(slice)
     }
+
+    /// Cast a `&mut [u8]` to a `&mut [T]` of a zero-copy type `T`.
+    ///
+    /// Like [`cast_slice_to_slice_t`], but for mutable slices.
+    #[inline(always)]
+    #[allow(clippy::arithmetic_side_effects)]
+    pub(super) unsafe fn cast_slice_to_slice_t_mut<T>(
+        bytes: &mut [u8],
+        len: usize,
+    ) -> ReadResult<&mut [T]> {
+        debug_assert_eq!(bytes.len(), len * size_of::<T>());
+        let ptr = cast_ensure_aligned_mut::<u8, T>(bytes.as_mut_ptr())?;
+        // SAFETY:
+        // - The pointer is non-null, properly aligned for `&[T]`, and the length is valid.
+        // - T is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        let slice = unsafe { from_raw_parts_mut(ptr, len) };
+        Ok(slice)
+    }
+
+    /// [`TypeMeta`] for `&'de T` where `T` is zero-copy.
+    pub(super) const fn type_meta_t<'de, T>() -> TypeMeta
+    where
+        T: SchemaRead<'de> + ZeroCopy,
+    {
+        match T::TYPE_META {
+            TypeMeta::Static {
+                size,
+                zero_copy: true,
+            } => TypeMeta::Static {
+                size,
+                // Note: `&'de T` is NOT zero‑copy in the "raw-bytes representable" sense.
+                // In this crate, `zero_copy: true` means:
+                // - The type's in‑memory representation is exactly its serialized bytes.
+                // - It can be safely initialized by memcpy (no validation, no endianness/layout work).
+                // - Containers may bulk-copy elements (e.g., Vec/BoxedSlice memcpy fast path for Pod).
+                // - It can be deserialized by reference to some underlying source bytes.
+                //
+                // A _reference_ to a zero-copy type does not meet that contract:
+                // - `&'de T` is a pointer with provenance/lifetime, not bytes you can memcpy into place.
+                // - You cannot "initialize a reference" by copying bytes; you must point it at already
+                //   valid storage of `T`.
+                // - Advertising `zero_copy: true` here could incorrectly enable memcpy of reference
+                //   elements (e.g., Vec<&T>), which would be unsound.
+                //
+                // We borrow the underlying `T` here, knowing it is zero-copy, but the reference itself
+                // is never considered zero-copy.
+                zero_copy: false,
+            },
+            // Should be impossible to reach.
+            _ => panic!("Type is not zero-copy"),
+        }
+    }
+
+    /// [`TypeMeta`] for &[T] where `T` is zero-copy.
+    ///
+    /// Slices are never zero-copy due to length encoding and
+    /// references by their nature (as mentioned in [`type_meta_t`])
+    /// are not zero-copy.
+    pub(super) const fn type_meta_slice<'de, T>() -> TypeMeta
+    where
+        T: SchemaRead<'de> + ZeroCopy,
+    {
+        match T::TYPE_META {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => TypeMeta::Dynamic,
+            _ => panic!("Type is not zero-copy"),
+        }
+    }
+
+    /// Read the length of the slice from the [`Reader`] and return it
+    /// with the total size in bytes of the subsequent serialized data.
+    ///
+    /// Total size of the serialized data is the length of the slice
+    /// multiplied by the size of the element type.
+    #[inline(always)]
+    pub(super) fn read_slice_len_checked<'de>(
+        reader: &mut impl Reader<'de>,
+        size: usize,
+    ) -> ReadResult<(usize, usize)> {
+        let Ok(len): Result<usize, _> = u64::get(reader)?.try_into() else {
+            return Err(pointer_sized_decode_error());
+        };
+        let Some(total_size) = len.checked_mul(size) else {
+            return Err(read_length_encoding_overflow("usize::MAX"));
+        };
+        Ok((len, total_size))
+    }
 }
 
 impl<'de, T> SchemaRead<'de> for &'de T
@@ -1223,49 +1340,35 @@ where
 {
     type Dst = &'de T::Dst;
 
-    const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static {
-            size,
-            zero_copy: true,
-        } => TypeMeta::Static {
-            size,
-            // Note: `&'de T` is NOT zero‑copy in the "raw-bytes representable" sense.
-            // In this crate, `zero_copy: true` means:
-            // - The type's in‑memory representation is exactly its serialized bytes.
-            // - It can be safely initialized by memcpy (no validation, no endianness/layout work).
-            // - Containers may bulk-copy elements (e.g., Vec/BoxedSlice memcpy fast path for Pod).
-            // - It can be deserialized by reference to some underlying source bytes.
-            //
-            // A _reference_ to a zero-copy type does not meet that contract:
-            // - `&'de T` is a pointer with provenance/lifetime, not bytes you can memcpy into place.
-            // - You cannot "initialize a reference" by copying bytes; you must point it at already
-            //   valid storage of `T`.
-            // - Advertising `zero_copy: true` here could incorrectly enable memcpy of reference
-            //   elements (e.g., Vec<&T>), which would be unsound.
-            //
-            // We borrow the underlying `T` here, knowing it is zero-copy, but the reference itself
-            // is never considered zero-copy.
-            zero_copy: false,
-        },
-        // Should be impossible to reach.
-        _ => panic!("Type is not zero-copy"),
-    };
+    const TYPE_META: TypeMeta = zero_copy::type_meta_t::<T>();
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let TypeMeta::Static {
-            size,
-            zero_copy: true,
-        } = T::TYPE_META
-        else {
-            // Should be impossible to reach.
-            unreachable!("Type is not zero-copy");
-        };
-
+        let size = T::TYPE_META.size_assert_zero_copy();
         let bytes = reader.borrow_exact(size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         // - `bytes.len() == size_of::<T::Dst>()`. `borrow_exact` ensures we read exactly `size` bytes.
         let val = unsafe { zero_copy::cast_slice_to_t::<T::Dst>(bytes)? };
+        dst.write(val);
+        Ok(())
+    }
+}
+
+impl<'de, T> SchemaRead<'de> for &'de mut T
+where
+    T: SchemaRead<'de> + ZeroCopy,
+{
+    type Dst = &'de mut T::Dst;
+
+    const TYPE_META: TypeMeta = zero_copy::type_meta_t::<T>();
+
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let size = T::TYPE_META.size_assert_zero_copy();
+        let bytes = reader.borrow_exact_mut(size)?;
+        // SAFETY:
+        // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        // - `bytes.len() == size_of::<T::Dst>()`. `borrow_exact_mut` ensures we read exactly `size` bytes.
+        let val = unsafe { zero_copy::cast_slice_to_t_mut::<T::Dst>(bytes)? };
         dst.write(val);
         Ok(())
     }
@@ -1277,34 +1380,37 @@ where
 {
     type Dst = &'de [T::Dst];
 
-    const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static {
-            zero_copy: true, ..
-        } => TypeMeta::Dynamic,
-        _ => panic!("Type is not zero-copy"),
-    };
+    const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T>();
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let TypeMeta::Static {
-            size,
-            zero_copy: true,
-        } = T::TYPE_META
-        else {
-            // Should be impossible to reach.
-            unreachable!("Type is not zero-copy");
-        };
-
-        let Ok(len): Result<usize, _> = u64::get(reader)?.try_into() else {
-            return Err(pointer_sized_decode_error());
-        };
-        let Some(total_size) = len.checked_mul(size) else {
-            return Err(read_length_encoding_overflow("usize::MAX"));
-        };
+        let size = T::TYPE_META.size_assert_zero_copy();
+        let (len, total_size) = zero_copy::read_slice_len_checked(reader, size)?;
         let bytes = reader.borrow_exact(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact` ensures we read exactly `len * size` bytes.
         let slice = unsafe { zero_copy::cast_slice_to_slice_t::<T::Dst>(bytes, len)? };
+        dst.write(slice);
+        Ok(())
+    }
+}
+
+impl<'de, T> SchemaRead<'de> for &'de mut [T]
+where
+    T: SchemaRead<'de> + ZeroCopy,
+{
+    type Dst = &'de mut [T::Dst];
+
+    const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T>();
+
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let size = T::TYPE_META.size_assert_zero_copy();
+        let (len, total_size) = zero_copy::read_slice_len_checked(reader, size)?;
+        let bytes = reader.borrow_exact_mut(total_size)?;
+        // SAFETY:
+        // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+        // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact_mut` ensures we read exactly `len * size` bytes.
+        let slice = unsafe { zero_copy::cast_slice_to_slice_t_mut::<T::Dst>(bytes, len)? };
         dst.write(slice);
         Ok(())
     }

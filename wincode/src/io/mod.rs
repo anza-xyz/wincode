@@ -81,8 +81,16 @@ pub trait Reader<'a> {
     ///
     /// The returned slice is tied to `'a`. Prefer [`Reader::fill_exact`] unless you truly need zero-copy.
     /// Errors for readers that don't support zero-copy.
-    #[allow(unused_variables)]
+    #[inline]
     fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        Self::borrow_exact_mut(self, len).map(|s| &*s)
+    }
+
+    /// Zero-copy: return a borrowed mutable slice of exactly `len` bytes and advance by `len`.
+    ///
+    /// Errors for readers that don't support zero-copy.
+    #[expect(unused_variables)]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
         Err(ReadError::UnsupportedZeroCopy)
     }
 
