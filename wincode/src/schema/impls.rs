@@ -913,7 +913,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = C::LengthEncoding::read::<u8>(reader)?;
+        let len = C::LengthEncoding::read(reader)?;
         let bytes = reader.borrow_exact(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
@@ -931,7 +931,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for String {
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = C::LengthEncoding::read::<u8>(reader)?;
+        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader)?;
         let bytes = reader.fill_exact(len)?.to_vec();
         unsafe { reader.consume_unchecked(len) };
         match String::from_utf8(bytes) {
@@ -1019,7 +1019,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                let len = C::LengthEncoding::read::<($key::Dst, $value::Dst)>(reader)?;
+                let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader)?;
 
                 let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     #[allow(clippy::arithmetic_side_effects)]
@@ -1078,7 +1078,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                let len = C::LengthEncoding::read::<$key::Dst>(reader)?;
+                let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader)?;
 
                 let map = match $key::TYPE_META {
                     TypeMeta::Static { size, .. } => {
@@ -1338,7 +1338,7 @@ mod zero_copy {
         reader: &mut impl Reader<'de>,
         size: usize,
     ) -> ReadResult<(usize, usize)> {
-        let len = C::LengthEncoding::read::<u64>(reader)?;
+        let len = C::LengthEncoding::read(reader)?;
         let Some(total_size) = len.checked_mul(size) else {
             return Err(read_length_encoding_overflow("usize::MAX"));
         };

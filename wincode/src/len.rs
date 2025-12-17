@@ -18,7 +18,23 @@ pub trait SeqLen<C: ConfigCore> {
     ///
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
+    #[inline]
+    fn read_prealloc_check<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        let len = Self::read(reader)?;
+        if let Some(prealloc_limit) = C::PREALLOCATION_SIZE_LIMIT {
+            let needed = len
+                .checked_mul(size_of::<T>())
+                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
+            if needed > prealloc_limit {
+                return Err(preallocation_size_limit(needed, prealloc_limit));
+            }
+        }
+        Ok(len)
+    }
+    /// Read the length of a sequence, without doing any preallocation size checks.
+    ///
+    /// Note this may still return typical read errors and there is no unsafety implied.
+    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
@@ -32,19 +48,10 @@ pub struct BincodeLen;
 
 impl<C: ConfigCore> SeqLen<C> for BincodeLen {
     #[inline(always)]
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
         // Bincode's default fixint encoding writes lengths as `u64`.
-        let len = <u64 as SchemaRead<'de, C>>::get(reader)
-            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
-        if let Some(prealloc_limit) = C::PREALLOCATION_SIZE_LIMIT {
-            let needed = len
-                .checked_mul(size_of::<T>())
-                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
-            if needed > prealloc_limit {
-                return Err(preallocation_size_limit(needed, prealloc_limit));
-            }
-        }
-        Ok(len)
+        <u64 as SchemaRead<'de, C>>::get(reader)
+            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))
     }
 
     #[inline(always)]
@@ -255,7 +262,7 @@ pub mod short_vec {
 
     impl<C: ConfigCore> SeqLen<C> for ShortU16Len {
         #[inline(always)]
-        fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
             Ok(decode_short_u16_from_reader(reader)? as usize)
         }
 
