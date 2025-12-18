@@ -1234,9 +1234,8 @@ mod zero_copy {
     /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
     /// - `bytes.len()` must be equal to `len * size_of::<T>()`.
     #[inline(always)]
-    #[allow(clippy::arithmetic_side_effects)]
     pub(super) unsafe fn cast_slice_to_slice_t<T>(bytes: &[u8], len: usize) -> ReadResult<&[T]> {
-        debug_assert_eq!(bytes.len(), len * size_of::<T>());
+        debug_assert_eq!(Some(bytes.len()), len.checked_mul(size_of::<T>()));
         let ptr = cast_ensure_aligned::<u8, T>(bytes.as_ptr())?;
         // SAFETY:
         // - The pointer is non-null, properly aligned for `&[T]`, and the length is valid.
@@ -1249,12 +1248,11 @@ mod zero_copy {
     ///
     /// Like [`cast_slice_to_slice_t`], but for mutable slices.
     #[inline(always)]
-    #[allow(clippy::arithmetic_side_effects)]
     pub(super) unsafe fn cast_slice_to_slice_t_mut<T>(
         bytes: &mut [u8],
         len: usize,
     ) -> ReadResult<&mut [T]> {
-        debug_assert_eq!(bytes.len(), len * size_of::<T>());
+        debug_assert_eq!(Some(bytes.len()), len.checked_mul(size_of::<T>()));
         let ptr = cast_ensure_aligned_mut::<u8, T>(bytes.as_mut_ptr())?;
         // SAFETY:
         // - The pointer is non-null, properly aligned for `&[T]`, and the length is valid.
