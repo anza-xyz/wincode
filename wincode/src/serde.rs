@@ -46,7 +46,7 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
         Ok(unsafe { dst.assume_init() })
     }
 
-    /// Deserialize `bytes` into a mutable reference to `Self::Dst`.
+    /// Deserialize `src` into a mutable reference to `Self::Dst`.
     ///
     /// This allows mutating the serialized data in place.
     ///
@@ -59,7 +59,7 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
         <&mut Self as SchemaRead<'de>>::get(&mut src)
     }
 
-    /// Deserialize `bytes` into a mutable reference to `Self::Dst`.
+    /// Deserialize `src` into a mutable reference to `Self::Dst`.
     ///
     /// This allows mutating the serialized data in place.
     ///
