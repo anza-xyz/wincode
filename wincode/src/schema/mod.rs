@@ -251,7 +251,7 @@ mod tests {
             io::{Reader, Writer},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
-            WriteResult,
+            WriteResult, ZeroCopy,
         },
         core::{marker::PhantomData, ptr},
         proptest::prelude::*,
@@ -259,6 +259,7 @@ mod tests {
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
+            ops::{Deref, DerefMut},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -2543,10 +2544,64 @@ mod tests {
         });
     }
 
+    /// A buffer containing a single instance of type `T`,
+    /// aligned for `T`.
+    ///
+    /// Implements [`Deref`] and [`DerefMut`] for `[u8]` such that it
+    /// acts like a typical byte buffer, but aligned for `T`.
+    struct BufAligned<T> {
+        buf: Box<[T]>,
+    }
+
+    impl<T> Deref for BufAligned<T>
+    where
+        T: ZeroCopy,
+    {
+        type Target = [u8];
+
+        fn deref(&self) -> &Self::Target {
+            unsafe {
+                core::slice::from_raw_parts(
+                    self.buf.as_ptr() as *const u8,
+                    self.buf.len() * size_of::<T>(),
+                )
+            }
+        }
+    }
+
+    impl<T> DerefMut for BufAligned<T>
+    where
+        T: ZeroCopy,
+    {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe {
+                core::slice::from_raw_parts_mut(
+                    self.buf.as_mut_ptr() as *mut u8,
+                    self.buf.len() * size_of::<T>(),
+                )
+            }
+        }
+    }
+
+    /// Serialize a single instance of type `T` into a buffer aligned for `T`.
+    fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned<T>>
+    where
+        T: SchemaWrite<Src = T> + ZeroCopy,
+    {
+        assert_eq!(T::size_of(src)?, size_of::<T>());
+        let mut b: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(1);
+        let mut buf =
+            unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, size_of::<T>()) };
+        crate::serialize_into(&mut buf, src)?;
+        Ok(BufAligned {
+            buf: unsafe { b.assume_init() },
+        })
+    }
+
     #[test]
     fn test_zero_copy_mut_roundrip() {
         proptest!(proptest_cfg(), |(data: StructZeroCopy, data_rand: StructZeroCopy)| {
-            let mut serialized = serialize(&data).unwrap();
+            let mut serialized = serialize_aligned(&data).unwrap();
             let deserialized: StructZeroCopy = deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, data);
 
@@ -2566,7 +2621,7 @@ mod tests {
     #[test]
     fn test_zero_copy_deserialize_ref() {
         proptest!(proptest_cfg(), |(data: StructZeroCopy)| {
-            let serialized = serialize(&data).unwrap();
+            let serialized = serialize_aligned(&data).unwrap();
             let deserialized: StructZeroCopy = deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, data);
 
