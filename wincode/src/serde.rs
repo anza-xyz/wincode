@@ -5,7 +5,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        SchemaReadOwned, TypeMeta, ZeroCopy,
+        SchemaReadOwned, TypeMeta,
     },
     core::mem::MaybeUninit,
 };
@@ -44,32 +44,6 @@ pub trait Deserialize<'de>: SchemaRead<'de> {
         Self::deserialize_into(src, &mut dst)?;
         // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
         Ok(unsafe { dst.assume_init() })
-    }
-
-    /// Deserialize `src` into a mutable reference to `Self::Dst`.
-    ///
-    /// This allows mutating the serialized data in place.
-    ///
-    /// Only available for types that are [`ZeroCopy`].
-    #[inline(always)]
-    fn deserialize_mut(mut src: &'de mut [u8]) -> ReadResult<&'de mut Self::Dst>
-    where
-        Self: ZeroCopy + Sized,
-    {
-        <&mut Self as SchemaRead<'de>>::get(&mut src)
-    }
-
-    /// Deserialize `src` into a mutable reference to `Self::Dst`.
-    ///
-    /// This allows mutating the serialized data in place.
-    ///
-    /// Only available for types that are [`ZeroCopy`].
-    #[inline(always)]
-    fn deserialize_ref(mut src: &'de [u8]) -> ReadResult<&'de Self::Dst>
-    where
-        Self: ZeroCopy + Sized,
-    {
-        <&Self as SchemaRead<'de>>::get(&mut src)
     }
 
     /// Deserialize `bytes` into `target`.
@@ -257,7 +231,7 @@ where
 ///
 /// This allows mutating the serialized data in place.
 ///
-/// Only available for types that are [`ZeroCopy`].
+/// Only available for types that are [`ZeroCopy`](crate::ZeroCopy).
 ///
 /// # Examples
 ///
@@ -284,44 +258,11 @@ where
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize_mut<'de, T>(src: &'de mut [u8]) -> ReadResult<&'de mut T>
+pub fn deserialize_mut<'de, T>(mut src: &'de mut [u8]) -> ReadResult<T>
 where
-    T: SchemaRead<'de, Dst = T> + ZeroCopy + Sized,
+    T: SchemaRead<'de, Dst = T>,
 {
-    T::deserialize_mut(src)
-}
-
-/// Deserialize a reference to a type from the given bytes.
-///
-/// Only available for types that are [`ZeroCopy`].
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
-/// # use wincode::{SchemaWrite, SchemaRead};
-/// # #[derive(Debug, PartialEq, Eq)]
-/// #[derive(SchemaWrite, SchemaRead)]
-/// #[repr(C)]
-/// struct Data {
-///     bytes: [u8; 7],
-///     the_answer: u8,
-/// }
-///
-/// let data = Data { bytes: *b"wincode", the_answer: 42 };
-///
-/// let serialized = wincode::serialize(&data).unwrap();
-/// let data_ref: &Data = wincode::deserialize_ref(&serialized).unwrap();
-///
-/// assert_eq!(data_ref, &data);
-/// # }
-/// ```
-#[inline(always)]
-pub fn deserialize_ref<'de, T>(src: &'de [u8]) -> ReadResult<&'de T>
-where
-    T: SchemaRead<'de, Dst = T> + ZeroCopy + Sized,
-{
-    T::deserialize_ref(src)
+    <T as SchemaRead<'de>>::get(&mut src)
 }
 
 /// Deserialize a type from the given bytes into the given target.

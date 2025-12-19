@@ -141,7 +141,72 @@ pub trait SchemaRead<'de> {
 /// # Safety
 ///
 /// - The type must not have any invalid bit patterns, no layout requirements, no endianness checks, etc.
-pub unsafe trait ZeroCopy: 'static {}
+pub unsafe trait ZeroCopy: 'static {
+    /// Get a reference to a type from the given bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+    /// # use wincode::{SchemaWrite, SchemaRead, ZeroCopy};
+    /// # #[derive(Debug, PartialEq, Eq)]
+    /// #[derive(SchemaWrite, SchemaRead)]
+    /// #[repr(C)]
+    /// struct Data {
+    ///     bytes: [u8; 7],
+    ///     the_answer: u8,
+    /// }
+    ///
+    /// let data = Data { bytes: *b"wincode", the_answer: 42 };
+    ///
+    /// let serialized = wincode::serialize(&data).unwrap();
+    /// let data_ref = Data::from_bytes(&serialized).unwrap();
+    ///
+    /// assert_eq!(data_ref, &data);
+    /// # }
+    /// ```
+    #[inline(always)]
+    fn from_bytes<'de>(mut bytes: &'de [u8]) -> ReadResult<&'de Self>
+    where
+        Self: SchemaRead<'de, Dst = Self> + Sized,
+    {
+        <&Self as SchemaRead<'de>>::get(&mut bytes)
+    }
+
+    /// Get a mutable reference to a type from the given bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+    /// # use wincode::{SchemaWrite, SchemaRead, ZeroCopy};
+    /// # #[derive(Debug, PartialEq, Eq)]
+    /// #[derive(SchemaWrite, SchemaRead)]
+    /// #[repr(C)]
+    /// struct Data {
+    ///     bytes: [u8; 7],
+    ///     the_answer: u8,
+    /// }
+    ///
+    /// let data = Data { bytes: [0; 7], the_answer: 0 };
+    ///
+    /// let mut serialized = wincode::serialize(&data).unwrap();
+    /// let data_mut = Data::from_bytes_mut(&mut serialized).unwrap();
+    /// data_mut.bytes = *b"wincode";
+    /// data_mut.the_answer = 42;
+    ///
+    /// let deserialized: Data = wincode::deserialize(&serialized).unwrap();
+    /// assert_eq!(deserialized, Data { bytes: *b"wincode", the_answer: 42 });
+    /// # }
+    /// ```
+    #[inline(always)]
+    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
+    where
+        Self: SchemaRead<'de, Dst = Self> + Sized,
+    {
+        <&mut Self as SchemaRead<'de>>::get(&mut bytes)
+    }
+}
 
 /// A type that can be read (deserialized) from a [`Reader`] without borrowing from it.
 pub trait SchemaReadOwned: for<'de> SchemaRead<'de> {}
@@ -246,7 +311,7 @@ mod tests {
     use {
         crate::{
             containers::{self, Elem, Pod},
-            deserialize, deserialize_mut, deserialize_ref,
+            deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
             proptest_config::proptest_cfg,
@@ -2608,6 +2673,26 @@ mod tests {
 
             // Mutate the serialized data in place
             {
+                let ref_mut = StructZeroCopy::from_bytes_mut(&mut serialized).unwrap();
+                *ref_mut = data_rand;
+            }
+            // Deserialize again on the same serialized data to
+            // verify the changes were persisted
+            let deserialized: StructZeroCopy = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, data_rand);
+        });
+    }
+
+    #[test]
+    fn test_deserialize_mut_roundrip() {
+        proptest!(proptest_cfg(), |(data: StructZeroCopy, data_rand: StructZeroCopy)| {
+            let mut serialized = serialize_aligned(&data).unwrap();
+            let deserialized: StructZeroCopy = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, data);
+
+
+            // Mutate the serialized data in place
+            {
                 let ref_mut: &mut StructZeroCopy = deserialize_mut(&mut serialized).unwrap();
                 *ref_mut = data_rand;
             }
@@ -2625,7 +2710,7 @@ mod tests {
             let deserialized: StructZeroCopy = deserialize(&serialized).unwrap();
             prop_assert_eq!(deserialized, data);
 
-            let ref_data: &StructZeroCopy = deserialize_ref(&serialized).unwrap();
+            let ref_data = StructZeroCopy::from_bytes(&serialized).unwrap();
             prop_assert_eq!(ref_data, &data);
         });
     }
