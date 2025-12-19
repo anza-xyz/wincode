@@ -169,20 +169,59 @@
 //! - [`u8`]
 //! - [`i8`]
 //!
-//! Within `wincode`, any type that is composed entirely of these primitives is
-//! eligible for zero-copy deserialization.
+//! In addition to the following on little endian targets:
+//! - [`u16`], [`i16`], [`u32`], [`i32`], [`u64`], [`i64`], [`u128`], [`i128`], [`f32`], [`f64`]
 //!
-//! Let `Z` be the set of zero-copy types.
+//! Types with alignment greater than 1 can force the compiler to insert padding into your structs.
+//! Zero-copy requires padding-free layouts; if the layout has implicit padding, `wincode` will not
+//! qualify the type as zero-copy.
 //!
-//! The following higher order types are eligible for zero-copy deserialization:
-//! - `&[Z]`
-//! - `&Z`
-//! - `&[Z; N]`
+//! ---
 //!
-//! Structs deriving [`SchemaWrite`] and [`SchemaRead`] are eligible for zero-copy deserialization
-//! as long as they are composed entirely of the above zero-copy types and are annotated with
-//! `#[repr(transparent)]` or `#[repr(C)]`.
-//! Note that this is **not** true for tuples, as Rust does not currently guarantee tuple layout.
+//! Within `wincode`, any type that is composed entirely of the above primitives is
+//! eligible for zero-copy deserialization. This includes arrays, slices, and structs.
+//!
+//! Structs deriving [`SchemaRead`] are eligible for zero-copy deserialization
+//! as long as they are composed entirely of the above zero-copy types, are annotated with
+//! `#[repr(transparent)]` or `#[repr(C)]`, and have no implicit padding. Use appropriate
+//! field ordering or add explicit padding fields if needed to eliminate implicit padding.
+//!
+//! Note that tuples are **not** eligible for zero-copy deserialization, as Rust does not
+//! currently guarantee tuple layout.
+//!
+//! ## Field reordering
+//! If your struct has implicit padding, you may be able to reorder fields to avoid it.
+//!
+//! ```
+//! #[repr(C)]
+//! struct HasPadding {
+//!    a: u8,
+//!    b: u32,
+//!    c: u16,
+//!    d: u8,
+//! }
+//!
+//! #[repr(C)]
+//! struct ZeroPadding {
+//!    b: u32,
+//!    c: u16,
+//!    a: u8,
+//!    d: u8,
+//! }
+//! ```
+//!
+//! ## Explicit padding
+//! You may need to add an explicit padding field if reordering fields cannot yield
+//! a padding-free layout.
+//!
+//! ```
+//! #[repr(C)]
+//! struct HasPadding {
+//!    a: u32,
+//!    b: u16,
+//!    _pad: [u8; 2],
+//! }
+//! ```
 //!
 //! ## Examples
 //!
@@ -252,6 +291,18 @@
 //! assert_eq!(header, deserialized);
 //! # }
 //! ```
+//!
+//! ## In-place mutation
+//!
+//! wincode supports in-place mutation of zero-copy types.
+//! See [`deserialize_mut`] or [`ZeroCopy::from_bytes_mut`] for more details.
+//!
+//! ## `ZeroCopy` methods
+//!
+//! The [`ZeroCopy`] trait provides some convenience methods for
+//! working with zero-copy types.
+//!
+//! See [`ZeroCopy::from_bytes`] and [`ZeroCopy::from_bytes_mut`] for more details.
 //!
 //! # Derive attributes
 //!
