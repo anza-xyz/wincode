@@ -227,14 +227,13 @@ where
     T::deserialize(src)
 }
 
-/// Deserialize a mutable reference to a type from the given bytes.
-///
-/// This allows mutating the serialized data in place.
-///
-/// Only available for types that are [`ZeroCopy`](crate::ZeroCopy).
+/// Deserialize a type from the given bytes, with the ability
+/// to form mutable references for types that are [`ZeroCopy`](crate::ZeroCopy).
+/// This can allow mutating the serialized data in place.
 ///
 /// # Examples
 ///
+/// ## Zero-copy types
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
 /// # use wincode::{SchemaWrite, SchemaRead};
@@ -252,6 +251,34 @@ where
 /// let data_mut: &mut Data = wincode::deserialize_mut(&mut serialized).unwrap();
 /// data_mut.bytes = *b"wincode";
 /// data_mut.the_answer = 42;
+///
+/// let deserialized: Data = wincode::deserialize(&serialized).unwrap();
+/// assert_eq!(deserialized, Data { bytes: *b"wincode", the_answer: 42 });
+/// # }
+/// ```
+///
+/// ## Mutable zero-copy members
+/// ```
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// # use wincode::{SchemaWrite, SchemaRead};
+/// # #[derive(Debug, PartialEq, Eq)]
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct Data {
+///     bytes: [u8; 7],
+///     the_answer: u8,
+/// }
+/// # #[derive(Debug, PartialEq, Eq)]
+/// #[derive(SchemaRead)]
+/// struct DataMut<'a> {
+///     bytes: &'a mut [u8; 7],
+///     the_answer: u8,
+/// }
+///
+/// let data = Data { bytes: [0; 7], the_answer: 42 };
+///
+/// let mut serialized = wincode::serialize(&data).unwrap();
+/// let data_mut: DataMut<'_> = wincode::deserialize_mut(&mut serialized).unwrap();
+/// *data_mut.bytes = *b"wincode";
 ///
 /// let deserialized: Data = wincode::deserialize(&serialized).unwrap();
 /// assert_eq!(deserialized, Data { bytes: *b"wincode", the_answer: 42 });
