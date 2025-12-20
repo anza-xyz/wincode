@@ -5,7 +5,7 @@ use {
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        SchemaReadOwned, TypeMeta,
+        SchemaReadOwned,
     },
     core::mem::MaybeUninit,
 };
@@ -39,37 +39,14 @@ use {
 pub trait Deserialize<'de>: SchemaRead<'de> {
     /// Deserialize `bytes` into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
-        let mut dst = MaybeUninit::uninit();
-        Self::deserialize_into(src, &mut dst)?;
-        // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
-        Ok(unsafe { dst.assume_init() })
+    fn deserialize(mut src: &'de [u8]) -> ReadResult<Self::Dst> {
+        <Self as SchemaRead<'de>>::get(&mut src)
     }
 
     /// Deserialize `bytes` into `target`.
     #[inline]
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { src.copy_into_t(dst)? };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
-                // will consume `size` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { src.as_trusted_for(size) }?;
-                Self::read(&mut reader, dst)?;
-            }
-            TypeMeta::Dynamic => {
-                Self::read(&mut src, dst)?;
-            }
-        }
-        Ok(())
+        <Self as SchemaRead<'de>>::read(&mut src, dst)
     }
 }
 
@@ -82,37 +59,16 @@ pub trait DeserializeOwned: SchemaReadOwned {
     fn deserialize_from<'de>(
         src: &mut impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de>>::Dst> {
-        let mut dst = MaybeUninit::uninit();
-        Self::deserialize_from_into(src, &mut dst)?;
-        Ok(unsafe { dst.assume_init() })
+        <Self as SchemaRead<'de>>::get(src)
     }
 
     /// Deserialize from the given [`Reader`] into `dst`.
+    #[inline]
     fn deserialize_from_into<'de>(
         src: &mut impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
     ) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { src.copy_into_t(dst)? };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, so a single read of `Self::Dst`
-                // will consume `size` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { src.as_trusted_for(size) }?;
-                Self::read(&mut reader, dst)?;
-            }
-            TypeMeta::Dynamic => {
-                Self::read(src, dst)?;
-            }
-        }
-        Ok(())
+        <Self as SchemaRead<'de>>::read(src, dst)
     }
 }
 
@@ -163,28 +119,7 @@ pub trait Serialize: SchemaWrite {
     /// Serialize a serializable type into the given byte buffer.
     #[inline]
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { dst.write_t(src)? };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, so a single write of `Self::Src`
-                // will consume `size` bytes, fully consuming the trusted window.
-                let mut writer = unsafe { dst.as_trusted_for(size) }?;
-                Self::write(&mut writer, src)?;
-                writer.finish()?;
-            }
-            TypeMeta::Dynamic => {
-                Self::write(dst, src)?;
-            }
-        }
-
+        <Self as SchemaWrite>::write(dst, src)?;
         dst.finish()?;
         Ok(())
     }
