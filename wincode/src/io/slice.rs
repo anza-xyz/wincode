@@ -223,6 +223,7 @@ impl<'a> Reader<'a> for &'a [u8] {
         Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
     }
 
+    #[inline]
     fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
         let Some(src) = self.get(..n_bytes) else {
             return Err(read_size_limit(n_bytes));
@@ -272,6 +273,7 @@ impl<'a> Reader<'a> for &'a mut [u8] {
         Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
     }
 
+    #[inline]
     fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
         let Some(src) = self.get(..n_bytes) else {
             return Err(read_size_limit(n_bytes));
