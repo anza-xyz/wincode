@@ -627,6 +627,261 @@ bench_enum!(
     }
 );
 
+fn bench_vec_unit_enum_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Vec<UnitEnum>");
+
+    for size in [100, 1_000, 10_000] {
+        let data: Vec<UnitEnum> = (0..size)
+            .map(|i| match i % 4 {
+                0 => UnitEnum::A,
+                1 => UnitEnum::B,
+                2 => UnitEnum::C,
+                _ => UnitEnum::D,
+            })
+            .collect();
+        let data_size = serialized_size(&data).unwrap();
+        group.throughput(Throughput::Bytes(data_size));
+
+        let serialized = verify_serialize_into(&data);
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<Vec<UnitEnum>>(black_box(s)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| bincode::deserialize::<Vec<UnitEnum>>(black_box(s)).unwrap()),
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_vec_same_sized_enum_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Vec<SameSizedEnum>");
+
+    for size in [100, 1_000, 10_000] {
+        let data: Vec<SameSizedEnum> = (0..size)
+            .map(|i| match i % 4 {
+                0 => SameSizedEnum::Transfer {
+                    amount: i as u64 * 1000,
+                    fee: 5000,
+                },
+                1 => SameSizedEnum::Stake {
+                    lamports: i as u64 * 2000,
+                    rent: 1000,
+                },
+                2 => SameSizedEnum::Withdraw {
+                    amount: i as u64 * 1500,
+                    timestamp: i as u64,
+                },
+                _ => SameSizedEnum::Close {
+                    refund: i as u64 * 500,
+                    slot: i as u64,
+                },
+            })
+            .collect();
+        let data_size = serialized_size(&data).unwrap();
+        group.throughput(Throughput::Bytes(data_size));
+
+        let serialized = verify_serialize_into(&data);
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<Vec<SameSizedEnum>>(black_box(s)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| bincode::deserialize::<Vec<SameSizedEnum>>(black_box(s)).unwrap()),
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_vec_mixed_sized_enum_comparison(c: &mut Criterion) {
+    let mut group = c.benchmark_group("Vec<MixedSizedEnum>");
+
+    for size in [100, 1_000, 10_000] {
+        let data: Vec<MixedSizedEnum> = (0..size)
+            .map(|i| match i % 3 {
+                0 => MixedSizedEnum::Small { flag: i as u8 },
+                1 => MixedSizedEnum::Medium { value: i as u64 },
+                _ => MixedSizedEnum::Large {
+                    x: i as u64,
+                    y: i as u64 * 2,
+                    z: i as u64 * 3,
+                },
+            })
+            .collect();
+        let data_size = serialized_size(&data).unwrap();
+        group.throughput(Throughput::Bytes(data_size));
+
+        let serialized = verify_serialize_into(&data);
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize_into", size),
+            &data,
+            |b, d| {
+                let mut buffer = create_bench_buffer(d);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                        .unwrap()
+                })
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialize", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/serialized_size", size),
+            &data,
+            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("wincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| deserialize::<Vec<MixedSizedEnum>>(black_box(s)).unwrap()),
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("bincode/deserialize", size),
+            &serialized,
+            |b, s| b.iter(|| bincode::deserialize::<Vec<MixedSizedEnum>>(black_box(s)).unwrap()),
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_primitives_comparison,
@@ -639,6 +894,9 @@ criterion_group!(
     bench_unit_enum_comparison,
     bench_same_sized_enum_comparison,
     bench_mixed_sized_enum_comparison,
+    bench_vec_unit_enum_comparison,
+    bench_vec_same_sized_enum_comparison,
+    bench_vec_mixed_sized_enum_comparison,
 );
 
 criterion_main!(benches);
