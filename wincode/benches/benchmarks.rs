@@ -512,6 +512,121 @@ fn bench_pod_struct_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+// Unit enum - only discriminant serialized, size known at compile time.
+#[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone, Copy, PartialEq)]
+enum UnitEnum {
+    A,
+    B,
+    C,
+    D,
+}
+
+// All variants same size (2x u64) - enables static size optimization.
+#[repr(C)]
+#[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone, PartialEq)]
+enum SameSizedEnum {
+    Transfer { amount: u64, fee: u64 },
+    Stake { lamports: u64, rent: u64 },
+    Withdraw { amount: u64, timestamp: u64 },
+    Close { refund: u64, slot: u64 },
+}
+
+const _: () = {
+    assert!(size_of::<SameSizedEnum>() == size_of::<u32>() + 2 * size_of::<u64>());
+};
+
+// Different sized variants - baseline for comparison.
+#[derive(Serialize, Deserialize, SchemaWrite, SchemaRead, Clone, PartialEq)]
+enum MixedSizedEnum {
+    Small { flag: u8 },
+    Medium { value: u64 },
+    Large { x: u64, y: u64, z: u64 },
+}
+
+// Macro to reduce duplication across enum benchmarks.
+
+macro_rules! bench_enum {
+    ($fn_name:ident, $group_name:literal, $type:ty, $data:expr) => {
+        fn $fn_name(c: &mut Criterion) {
+            let mut group = c.benchmark_group($group_name);
+            let data: $type = $data;
+            let data_size = serialized_size(&data).unwrap();
+            group.throughput(Throughput::Bytes(data_size));
+
+            let serialized = verify_serialize_into(&data);
+
+            group.bench_function("wincode/serialize_into", |b| {
+                let mut buffer = create_bench_buffer(&data);
+                b.iter(|| {
+                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap()
+                });
+            });
+
+            group.bench_function("bincode/serialize_into", |b| {
+                let mut buffer = create_bench_buffer(&data);
+                b.iter(|| {
+                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
+                        .unwrap()
+                });
+            });
+
+            group.bench_function("wincode/serialize", |b| {
+                b.iter(|| serialize(black_box(&data)).unwrap());
+            });
+
+            group.bench_function("bincode/serialize", |b| {
+                b.iter(|| bincode::serialize(black_box(&data)).unwrap());
+            });
+
+            group.bench_function("wincode/serialized_size", |b| {
+                b.iter(|| serialized_size(black_box(&data)).unwrap());
+            });
+
+            group.bench_function("bincode/serialized_size", |b| {
+                b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
+            });
+
+            group.bench_function("wincode/deserialize", |b| {
+                b.iter(|| deserialize::<$type>(black_box(&serialized)).unwrap());
+            });
+
+            group.bench_function("bincode/deserialize", |b| {
+                b.iter(|| bincode::deserialize::<$type>(black_box(&serialized)).unwrap());
+            });
+
+            group.finish();
+        }
+    };
+}
+
+bench_enum!(
+    bench_unit_enum_comparison,
+    "UnitEnum",
+    UnitEnum,
+    UnitEnum::C
+);
+
+bench_enum!(
+    bench_same_sized_enum_comparison,
+    "SameSizedEnum",
+    SameSizedEnum,
+    SameSizedEnum::Transfer {
+        amount: 1_000_000,
+        fee: 5000
+    }
+);
+
+bench_enum!(
+    bench_mixed_sized_enum_comparison,
+    "MixedSizedEnum",
+    MixedSizedEnum,
+    MixedSizedEnum::Large {
+        x: 111,
+        y: 222,
+        z: 333
+    }
+);
+
 criterion_group!(
     benches,
     bench_primitives_comparison,
@@ -521,6 +636,9 @@ criterion_group!(
     bench_hashmap_comparison,
     bench_hashmap_pod_comparison,
     bench_pod_struct_comparison,
+    bench_unit_enum_comparison,
+    bench_same_sized_enum_comparison,
+    bench_mixed_sized_enum_comparison,
 );
 
 criterion_main!(benches);
