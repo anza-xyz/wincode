@@ -121,11 +121,7 @@ fn impl_struct(
             }
 
             match <Self as SchemaRead<'de>>::TYPE_META {
-                TypeMeta::Static { zero_copy: true, .. } => {
-                    // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                    unsafe { reader.copy_into_t(dst)? };
-                }
-                TypeMeta::Static { size, zero_copy: false } => {
+                TypeMeta::Static { size, .. } => {
                     // SAFETY: `size` is the serialized size of the struct, which is the sum
                     // of the serialized sizes of the fields.
                     // Calling `read` on each field will consume exactly `size` bytes,

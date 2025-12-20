@@ -48,11 +48,7 @@ fn impl_struct(
         },
         quote! {
             match <Self as SchemaWrite>::TYPE_META {
-                TypeMeta::Static { zero_copy: true, .. } => {
-                    // SAFETY: `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                    unsafe { writer.write_t(src)? };
-                }
-                TypeMeta::Static { size, zero_copy: false } => {
+                TypeMeta::Static { size, .. } => {
                     // SAFETY: `size` is the serialized size of the struct, which is the sum
                     // of the serialized sizes of the fields.
                     // Calling `write` on each field will write exactly `size` bytes,
