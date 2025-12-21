@@ -603,75 +603,86 @@ macro_rules! bench_vec_enum {
                 let data: Vec<$type> = $data_gen(size);
                 let data_size = serialized_size(&data).unwrap();
 
-                group.bench_with_input(
-                    BenchmarkId::new("wincode/serialize_into", size),
-                    &data,
-                    |b, d| {
-                        let mut buffer = create_bench_buffer(d);
-                        b.iter(|| {
-                            serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("wincode/serialize_into", size),
+                        &data,
+                        |b, d| {
+                            let mut buffer = create_bench_buffer(d);
+                            b.iter(|| {
+                                serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                                    .unwrap()
+                            })
+                        },
+                    )
+                    .throughput(Throughput::Bytes(data_size));
+
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("bincode/serialize_into", size),
+                        &data,
+                        |b, d| {
+                            let mut buffer = create_bench_buffer(d);
+                            b.iter(|| {
+                                bincode::serialize_into(
+                                    black_box(&mut buffer.as_mut_slice()),
+                                    black_box(d),
+                                )
                                 .unwrap()
-                        })
-                    },
-                )
-                .throughput(Throughput::Bytes(data_size));
+                            })
+                        },
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
-                group.bench_with_input(
-                    BenchmarkId::new("bincode/serialize_into", size),
-                    &data,
-                    |b, d| {
-                        let mut buffer = create_bench_buffer(d);
-                        b.iter(|| {
-                            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                                .unwrap()
-                        })
-                    },
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("wincode/serialize", size),
+                        &data,
+                        |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
-                group.bench_with_input(
-                    BenchmarkId::new("wincode/serialize", size),
-                    &data,
-                    |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("bincode/serialize", size),
+                        &data,
+                        |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
-                group.bench_with_input(
-                    BenchmarkId::new("bincode/serialize", size),
-                    &data,
-                    |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("wincode/serialized_size", size),
+                        &data,
+                        |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
-                group.bench_with_input(
-                    BenchmarkId::new("wincode/serialized_size", size),
-                    &data,
-                    |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
-
-                group.bench_with_input(
-                    BenchmarkId::new("bincode/serialized_size", size),
-                    &data,
-                    |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("bincode/serialized_size", size),
+                        &data,
+                        |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
                 let serialized = verify_serialize_into(&data);
 
-                group.bench_with_input(
-                    BenchmarkId::new("wincode/deserialize", size),
-                    &serialized,
-                    |b, s| b.iter(|| deserialize::<Vec<$type>>(black_box(s)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("wincode/deserialize", size),
+                        &serialized,
+                        |b, s| b.iter(|| deserialize::<Vec<$type>>(black_box(s)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
 
-                group.bench_with_input(
-                    BenchmarkId::new("bincode/deserialize", size),
-                    &serialized,
-                    |b, s| b.iter(|| bincode::deserialize::<Vec<$type>>(black_box(s)).unwrap()),
-                )
-                .throughput(Throughput::Bytes(data_size));
+                group
+                    .bench_with_input(
+                        BenchmarkId::new("bincode/deserialize", size),
+                        &serialized,
+                        |b, s| b.iter(|| bincode::deserialize::<Vec<$type>>(black_box(s)).unwrap()),
+                    )
+                    .throughput(Throughput::Bytes(data_size));
             }
 
             group.finish();
