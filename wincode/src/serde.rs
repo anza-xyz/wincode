@@ -19,10 +19,10 @@ use {
 /// Using containers (indirect deserialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Deserialize, containers};
+/// # use wincode::{Deserialize, containers, len::BincodeFixInt};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
-/// type Dst = containers::Vec<u8>;
+/// type Dst = containers::Vec<u8, BincodeFixInt>;
 /// let deserialized = Dst::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
@@ -83,9 +83,9 @@ impl<T> DeserializeOwned for T where T: SchemaReadOwned<DefaultConfig> {}
 /// Using containers (indirect serialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Serialize, containers};
+/// # use wincode::{Serialize, containers, len::BincodeFixInt};
 /// let vec: Vec<u8> = vec![1, 2, 3];
-/// type Src = containers::Vec<u8>;
+/// type Src = containers::Vec<u8, BincodeFixInt>;
 /// let bytes = Src::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
