@@ -346,7 +346,7 @@ mod tests {
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
-            len::FixInt,
+            len::{BincodeFixInt, FixInt},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
@@ -1167,7 +1167,7 @@ mod tests {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal, struct_extensions)]
         struct Test {
-            #[wincode(with = "containers::Vec<Pod<_>>")]
+            #[wincode(with = "containers::Vec<Pod<_>, BincodeFixInt>")]
             a: Vec<u8>,
             #[wincode(with = "containers::Pod<_>")]
             b: [u8; 32],
@@ -1233,7 +1233,7 @@ mod tests {
         #[derive(SchemaWrite, SchemaRead)]
         #[wincode(internal, from = "Test", struct_extensions)]
         struct TestMapped {
-            a: containers::Vec<containers::Pod<u8>>,
+            a: containers::Vec<containers::Pod<u8>, BincodeFixInt>,
             b: containers::Pod<[u8; 32]>,
             c: u64,
         }
@@ -1342,8 +1342,14 @@ mod tests {
         )]
         #[wincode(internal)]
         enum Enum {
-            A { name: String, id: u64 },
-            B(String, #[wincode(with = "containers::Vec<Pod<_>>")] Vec<u8>),
+            A {
+                name: String,
+                id: u64,
+            },
+            B(
+                String,
+                #[wincode(with = "containers::Vec<Pod<_>, BincodeFixInt>")] Vec<u8>,
+            ),
             C,
         }
 
@@ -1706,7 +1712,7 @@ mod tests {
         #[allow(dead_code)]
         struct Signature([u8; 64]);
 
-        type Target = containers::Box<[Pod<Signature>]>;
+        type Target = containers::Box<[Pod<Signature>], BincodeFixInt>;
         proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<Signature>(), 1..=32).prop_map(|vec| vec.into_boxed_slice()))| {
             let serialized = Target::serialize(&slice).unwrap();
             // Deliberately trigger the drop with a failed deserialization
@@ -1777,11 +1783,11 @@ mod tests {
         #[test]
         fn test_elem_vec_compat(val in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <containers::Vec<Elem<StructStatic>>>::serialize(&val).unwrap();
+            let schema_serialized = <containers::Vec<Elem<StructStatic>, BincodeFixInt>>::serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = <containers::Vec<Elem<StructStatic>>>::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized = <containers::Vec<Elem<StructStatic>, BincodeFixInt>>::deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
         }

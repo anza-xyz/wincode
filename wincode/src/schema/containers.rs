@@ -69,7 +69,7 @@ use {
 #[cfg(feature = "alloc")]
 use {
     crate::{
-        len::{BincodeFixInt, SeqLen},
+        len::SeqLen,
         schema::{size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
@@ -78,11 +78,11 @@ use {
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
 #[cfg(feature = "alloc")]
-pub struct Vec<T, Len = BincodeFixInt>(PhantomData<Len>, PhantomData<T>);
+pub struct Vec<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`VecDeque`](std::collections::VecDeque) with a customizable length encoding.
 #[cfg(feature = "alloc")]
-pub struct VecDeque<T, Len = BincodeFixInt>(PhantomData<Len>, PhantomData<T>);
+pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`Box<[T]>`](std::boxed::Box) with a customizable length encoding.
 ///
@@ -114,15 +114,15 @@ pub struct VecDeque<T, Len = BincodeFixInt>(PhantomData<Len>, PhantomData<T>);
 /// # }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct Box<T: ?Sized, Len = BincodeFixInt>(PhantomData<T>, PhantomData<Len>);
+pub struct Box<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
 /// Like [`Box`], for [`Rc`].
-pub struct Rc<T: ?Sized, Len = BincodeFixInt>(PhantomData<T>, PhantomData<Len>);
+pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
 /// Like [`Box`], for [`Arc`].
-pub struct Arc<T: ?Sized, Len = BincodeFixInt>(PhantomData<T>, PhantomData<Len>);
+pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
 ///
@@ -642,7 +642,7 @@ where
 
 #[cfg(feature = "alloc")]
 /// A [`BinaryHeap`](alloc::collections::BinaryHeap) with a customizable length encoding.
-pub struct BinaryHeap<T, Len = BincodeFixInt>(PhantomData<Len>, PhantomData<T>);
+pub struct BinaryHeap<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 #[cfg(feature = "alloc")]
 impl<T, Len, C: ConfigCore> SchemaWrite<C> for BinaryHeap<T, Len>
