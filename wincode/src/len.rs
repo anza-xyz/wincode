@@ -91,6 +91,7 @@ pub type BincodeFixInt = FixInt<u64>;
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
+    pub use solana_short_vec::ShortU16;
     use {
         super::*,
         crate::error::read_length_encoding_overflow,
@@ -98,7 +99,7 @@ pub mod short_vec {
             mem::{transmute, MaybeUninit},
             ptr,
         },
-        solana_short_vec::{decode_shortu16_len, ShortU16},
+        solana_short_vec::decode_shortu16_len,
     };
 
     impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
@@ -142,8 +143,6 @@ pub mod short_vec {
             Ok(())
         }
     }
-
-    pub type ShortU16Len = ShortU16;
 
     /// Branchless computation of the number of bytes needed to encode a short u16.
     ///
@@ -194,7 +193,7 @@ pub mod short_vec {
         }
     }
 
-    impl<C: ConfigCore> SeqLen<C> for ShortU16Len {
+    impl<C: ConfigCore> SeqLen<C> for ShortU16 {
         #[inline(always)]
         fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
             let Ok((len, read)) = decode_shortu16_len(reader.fill_buf(3)?) else {
@@ -249,10 +248,10 @@ pub mod short_vec {
         #[wincode(internal)]
         struct ShortVecStruct {
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16Len>")]
+            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16>")]
             bytes: Vec<u8>,
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16Len>")]
+            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16>")]
             ar: Vec<[u8; 32]>,
         }
 
