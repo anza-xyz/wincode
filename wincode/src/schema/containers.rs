@@ -7,14 +7,14 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
-//! # use wincode::{containers::self, len::ShortU16Len};
+//! # use wincode::{containers::self, len::ShortU16};
 //! # use wincode_derive::SchemaWrite;
 //! # use serde::Serialize;
 //! # use solana_short_vec;
 //! #[derive(Serialize, SchemaWrite)]
 //! struct MyStruct {
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<_, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<_, ShortU16>")]
 //!     vec: Vec<u8>,
 //! }
 //!
@@ -32,7 +32,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc", feature = "derive"))] {
 //! # use wincode_derive::SchemaWrite;
-//! # use wincode::{containers::self, len::ShortU16Len};
+//! # use wincode::{containers::self, len::ShortU16};
 //! # use serde::Serialize;
 //! # use solana_short_vec;
 //! #[derive(Serialize, SchemaWrite)]
@@ -44,7 +44,7 @@
 //! #[derive(Serialize, SchemaWrite)]
 //! struct MyStruct {
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Point, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<Point, ShortU16>")]
 //!     vec: Vec<Point>,
 //! }
 //!
@@ -90,7 +90,7 @@ pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
 ///
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive", feature = "solana-short-vec"))] {
-/// # use wincode::{containers, len::ShortU16Len};
+/// # use wincode::{containers, len::ShortU16};
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
@@ -101,7 +101,7 @@ pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
 /// #[derive(Serialize, SchemaWrite)]
 /// struct MyStruct {
 ///     #[serde(with = "solana_short_vec")]
-///     #[wincode(with = "containers::Box<[Address], ShortU16Len>")]
+///     #[wincode(with = "containers::Box<[Address], ShortU16>")]
 ///     address: Box<[Address]>
 /// }
 ///

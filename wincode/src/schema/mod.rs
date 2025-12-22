@@ -5,7 +5,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
 //! # use rand::prelude::*;
-//! # use wincode::{Serialize, Deserialize, len::{BincodeFixInt, ShortU16Len}, containers::{self, Pod}};
+//! # use wincode::{Serialize, Deserialize, len::{BincodeFixInt, ShortU16}, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
 //!
@@ -23,7 +23,7 @@
 //!     #[wincode(with = "containers::Vec<Pod<_>, BincodeFixInt>")]
 //!     signature: Vec<Signature>,
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16>")]
 //!     address: Vec<Address>,
 //! }
 //!
