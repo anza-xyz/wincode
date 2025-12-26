@@ -17,7 +17,7 @@ use std::{
 };
 use {
     crate::{
-        config::{Config, ConfigCore},
+        config::{Config, ConfigCore, ZeroCopy},
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
@@ -26,7 +26,7 @@ use {
         },
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite, ZeroCopy},
+        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
         TypeMeta,
     },
     core::{
@@ -153,16 +153,16 @@ macro_rules! impl_int {
 
 // SAFETY:
 // - u8 is a canonical zero-copy type: no endianness, no layout, no validation.
-unsafe impl ZeroCopy for u8 {}
+unsafe impl<C: ConfigCore> ZeroCopy<C> for u8 {}
 
 // SAFETY:
 // - i8 is similarly a canonical zero-copy type: no endianness, no layout, no validation.
-unsafe impl ZeroCopy for i8 {}
+unsafe impl<C: ConfigCore> ZeroCopy<C> for i8 {}
 
 macro_rules! impl_numeric_zero_copy {
     ($($ty:ty),+ $(,)?) => {
         $(
-            unsafe impl ZeroCopy for $ty {}
+            unsafe impl<C: ConfigCore> ZeroCopy<C> for $ty {}
         )+
     };
 }
@@ -435,7 +435,7 @@ where
 // SAFETY:
 // - [T; N] where T: ZeroCopy is trivially zero-copy. The length is constant,
 //   so there is no length encoding.
-unsafe impl<const N: usize, T> ZeroCopy for [T; N] where T: ZeroCopy {}
+unsafe impl<const N: usize, C: ConfigCore, T> ZeroCopy<C> for [T; N] where T: ZeroCopy<C> {}
 
 impl<'de, T, const N: usize, C: ConfigCore> SchemaRead<'de, C> for [T; N]
 where
@@ -1280,7 +1280,7 @@ mod zero_copy {
     /// [`TypeMeta`] for `&'de T` where `T` is zero-copy.
     pub(super) const fn type_meta_t<'de, T, C: ConfigCore>() -> TypeMeta
     where
-        T: SchemaRead<'de, C> + ZeroCopy,
+        T: SchemaRead<'de, C> + ZeroCopy<C>,
     {
         match T::TYPE_META {
             TypeMeta::Static {
@@ -1318,7 +1318,7 @@ mod zero_copy {
     /// are not zero-copy.
     pub(super) const fn type_meta_slice<'de, T, C: ConfigCore>() -> TypeMeta
     where
-        T: SchemaRead<'de, C> + ZeroCopy,
+        T: SchemaRead<'de, C> + ZeroCopy<C>,
     {
         match T::TYPE_META {
             TypeMeta::Static {
@@ -1348,7 +1348,7 @@ mod zero_copy {
 
 impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de T
 where
-    T: SchemaRead<'de, C> + ZeroCopy,
+    T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
     type Dst = &'de T::Dst;
 
@@ -1368,7 +1368,7 @@ where
 
 impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de mut T
 where
-    T: SchemaRead<'de, C> + ZeroCopy,
+    T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
     type Dst = &'de mut T::Dst;
 
@@ -1388,7 +1388,7 @@ where
 
 impl<'de, T, C: Config> SchemaRead<'de, C> for &'de [T]
 where
-    T: SchemaRead<'de, C> + ZeroCopy,
+    T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
     type Dst = &'de [T::Dst];
 
@@ -1409,7 +1409,7 @@ where
 
 impl<'de, T, C: Config> SchemaRead<'de, C> for &'de mut [T]
 where
-    T: SchemaRead<'de, C> + ZeroCopy,
+    T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
     type Dst = &'de mut [T::Dst];
 

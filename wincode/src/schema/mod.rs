@@ -42,7 +42,7 @@
 //! ```
 use {
     crate::{
-        config::{Config, ConfigCore, DefaultConfig},
+        config::{self, ConfigCore, DefaultConfig},
         error::{ReadResult, WriteResult},
         io::*,
         len::SeqLen,
@@ -131,18 +131,17 @@ pub trait SchemaRead<'de, C: ConfigCore> {
     }
 }
 
-/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`].
+/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`]
+/// using the default configuration. See [`config::ZeroCopy`] for configuration
+/// aware methods.
 ///
-/// <div class="warning">
-/// You should not manually implement this trait for your own type unless you absolutely
-/// know what you're doing. The derive macros will automatically implement this trait for your type
-/// if it is eligible for zero-copy deserialization.
-/// </div>
+/// Always prefer using [`config::ZeroCopy`] for your implementations to keep them fully
+/// generic.
 ///
 /// # Safety
 ///
 /// - The type must not have any invalid bit patterns, no layout requirements, no endianness checks, etc.
-pub unsafe trait ZeroCopy: 'static {
+pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// Get a reference to a type from the given bytes.
     ///
     /// # Examples
@@ -172,19 +171,6 @@ pub unsafe trait ZeroCopy: 'static {
         Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
         <&Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
-    }
-
-    /// Like [`ZeroCopy::from_bytes`], but allows the caller to provide a custom configuration.
-    #[inline(always)]
-    #[expect(unused_variables)]
-    fn from_bytes_with_config<'de, C: Config>(
-        mut bytes: &'de [u8],
-        config: C,
-    ) -> ReadResult<&'de Self>
-    where
-        Self: SchemaRead<'de, C, Dst = Self> + Sized,
-    {
-        <&Self as SchemaRead<'de, C>>::get(&mut bytes)
     }
 
     /// Get a mutable reference to a type from the given bytes.
@@ -220,20 +206,9 @@ pub unsafe trait ZeroCopy: 'static {
     {
         <&mut Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
     }
-
-    /// Like [`ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
-    #[inline(always)]
-    #[expect(unused_variables)]
-    fn from_bytes_mut_with_config<'de, C: Config>(
-        mut bytes: &'de mut [u8],
-        config: C,
-    ) -> ReadResult<&'de mut Self>
-    where
-        Self: SchemaRead<'de, C, Dst = Self> + Sized,
-    {
-        <&mut Self as SchemaRead<'de, C>>::get(&mut bytes)
-    }
 }
+
+unsafe impl<T> ZeroCopy for T where T: config::ZeroCopy<DefaultConfig> {}
 
 /// A type that can be read (deserialized) from a [`Reader`] without borrowing from it.
 pub trait SchemaReadOwned<C: ConfigCore>: for<'de> SchemaRead<'de, C> {}
@@ -2811,8 +2786,8 @@ mod tests {
     fn test_custom_length_encoding() {
         let c = ConfigBuilder::default().with_length_encoding::<FixInt<u32>>();
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {
-            let wincode_serialized = serialize_with_config(&value, c).unwrap();
-            let wincode_deserialized: Vec<u8> = deserialize_with_config(&wincode_serialized, c).unwrap();
+            let wincode_serialized = config::serialize(&value, c).unwrap();
+            let wincode_deserialized: Vec<u8> = config::deserialize(&wincode_serialized, c).unwrap();
             let len = value.len();
             prop_assert_eq!(len, u32::from_le_bytes(wincode_serialized[0..4].try_into().unwrap()) as usize);
             prop_assert_eq!(value, wincode_deserialized);
