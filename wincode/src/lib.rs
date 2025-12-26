@@ -297,12 +297,12 @@
 //! wincode supports in-place mutation of zero-copy types.
 //! See [`deserialize_mut`] or [`ZeroCopy::from_bytes_mut`] for more details.
 //!
-//! ## `ZeroCopy` methods
+//! ## `ZeroCopy` and `config::ZeroCopy` methods
 //!
-//! The [`ZeroCopy`] trait provides some convenience methods for
+//! The [`ZeroCopy`] and [`config::ZeroCopy`] traits provide some convenience methods for
 //! working with zero-copy types.
 //!
-//! See [`ZeroCopy::from_bytes`] and [`ZeroCopy::from_bytes_mut`] for more details.
+//! See those trait definitions for more details.
 //!
 //! # Derive attributes
 //!
