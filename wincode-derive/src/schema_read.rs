@@ -619,7 +619,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     // Provide a `ZeroCopy` impl for the type if its `repr` is eligible and all its fields are zero-copy.
     let zero_copy_impl = match &args.data {
-        Data::Struct(_)
+        Data::Struct(fields)
             if repr.is_zero_copy_eligible()
                 // Generics will trigger "cannot use type generics in const context".
                 // Unfortunate, but generics in a zero-copy context are presumably a more niche use-case,
@@ -628,18 +628,17 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 // Types containing references are not zero-copy eligible.
                 && args.generics.lifetimes().next().is_none() =>
         {
+            let field_tys = fields.iter().map(|field| &field.ty);
             let mut bounds = Punctuated::new();
             bounds.push(parse_quote!(IsTrue));
-            let zero_copy_predicate = WherePredicate::Type(PredicateType {
+            let no_pad_predicate = WherePredicate::Type(PredicateType {
                 // Workaround for https://github.com/rust-lang/rust/issues/48214.
                 lifetimes: Some(parse_quote!(for<'_wincode_internal>)),
-                // Piggyback on the existing TypeMeta zero-copy predicate.
-                // The type itself will only be zero-copy if its TypeMeta is Static and its zero_copy flag is true,
-                // which entails all its fields being zero-copy and the struct not having any padding.
+                // Types are only zero-copy if they do not have any padding.
                 bounded_ty: parse_quote!(
                     Assert<
                         {
-                            matches!(<#ident as SchemaRead<'_, DefaultConfig>>::TYPE_META, TypeMeta::Static { zero_copy: true, .. })
+                            #(core::mem::size_of::<#field_tys>())+* == core::mem::size_of::<#ident>()
                         },
                     >
                 ),
@@ -647,16 +646,34 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 bounds,
             });
 
-            let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
+            let field_targets = fields.iter().map(|field| field.target_resolved());
+            let mut bounds = Punctuated::new();
+            bounds.push(parse_quote!(ZeroCopy<WincodeConfig>));
+            let zero_copy_predicate = field_targets.into_iter().map(|target| {
+                WherePredicate::Type(PredicateType {
+                    // Workaround for https://github.com/rust-lang/rust/issues/48214.
+                    lifetimes: Some(parse_quote!(for<'_wincode_internal>)),
+                    // Each field must be zero-copy.
+                    bounded_ty: target,
+                    colon_token: parse_quote![:],
+                    bounds: bounds.clone(),
+                })
+            });
+
+            let predicates = zero_copy_predicate.chain(core::iter::once(no_pad_predicate));
+            let mut generics = args.generics.clone();
+            append_config(&mut generics);
+            let (impl_generics, _, _) = generics.split_for_impl();
+            let (_, ty_generics, where_clause) = args.generics.split_for_impl();
             let mut where_clause = where_clause.cloned();
             match &mut where_clause {
                 Some(where_clause) => {
-                    where_clause.predicates.push(zero_copy_predicate);
+                    where_clause.predicates.extend(predicates);
                 }
                 None => {
                     where_clause = Some(WhereClause {
                         where_token: parse_quote!(where),
-                        predicates: Punctuated::from_iter([zero_copy_predicate]),
+                        predicates: Punctuated::from_iter(predicates),
                     });
                 }
             }
@@ -666,7 +683,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 struct Assert<const B: bool>;
                 trait IsTrue {}
                 impl IsTrue for Assert<true> {}
-                unsafe impl #impl_generics ZeroCopy for #ident #ty_generics #where_clause {}
+                unsafe impl #impl_generics ZeroCopy<WincodeConfig> for #ident #ty_generics #where_clause {}
             }
         }
         _ => quote!(),
@@ -675,7 +692,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}};
-            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, ZeroCopy, config::{Config, DefaultConfig}};
+            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, config::{Config, DefaultConfig, ZeroCopy}};
 
             #zero_copy_impl
 

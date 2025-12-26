@@ -1,7 +1,7 @@
 //! Configuration-aware serialize / deserialize traits and functions.
 use {
     crate::{
-        config::Config,
+        config::{Config, ConfigCore},
         io::{Reader, Writer},
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
     },
@@ -169,4 +169,37 @@ where
     T: SchemaReadOwned<C, Dst = T>,
 {
     T::deserialize_from(src)
+}
+
+/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`].
+///
+/// <div class="warning">
+/// You should not manually implement this trait for your own type unless you absolutely
+/// know what you're doing. The derive macros will automatically implement this trait for your type
+/// if it is eligible for zero-copy deserialization.
+/// </div>
+///
+/// # Safety
+///
+/// - The type must not have any invalid bit patterns, no layout requirements, no endianness checks, etc.
+pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
+    /// Like [`crate::ZeroCopy::from_bytes`], but allows the caller to provide a custom configuration.
+    #[inline(always)]
+    #[expect(unused_variables)]
+    fn from_bytes<'de>(mut bytes: &'de [u8], config: C) -> ReadResult<&'de Self>
+    where
+        Self: SchemaRead<'de, C, Dst = Self> + Sized,
+    {
+        <&Self as SchemaRead<'de, C>>::get(&mut bytes)
+    }
+
+    /// Like [`crate::ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
+    #[inline(always)]
+    #[expect(unused_variables)]
+    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8], config: C) -> ReadResult<&'de mut Self>
+    where
+        Self: SchemaRead<'de, C, Dst = Self> + Sized,
+    {
+        <&mut Self as SchemaRead<'de, C>>::get(&mut bytes)
+    }
 }

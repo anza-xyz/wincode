@@ -297,12 +297,12 @@
 //! wincode supports in-place mutation of zero-copy types.
 //! See [`deserialize_mut`] or [`ZeroCopy::from_bytes_mut`] for more details.
 //!
-//! ## `ZeroCopy` methods
+//! ## `ZeroCopy` and `config::ZeroCopy` methods
 //!
-//! The [`ZeroCopy`] trait provides some convenience methods for
+//! The [`ZeroCopy`] and [`config::ZeroCopy`] traits provide some convenience methods for
 //! working with zero-copy types.
 //!
-//! See [`ZeroCopy::from_bytes`] and [`ZeroCopy::from_bytes_mut`] for more details.
+//! See those trait definitions for more details.
 //!
 //! # Derive attributes
 //!
@@ -313,7 +313,7 @@
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
-//! |`assert_zero_copy`|`bool`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements.|
+//! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
 //!
 //! ### `no_suppress_unused`
 //!

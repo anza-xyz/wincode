@@ -1,7 +1,7 @@
 use {
     darling::{
-        ast::{Data, Fields, Style},
-        FromDeriveInput, FromField, FromVariant, Result,
+        ast::{Data, Fields, NestedMeta, Style},
+        FromDeriveInput, FromField, FromMeta, FromVariant, Result,
     },
     proc_macro2::{Span, TokenStream},
     quote::quote,
@@ -552,8 +552,38 @@ pub(crate) struct SchemaArgs {
     /// Indicates whether to assert that the type is zero-copy or not.
     ///
     /// If specified, compile-time asserts will be generated to ensure the type meets zero-copy requirements.
+    ///
+    /// Supports both flag-style and explicit path specification:
+    /// - `#[wincode(assert_zero_copy)]` - uses default config
+    /// - `#[wincode(assert_zero_copy(MyConfig))]` - uses custom config path
     #[darling(default)]
-    pub(crate) assert_zero_copy: bool,
+    pub(crate) assert_zero_copy: Option<AssertZeroCopyConfig>,
+}
+
+/// Configuration for zero-copy assertions.
+///
+/// This type enables optional path specification for `assert_zero_copy`:
+/// - `#[wincode(assert_zero_copy)]` - flag style, uses default config (`None` inner value)
+/// - `#[wincode(assert_zero_copy(MyConfig))]` - explicit path (`Some(path)` inner value)
+#[derive(Debug, Clone)]
+pub(crate) struct AssertZeroCopyConfig(pub(crate) Option<Path>);
+
+impl FromMeta for AssertZeroCopyConfig {
+    fn from_word() -> darling::Result<Self> {
+        // #[wincode(assert_zero_copy)] - use default config
+        Ok(AssertZeroCopyConfig(None))
+    }
+
+    fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
+        // #[wincode(assert_zero_copy(MyConfig))]
+        if items.len() != 1 {
+            return Err(darling::Error::too_many_items(1));
+        }
+        match &items[0] {
+            NestedMeta::Meta(syn::Meta::Path(path)) => Ok(AssertZeroCopyConfig(Some(path.clone()))),
+            _ => Err(darling::Error::unexpected_type("path")),
+        }
+    }
 }
 
 /// The default encoding to use for enum discriminants.

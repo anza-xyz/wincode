@@ -58,11 +58,11 @@
 //! ```
 use {
     crate::{
-        config::ConfigCore,
+        config::{ConfigCore, ZeroCopy},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        TypeMeta, ZeroCopy,
+        TypeMeta,
     },
     core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };
@@ -209,7 +209,7 @@ pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 //   - The type's in‑memory representation is exactly its serialized bytes.
 //   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
 //   - Does not contain references or pointers.
-unsafe impl<T> ZeroCopy for Pod<T> where T: Copy + 'static {}
+unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
 
 impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
 where
