@@ -38,7 +38,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     if !repr.is_zero_copy_eligible() {
         return Err(Error::custom(
             "The struct representation is not eligible for zero-copy. Consider using \
-+             #[repr(transparent)] or #[repr(C)] on the struct.",
+             #[repr(transparent)] or #[repr(C)] on the struct.",
         ));
     }
 

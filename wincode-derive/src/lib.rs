@@ -8,10 +8,10 @@ use {
     syn::{parse_macro_input, DeriveInput},
 };
 
+mod assert_zero_copy;
 mod common;
 mod schema_read;
 mod schema_write;
-mod zero_copy;
 
 /// Implement `SchemaWrite` for a struct or enum.
 #[proc_macro_derive(SchemaWrite, attributes(wincode))]
@@ -34,11 +34,18 @@ pub fn derive_schema_read(input: TokenStream) -> TokenStream {
 }
 
 /// Assert that a struct is zero-copy deserializable.
-#[proc_macro_derive(ZeroCopy, attributes(wincode))]
-pub fn derive_zero_copy(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    match zero_copy::generate(input) {
-        Ok(tokens) => tokens.into(),
-        Err(e) => e.write_errors().into(),
+#[proc_macro_attribute]
+pub fn assert_zero_copy(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_struct = parse_macro_input!(item as DeriveInput);
+
+    let result = match assert_zero_copy::generate(item_struct.clone()) {
+        Ok(asserts) => asserts,
+        Err(e) => e.write_errors(),
+    };
+
+    quote::quote! {
+        #item_struct
+        #result
     }
+    .into()
 }
