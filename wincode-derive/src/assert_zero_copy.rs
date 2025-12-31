@@ -1,5 +1,5 @@
 use {
-    crate::common::{extract_repr, SchemaArgs, TraitImpl},
+    crate::common::{extract_repr, get_crate_name, SchemaArgs, TraitImpl},
     darling::{ast::Data, Error, FromDeriveInput, Result},
     proc_macro2::TokenStream,
     quote::quote,
@@ -21,6 +21,7 @@ use {
 /// of any violations of the `ZeroCopy` requirements.
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let args = SchemaArgs::from_derive_input(&input)?;
+    let crate_name = get_crate_name(&args);
     let ident = &args.ident;
 
     // Assert the item is a struct.
@@ -46,19 +47,19 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         const _: () = {
             // Assert the struct implements `SchemaRead`.
             const _assert_schema_read_impl: fn() = || {
-                fn assert_schema_read_impl<'de, T: ::wincode::SchemaRead<'de>>() {}
+                fn assert_schema_read_impl<'de, T: #crate_name::SchemaRead<'de>>() {}
                 assert_schema_read_impl::<#ident>()
             };
 
             // Assert all fields implement `ZeroCopy`.
             const _assert_field_zerocopy_impl: fn() = || {
-                fn assert_field_zerocopy_impl<T: ::wincode::ZeroCopy>() {}
+                fn assert_field_zerocopy_impl<T: #crate_name::ZeroCopy>() {}
                 #(#zero_copy_asserts);*
             };
 
             // Assert the struct has no padding bytes.
             const _assert_no_padding: () = {
-                if let ::wincode::TypeMeta::Static { size, .. } = <#ident as ::wincode::SchemaRead<'_>>::TYPE_META {
+                if let #crate_name::TypeMeta::Static { size, .. } = <#ident as #crate_name::SchemaRead<'_>>::TYPE_META {
                     if size != core::mem::size_of::<#ident>() {
                         panic!("derive(ZeroCopy) was applied to a type with padding");
                     }
@@ -69,7 +70,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
             // Assert the struct implements `ZeroCopy`.
             const _assert_zerocopy_impl: fn() = || {
-                fn assert_zerocopy_impl<T: ::wincode::ZeroCopy>() {}
+                fn assert_zerocopy_impl<T: #crate_name::ZeroCopy>() {}
                 assert_zerocopy_impl::<#ident>()
             };
         };
