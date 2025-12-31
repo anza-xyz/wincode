@@ -13,9 +13,9 @@ use {
 ///   1. The item is indeed a struct (not an enum or union).
 ///   2. The struct representation is eligible for zero-copy.
 ///   3. The struct implements `SchemaRead`.
-///   4. The struct implements `SchemaWrite`.
-///   5. Each field of the struct implements `ZeroCopy`.
-///   6. The struct itself has no padding bytes.
+///   4. Each field of the struct implements `ZeroCopy`.
+///   5. The struct itself has no padding bytes.
+///   6. The struct implements `ZeroCopy`.
 ///
 /// These assertions are enforced at compile-time, providing feedback
 /// of any violations of the `ZeroCopy` requirements.
@@ -27,7 +27,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let zero_copy_asserts = match &args.data {
         Data::Struct(fields) => fields.iter().map(|field| {
             let target = field.target_resolved();
-            quote! { assert_zerocopy_impl::<#target>() }
+            quote! { assert_field_zerocopy_impl::<#target>() }
         }),
         _ => return Err(Error::custom("`ZeroCopy` can only be derived for structs")),
     };
@@ -50,15 +50,9 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 assert_schema_read_impl::<#ident>()
             };
 
-            // Assert the struct implements `SchemaWrite`.
-            const _assert_schema_write_impl: fn() = || {
-                fn assert_schema_write_impl<T: ::wincode::SchemaWrite>() {}
-                assert_schema_write_impl::<#ident>()
-            };
-
             // Assert all fields implement `ZeroCopy`.
-            const _assert_zerocopy_impl: fn() = || {
-                fn assert_zerocopy_impl<T: ::wincode::ZeroCopy>() {}
+            const _assert_field_zerocopy_impl: fn() = || {
+                fn assert_field_zerocopy_impl<T: ::wincode::ZeroCopy>() {}
                 #(#zero_copy_asserts);*
             };
 
@@ -71,6 +65,12 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 } else {
                     panic!("derive(ZeroCopy) was applied to a type with `TypeMeta::Dynamic`");
                 }
+            };
+
+            // Assert the struct implements `ZeroCopy`.
+            const _assert_zerocopy_impl: fn() = || {
+                fn assert_zerocopy_impl<T: ::wincode::ZeroCopy>() {}
+                assert_zerocopy_impl::<#ident>()
             };
         };
     })
