@@ -545,6 +545,11 @@ pub(crate) struct SchemaArgs {
     /// Otherwise, the enum discriminants will be encoded using the default encoding (`u32`).
     #[darling(default)]
     pub(crate) tag_encoding: Option<Type>,
+    /// Indicates whether to assert that the type is zero-copy ore not.
+    ///
+    /// If specified, compile-time asserts will be generated to ensure the type meets zero-copy requirements.
+    #[darling(default)]
+    pub(crate) assert_zero_copy: bool,
 }
 
 /// The default encoding to use for enum discriminants.

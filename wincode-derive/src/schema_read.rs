@@ -1,8 +1,11 @@
 use {
-    crate::common::{
-        default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
-        get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
-        StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+    crate::{
+        assert_zero_copy::assert_zero_copy,
+        common::{
+            default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
+            get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
+            StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+        },
     },
     darling::{
         ast::{Data, Fields, Style},
@@ -625,6 +628,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let src_dst = get_src_dst(&args);
     let field_suppress = suppress_unused_fields(&args);
     let struct_extensions = impl_struct_extensions(&args, &crate_name)?;
+    let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
     let (read_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
@@ -719,6 +723,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 }
             }
         };
+        #zero_copy_asserts
         #struct_extensions
         #field_suppress
     })

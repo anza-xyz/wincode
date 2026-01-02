@@ -1,9 +1,8 @@
 use {
-    crate::common::{extract_repr, get_crate_name, SchemaArgs, TraitImpl},
-    darling::{ast::Data, Error, FromDeriveInput, Result},
+    crate::common::{get_crate_name, SchemaArgs, StructRepr},
+    darling::{ast::Data, Error, Result},
     proc_macro2::TokenStream,
     quote::quote,
-    syn::DeriveInput,
 };
 
 /// Generate compile-time asserts for `ZeroCopy` impl.
@@ -19,13 +18,16 @@ use {
 ///
 /// These assertions are enforced at compile-time, providing feedback
 /// of any violations of the `ZeroCopy` requirements.
-pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
-    let args = SchemaArgs::from_derive_input(&input)?;
-    let crate_name = get_crate_name(&args);
+pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<TokenStream> {
+    if !args.assert_zero_copy {
+        return Ok(quote! {});
+    }
+
+    let crate_name = get_crate_name(args);
     let ident = &args.ident;
 
     // Assert the item is a struct.
-    let zero_copy_asserts = match &args.data {
+    let zero_copy_field_asserts = match &args.data {
         Data::Struct(fields) => fields.iter().map(|field| {
             let target = field.target_resolved();
             quote! { assert_field_zerocopy_impl::<#target>() }
@@ -34,8 +36,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     };
 
     // Assert the struct representation is eligible for zero-copy.
-    let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
-
     if !repr.is_zero_copy_eligible() {
         return Err(Error::custom(
             "The struct representation is not eligible for zero-copy. Consider using \
@@ -54,24 +54,18 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             // Assert all fields implement `ZeroCopy`.
             const _assert_field_zerocopy_impl: fn() = || {
                 fn assert_field_zerocopy_impl<T: #crate_name::ZeroCopy>() {}
-                #(#zero_copy_asserts);*
+                #(#zero_copy_field_asserts);*
             };
 
             // Assert the struct has no padding bytes.
             const _assert_no_padding: () = {
                 if let #crate_name::TypeMeta::Static { size, .. } = <#ident as #crate_name::SchemaRead<'_>>::TYPE_META {
                     if size != core::mem::size_of::<#ident>() {
-                        panic!("derive(ZeroCopy) was applied to a type with padding");
+                        panic!("wincode(assert_zero_copy) was applied to a type with padding");
                     }
                 } else {
-                    panic!("derive(ZeroCopy) was applied to a type with `TypeMeta::Dynamic`");
+                    panic!("wincode(assert_zero_copy) was applied to a type with `TypeMeta::Dynamic`");
                 }
-            };
-
-            // Assert the struct implements `ZeroCopy`.
-            const _assert_zerocopy_impl: fn() = || {
-                fn assert_zerocopy_impl<T: #crate_name::ZeroCopy>() {}
-                assert_zerocopy_impl::<#ident>()
             };
         };
     })

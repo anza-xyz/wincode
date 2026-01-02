@@ -313,6 +313,7 @@
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
+//! |`assert_zero_copy`|`bool`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements.|
 //!
 //! ### `no_suppress_unused`
 //!

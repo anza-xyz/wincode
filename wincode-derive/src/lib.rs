@@ -32,20 +32,3 @@ pub fn derive_schema_read(input: TokenStream) -> TokenStream {
         Err(e) => e.write_errors().into(),
     }
 }
-
-/// Assert that a struct is zero-copy deserializable.
-#[proc_macro_attribute]
-pub fn assert_zero_copy(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item_struct = parse_macro_input!(item as DeriveInput);
-
-    let result = match assert_zero_copy::generate(item_struct.clone()) {
-        Ok(asserts) => asserts,
-        Err(e) => e.write_errors(),
-    };
-
-    quote::quote! {
-        #item_struct
-        #result
-    }
-    .into()
-}
