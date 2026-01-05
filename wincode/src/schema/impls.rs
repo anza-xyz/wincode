@@ -1,15 +1,4 @@
 //! Blanket implementations for std types.
-//!
-//! Because the blanket implementations must be entirely general (e.g., we
-//! need to support `Vec<T>` for any `T`), we can't make any assumptions about
-//! the "Plain Old Data" nature of `T`, so all sequences will treat constituent
-//! elements of `T` as opaque. Of course users can use `std::vec::Vec<Pod<T>>`,
-//! which will certainly speed things up for POD elements of sequences, but
-//! the optimization will only be _per_ element.
-//!
-//! Additionally, we have to assume [`BincodeFixInt`] for all sequences, because
-//! there is no way to specify a different length encoding without one of the
-//! [`containers`].
 #[cfg(feature = "std")]
 use std::{
     collections::{HashMap, HashSet},
