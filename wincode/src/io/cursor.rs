@@ -98,8 +98,7 @@ where
     #[inline]
     fn cur_slice(&self) -> &[u8] {
         let slice = self.inner.as_ref();
-        // SAFETY: `pos` is less than or equal to the length of the slice.
-        unsafe { slice.get_unchecked(self.pos.min(slice.len())..) }
+        &slice[self.pos.min(slice.len())..]
     }
 
     /// Returns the number of bytes remaining in the cursor.
@@ -112,8 +111,7 @@ where
     #[inline]
     fn consume_slice_checked(&mut self, mid: usize) -> ReadResult<&[u8]> {
         let slice = self.inner.as_ref();
-        // SAFETY: `pos` is less than or equal to the length of the slice.
-        let cur = unsafe { slice.get_unchecked(self.pos.min(slice.len())..) };
+        let cur = &slice[self.pos.min(slice.len())..];
         let Some(left) = cur.get(..mid) else {
             return Err(read_size_limit(mid));
         };
@@ -135,8 +133,7 @@ where
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
         let src = self.cur_slice();
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { src.get_unchecked(..n_bytes.min(src.len())) })
+        Ok(&src[..n_bytes.min(src.len())])
     }
 
     #[inline]
@@ -179,8 +176,8 @@ mod uninit_slice {
         inner: &mut [MaybeUninit<u8>],
         pos: usize,
     ) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `pos` is less than or equal to the length of the slice.
-        unsafe { inner.get_unchecked_mut(pos.min(inner.len())..) }
+        let len = inner.len();
+        &mut inner[pos.min(len)..]
     }
 
     /// Get a mutable slice of `len` bytes from the cursor at the current position,
