@@ -1,8 +1,15 @@
 //! Support for heterogenous sequence length encoding.
-use crate::{
-    error::{pointer_sized_decode_error, preallocation_size_limit, ReadResult, WriteResult},
-    io::{Reader, Writer},
-    schema::{SchemaRead, SchemaWrite},
+use {
+    crate::{
+        config::ConfigCore,
+        error::{
+            pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
+            ReadResult, WriteResult,
+        },
+        io::{Reader, Writer},
+        SchemaRead, SchemaWrite, TypeMeta,
+    },
+    core::{any::type_name, marker::PhantomData},
 };
 
 /// Behavior to support heterogenous sequence length encoding.
@@ -10,14 +17,30 @@ use crate::{
 /// It is possible for sequences to have different length encoding schemes.
 /// This trait abstracts over that possibility, allowing users to specify
 /// the length encoding scheme for a sequence.
-pub trait SeqLen {
+pub trait SeqLen<C: ConfigCore> {
     /// Read the length of a sequence from the reader, where
     /// `T` is the type of the sequence elements. This can be used to
     /// enforce size constraints for preallocations.
     ///
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
+    #[inline]
+    fn read_prealloc_check<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        let len = Self::read(reader)?;
+        if let Some(prealloc_limit) = C::PREALLOCATION_SIZE_LIMIT {
+            let needed = len
+                .checked_mul(size_of::<T>())
+                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
+            if needed > prealloc_limit {
+                return Err(preallocation_size_limit(needed, prealloc_limit));
+            }
+        }
+        Ok(len)
+    }
+    /// Read the length of a sequence, without doing any preallocation size checks.
+    ///
+    /// Note this may still return typical read errors and there is no unsafety implied.
+    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
@@ -26,55 +49,118 @@ pub trait SeqLen {
     fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
-const DEFAULT_BINCODE_LEN_MAX_SIZE: usize = 4 << 20; // 4 MiB
-/// [`SeqLen`] implementation for bincode's default fixint encoding.
+/// Use the configuration's integer encoding for sequence length encoding.
 ///
-/// The `MAX_SIZE` constant is a limit on the maximum preallocation size
-/// (in bytes) for heap allocated structures. This is a safety precaution
-/// against malicious input causing OOM. The default is 4 MiB. Users are
-/// free to override this limit by passing a different constant or by
-/// implementing their own `SeqLen` implementation.
-pub struct BincodeLen<const MAX_SIZE: usize = DEFAULT_BINCODE_LEN_MAX_SIZE>;
+/// For example, if the configuration's integer encoding is `FixInt`, then `UseInt<u64>`
+/// will use the fixed-width u64 encoding.
+/// If the configuration's integer encoding is `VarInt`, then `UseInt<u64>` will use
+/// the variable-width u64 encoding.
+///
+/// This is bincode's default behavior.
+pub struct UseInt<T>(PhantomData<T>);
 
-impl<const MAX_SIZE: usize> SeqLen for BincodeLen<MAX_SIZE> {
+impl<T, C: ConfigCore> SeqLen<C> for UseInt<T>
+where
+    T: SchemaWrite<C> + for<'de> SchemaRead<'de, C>,
+    T::Src: TryFrom<usize>,
+    usize: for<'de> TryFrom<<T as SchemaRead<'de, C>>::Dst>,
+{
     #[inline(always)]
-    fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
-        // Bincode's default fixint encoding writes lengths as `u64`.
-        let len = u64::get(reader)
-            .and_then(|len| usize::try_from(len).map_err(|_| pointer_sized_decode_error()))?;
-        let needed = len
-            .checked_mul(size_of::<T>())
-            .ok_or_else(|| preallocation_size_limit(usize::MAX, MAX_SIZE))?;
-        if needed > MAX_SIZE {
-            return Err(preallocation_size_limit(needed, MAX_SIZE));
-        }
+    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        let len = T::get(reader)?;
+        let Ok(len) = usize::try_from(len) else {
+            return Err(pointer_sized_decode_error());
+        };
         Ok(len)
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
-        u64::write(writer, &(len as u64))
+        let Ok(len) = T::Src::try_from(len) else {
+            return Err(write_length_encoding_overflow(type_name::<T::Src>()));
+        };
+        T::write(writer, &len)
     }
 
     #[inline(always)]
-    fn write_bytes_needed(_len: usize) -> WriteResult<usize> {
-        Ok(size_of::<u64>())
+    fn write_bytes_needed(len: usize) -> WriteResult<usize> {
+        if let TypeMeta::Static { size, .. } = <T as SchemaWrite<C>>::TYPE_META {
+            return Ok(size);
+        }
+        let Ok(len) = T::Src::try_from(len) else {
+            return Err(write_length_encoding_overflow(type_name::<T::Src>()));
+        };
+        T::size_of(&len)
     }
 }
 
+/// Fixed-width integer length encoding.
+///
+/// Integers are encoded in little endian byte order.
+pub struct FixInt<T>(PhantomData<T>);
+
+macro_rules! impl_fix_int {
+    ($type:ty) => {
+        impl<C: ConfigCore> SeqLen<C> for FixInt<$type> {
+            #[inline(always)]
+            #[allow(irrefutable_let_patterns)]
+            fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+                let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
+                let len = <$type>::from_le_bytes(*bytes);
+                // SAFETY: `fill_array` ensures we read exactly `size_of::<$type>()` bytes.
+                unsafe { reader.consume_unchecked(size_of::<$type>()) };
+                let Ok(len) = usize::try_from(len) else {
+                    return Err(pointer_sized_decode_error());
+                };
+                Ok(len)
+            }
+
+            #[inline(always)]
+            fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+                let Ok(len) = <$type>::try_from(len) else {
+                    return Err(write_length_encoding_overflow(type_name::<$type>()));
+                };
+                writer.write(&len.to_le_bytes())?;
+                Ok(())
+            }
+
+            #[inline(always)]
+            fn write_bytes_needed(_: usize) -> WriteResult<usize> {
+                Ok(size_of::<$type>())
+            }
+        }
+    };
+}
+
+impl_fix_int!(u8);
+impl_fix_int!(u16);
+impl_fix_int!(u32);
+impl_fix_int!(u64);
+impl_fix_int!(u128);
+
+impl_fix_int!(i8);
+impl_fix_int!(i16);
+impl_fix_int!(i32);
+impl_fix_int!(i64);
+impl_fix_int!(i128);
+
+/// Bincode always uses a `u64` encoded with the configuration's integer encoding.
+pub type BincodeLen = UseInt<u64>;
+
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
+    pub use solana_short_vec::ShortU16;
     use {
         super::*,
-        crate::error::{read_length_encoding_overflow, write_length_encoding_overflow},
+        crate::error::read_length_encoding_overflow,
         core::{
             mem::{transmute, MaybeUninit},
             ptr,
         },
-        solana_short_vec::{decode_shortu16_len, ShortU16},
+        solana_short_vec::decode_shortu16_len,
     };
 
-    impl<'de> SchemaRead<'de> for ShortU16 {
+    impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
         type Dst = Self;
 
         fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -95,7 +181,7 @@ pub mod short_vec {
         }
     }
 
-    impl SchemaWrite for ShortU16 {
+    impl<C: ConfigCore> SchemaWrite<C> for ShortU16 {
         type Src = Self;
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -115,8 +201,6 @@ pub mod short_vec {
             Ok(())
         }
     }
-
-    pub type ShortU16Len = ShortU16;
 
     /// Branchless computation of the number of bytes needed to encode a short u16.
     ///
@@ -167,9 +251,9 @@ pub mod short_vec {
         }
     }
 
-    impl SeqLen for ShortU16Len {
+    impl<C: ConfigCore> SeqLen<C> for ShortU16 {
         #[inline(always)]
-        fn read<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
             let Ok((len, read)) = decode_shortu16_len(reader.fill_buf(3)?) else {
                 return Err(read_length_encoding_overflow("u16::MAX"));
             };
@@ -183,7 +267,7 @@ pub mod short_vec {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }
 
-            <ShortU16 as SchemaWrite>::write(writer, &ShortU16(len as u16))
+            <ShortU16 as SchemaWrite<C>>::write(writer, &ShortU16(len as u16))
         }
 
         #[inline(always)]
@@ -222,10 +306,10 @@ pub mod short_vec {
         #[wincode(internal)]
         struct ShortVecStruct {
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16Len>")]
+            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16>")]
             bytes: Vec<u8>,
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16Len>")]
+            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16>")]
             ar: Vec<[u8; 32]>,
         }
 
