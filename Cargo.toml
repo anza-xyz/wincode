@@ -1,5 +1,5 @@
 [workspace]
-members = ["wincode", "wincode-derive"]
+members = ["wincode", "wincode-derive", "fuzz"]
 resolver = "2"
 
 [workspace.lints.clippy]
