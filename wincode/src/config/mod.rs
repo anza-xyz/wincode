@@ -1,7 +1,7 @@
 //! Global configuration for wincode.
 //!
 //! This module provides configuration types and structs for configuring wincode's behavior.
-//! See [`ConfigBuilder`] for more details on how to configure wincode.
+//! See [`Configuration`] for more details on how to configure wincode.
 //!
 //! Additionally, this module provides traits and functions that mirror the serialization,
 //! deserialization, and zero-copy traits and functions from the crate root, but with an
@@ -14,13 +14,13 @@ use {
 pub const DEFAULT_PREALLOCATION_SIZE_LIMIT: usize = 4 << 20; // 4 MiB
 pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 
-/// Builder to configure global settings.
+/// Compile-time configuration for runtime behavior.
 ///
 /// Defaults:
 /// - Zero-copy alignment check is enabled.
 /// - Preallocation size limit is 4 MiB.
 /// - Length encoding is [`BincodeLen`].
-pub struct ConfigBuilder<
+pub struct Configuration<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
     LengthEncoding = BincodeLen,
@@ -29,7 +29,7 @@ pub struct ConfigBuilder<
 }
 
 impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding> Clone
-    for ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
 {
     fn clone(&self) -> Self {
         *self
@@ -37,7 +37,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
 }
 
 impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding> Copy
-    for ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
 {
 }
 
@@ -45,12 +45,12 @@ const fn generate<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
     LengthEncoding,
->() -> ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
-    ConfigBuilder { _l: PhantomData }
+>() -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
+    Configuration { _l: PhantomData }
 }
 
-impl ConfigBuilder {
-    /// Create a new config builder with the default settings.
+impl Configuration {
+    /// Create a new configuration with the default settings.
     ///
     /// Defaults:
     /// - Zero-copy alignment check is enabled.
@@ -61,10 +61,10 @@ impl ConfigBuilder {
     }
 }
 
-pub type DefaultConfig = ConfigBuilder;
+pub type DefaultConfig = Configuration;
 
 impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding>
-    ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
 {
     #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -79,9 +79,9 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// [`containers`](crate::containers).
     pub const fn with_length_encoding<L>(
         self,
-    ) -> ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>
     where
-        ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>: Config,
+        Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>: Config,
     {
         generate()
     }
@@ -95,7 +95,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// This is enabled by default.
     pub const fn enable_zero_copy_align_check(
         self,
-    ) -> ConfigBuilder<true, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
+    ) -> Configuration<true, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
         generate()
     }
 
@@ -118,7 +118,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// alignment; owned deserialization paths are unaffected.
     pub const unsafe fn disable_zero_copy_align_check(
         self,
-    ) -> ConfigBuilder<false, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
+    ) -> Configuration<false, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
         generate()
     }
 
@@ -132,7 +132,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// The default limit is 4 MiB.
     pub const fn with_preallocation_size_limit<const LIMIT: usize>(
         self,
-    ) -> ConfigBuilder<ZERO_COPY_ALIGN_CHECK, LIMIT, LengthEncoding> {
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, LIMIT, LengthEncoding> {
         generate()
     }
 
@@ -141,7 +141,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// <div class="warning">Warning: only do this if you absolutely trust your input.</div>
     pub const fn disable_preallocation_size_limit(
         self,
-    ) -> ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT_DISABLED, LengthEncoding>
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT_DISABLED, LengthEncoding>
     {
         generate()
     }
@@ -165,7 +165,7 @@ impl<
         const PREALLOCATION_SIZE_LIMIT: usize,
         LengthEncoding: 'static,
     > ConfigCore
-    for ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
 {
     const PREALLOCATION_SIZE_LIMIT: Option<usize> =
         if PREALLOCATION_SIZE_LIMIT == PREALLOCATION_SIZE_LIMIT_DISABLED {
@@ -189,7 +189,7 @@ impl<
         const ZERO_COPY_ALIGN_CHECK: bool,
         const PREALLOCATION_SIZE_LIMIT: usize,
         LengthEncoding: 'static,
-    > Config for ConfigBuilder<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    > Config for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
 where
     LengthEncoding: SeqLen<Self>,
 {

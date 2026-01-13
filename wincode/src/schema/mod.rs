@@ -316,7 +316,7 @@ mod tests {
 
     use {
         crate::{
-            config::{self, Config, ConfigBuilder, DefaultConfig},
+            config::{self, Config, Configuration, DefaultConfig},
             containers::{self, Elem, Pod},
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
@@ -2770,7 +2770,7 @@ mod tests {
 
     #[test]
     fn test_custom_preallocation_size_limit() {
-        let c = ConfigBuilder::default().with_preallocation_size_limit::<64>();
+        let c = Configuration::default().with_preallocation_size_limit::<64>();
         proptest!(proptest_cfg(), |(value in proptest::collection::vec(any::<u8>(), 0..=128))| {
             let wincode_serialized = config::serialize(&value, c).unwrap();
             let wincode_deserialized: Result<Vec<u8>, _> = config::deserialize(&wincode_serialized, c);
@@ -2784,7 +2784,7 @@ mod tests {
 
     #[test]
     fn test_custom_length_encoding() {
-        let c = ConfigBuilder::default().with_length_encoding::<FixInt<u32>>();
+        let c = Configuration::default().with_length_encoding::<FixInt<u32>>();
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {
             let wincode_serialized = config::serialize(&value, c).unwrap();
             let wincode_deserialized: Vec<u8> = config::deserialize(&wincode_serialized, c).unwrap();

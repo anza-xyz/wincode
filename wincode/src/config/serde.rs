@@ -95,8 +95,8 @@ impl<T, C: Config> DeserializeOwned<C> for T where T: SchemaReadOwned<C> {}
 ///
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{config::ConfigBuilder, len::FixInt};
-/// let config = ConfigBuilder::default().with_length_encoding::<FixInt<u32>>();
+/// # use wincode::{config::Configuration, len::FixInt};
+/// let config = Configuration::default().with_length_encoding::<FixInt<u32>>();
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::config::serialize(&vec, config).unwrap();
 /// assert_eq!(vec.len(), u32::from_le_bytes(bytes[0..4].try_into().unwrap()) as usize);
@@ -134,8 +134,8 @@ where
 ///
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{config::ConfigBuilder, len::FixInt};
-/// let config = ConfigBuilder::default().with_length_encoding::<FixInt<u32>>();
+/// # use wincode::{config::Configuration, len::FixInt};
+/// let config = Configuration::default().with_length_encoding::<FixInt<u32>>();
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::config::serialize(&vec, config).unwrap();
 /// let deserialized: Vec<u8> = wincode::config::deserialize(&bytes, config).unwrap();
