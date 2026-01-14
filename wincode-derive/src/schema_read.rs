@@ -110,7 +110,7 @@ fn impl_struct(
                 dst_ptr: *mut #dst,
             }
 
-            impl #impl_generics Drop for DropGuard #ty_generics {
+            impl #impl_generics ::core::ops::Drop for DropGuard #ty_generics {
                 #[cold]
                 fn drop(&mut self) {
                     let dst_ptr = self.dst_ptr;
@@ -274,7 +274,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             }
         });
         quote! {
-            impl #builder_impl_generics Drop for #builder_ident #builder_ty_generics #builder_where_clause {
+            impl #builder_impl_generics ::core::ops::Drop for #builder_ident #builder_ty_generics #builder_where_clause {
                 fn drop(&mut self) {
                     let dst_ptr = self.inner.as_mut_ptr();
                     #(#drops)*
