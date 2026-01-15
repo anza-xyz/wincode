@@ -7,7 +7,10 @@
 //! deserialization, and zero-copy traits and functions from the crate root, but with an
 //! additional configuration parameter.
 use {
-    crate::len::{BincodeLen, SeqLen},
+    crate::{
+        int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian},
+        len::{BincodeLen, SeqLen},
+    },
     core::marker::PhantomData,
 };
 
@@ -20,24 +23,54 @@ pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 /// - Zero-copy alignment check is enabled.
 /// - Preallocation size limit is 4 MiB.
 /// - Length encoding is [`BincodeLen`].
+/// - Byte order is [`LittleEndian`].
+/// - Integer encoding is [`FixInt`].
 pub struct Configuration<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
     LengthEncoding = BincodeLen,
+    ByteOrder = LittleEndian,
+    IntEncoding = FixInt,
 > {
     _l: PhantomData<LengthEncoding>,
+    _b: PhantomData<ByteOrder>,
+    _i: PhantomData<IntEncoding>,
 }
 
-impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding> Clone
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+impl<
+        const ZERO_COPY_ALIGN_CHECK: bool,
+        const PREALLOCATION_SIZE_LIMIT: usize,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    > Clone
+    for Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    >
 {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding> Copy
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+impl<
+        const ZERO_COPY_ALIGN_CHECK: bool,
+        const PREALLOCATION_SIZE_LIMIT: usize,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    > Copy
+    for Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    >
 {
 }
 
@@ -45,8 +78,20 @@ const fn generate<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
     LengthEncoding,
->() -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
-    Configuration { _l: PhantomData }
+    ByteOrder,
+    IntEncoding,
+>() -> Configuration<
+    ZERO_COPY_ALIGN_CHECK,
+    PREALLOCATION_SIZE_LIMIT,
+    LengthEncoding,
+    ByteOrder,
+    IntEncoding,
+> {
+    Configuration {
+        _l: PhantomData,
+        _b: PhantomData,
+        _i: PhantomData,
+    }
 }
 
 impl Configuration {
@@ -56,6 +101,8 @@ impl Configuration {
     /// - Zero-copy alignment check is enabled.
     /// - Preallocation size limit is 4 MiB.
     /// - Length encoding is [`BincodeLen`].
+    /// - Byte order is [`LittleEndian`].
+    /// - Integer encoding is [`FixInt`].
     pub const fn default() -> DefaultConfig {
         generate()
     }
@@ -63,8 +110,20 @@ impl Configuration {
 
 pub type DefaultConfig = Configuration;
 
-impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding>
-    Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+impl<
+        const ZERO_COPY_ALIGN_CHECK: bool,
+        const PREALLOCATION_SIZE_LIMIT: usize,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    >
+    Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    >
 {
     #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -79,9 +138,77 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// [`containers`](crate::containers).
     pub const fn with_length_encoding<L>(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L, ByteOrder, IntEncoding>
     where
         Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>: Config,
+    {
+        generate()
+    }
+
+    /// Use big-endian byte order.
+    ///
+    /// Note that changing the byte order will have a direct impact on zero-copy eligibility.
+    /// Integers are only eligible for zero-copy when configured byte order matches the native byte order.
+    ///
+    /// Default is [`LittleEndian`].
+    pub const fn with_big_endian(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        BigEndian,
+        IntEncoding,
+    > {
+        generate()
+    }
+
+    /// Use little-endian byte order.
+    ///
+    /// Default is [`LittleEndian`].
+    pub const fn with_little_endian(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        LittleEndian,
+        IntEncoding,
+    > {
+        generate()
+    }
+
+    /// Use [`FixInt`] for integer encoding.
+    ///
+    /// Default is [`FixInt`].
+    pub const fn with_fixint_encoding(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        FixInt,
+    > {
+        generate()
+    }
+
+    /// Use the given [`IntEncoding`] implementation for integer encoding.
+    ///
+    /// Can be used for custom, unofficial integer encodings.
+    ///
+    /// Default is [`FixInt`].
+    pub const fn with_int_encoding<I>(
+        self,
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, I>
+    where
+        Configuration<
+            ZERO_COPY_ALIGN_CHECK,
+            PREALLOCATION_SIZE_LIMIT,
+            LengthEncoding,
+            ByteOrder,
+            I,
+        >: Config,
     {
         generate()
     }
@@ -95,7 +222,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// This is enabled by default.
     pub const fn enable_zero_copy_align_check(
         self,
-    ) -> Configuration<true, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
+    ) -> Configuration<true, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, IntEncoding> {
         generate()
     }
 
@@ -118,7 +245,8 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// alignment; owned deserialization paths are unaffected.
     pub const unsafe fn disable_zero_copy_align_check(
         self,
-    ) -> Configuration<false, PREALLOCATION_SIZE_LIMIT, LengthEncoding> {
+    ) -> Configuration<false, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, IntEncoding>
+    {
         generate()
     }
 
@@ -132,7 +260,7 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// The default limit is 4 MiB.
     pub const fn with_preallocation_size_limit<const LIMIT: usize>(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, LIMIT, LengthEncoding> {
+    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, LIMIT, LengthEncoding, ByteOrder, IntEncoding> {
         generate()
     }
 
@@ -141,8 +269,13 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
     /// <div class="warning">Warning: only do this if you absolutely trust your input.</div>
     pub const fn disable_preallocation_size_limit(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT_DISABLED, LengthEncoding>
-    {
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT_DISABLED,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+    > {
         generate()
     }
 }
@@ -158,14 +291,21 @@ impl<const ZERO_COPY_ALIGN_CHECK: bool, const PREALLOCATION_SIZE_LIMIT: usize, L
 pub trait ConfigCore: 'static + Sized {
     const PREALLOCATION_SIZE_LIMIT: Option<usize>;
     const ZERO_COPY_ALIGN_CHECK: bool;
+    type ByteOrder: ByteOrder;
+    type IntEncoding: IntEncoding<Self::ByteOrder>;
 }
 
 impl<
         const ZERO_COPY_ALIGN_CHECK: bool,
         const PREALLOCATION_SIZE_LIMIT: usize,
         LengthEncoding: 'static,
+        B,
+        I,
     > ConfigCore
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I>
+where
+    B: ByteOrder,
+    I: IntEncoding<B>,
 {
     const PREALLOCATION_SIZE_LIMIT: Option<usize> =
         if PREALLOCATION_SIZE_LIMIT == PREALLOCATION_SIZE_LIMIT_DISABLED {
@@ -174,6 +314,8 @@ impl<
             Some(PREALLOCATION_SIZE_LIMIT)
         };
     const ZERO_COPY_ALIGN_CHECK: bool = ZERO_COPY_ALIGN_CHECK;
+    type ByteOrder = B;
+    type IntEncoding = I;
 }
 
 /// Trait for configuration access when you need access to type parameters that depend on [`Config`]
@@ -189,9 +331,14 @@ impl<
         const ZERO_COPY_ALIGN_CHECK: bool,
         const PREALLOCATION_SIZE_LIMIT: usize,
         LengthEncoding: 'static,
-    > Config for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding>
+        B,
+        I,
+    > Config
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I>
 where
     LengthEncoding: SeqLen<Self>,
+    B: ByteOrder,
+    I: IntEncoding<B>,
 {
     type LengthEncoding = LengthEncoding;
 }

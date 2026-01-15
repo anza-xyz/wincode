@@ -6,6 +6,7 @@ use {
             pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
             ReadResult, WriteResult,
         },
+        int_encoding::{ByteOrder, Endian},
         io::{Reader, Writer},
         SchemaRead, SchemaWrite, TypeMeta,
     },
@@ -96,7 +97,7 @@ where
 
 /// Fixed-width integer length encoding.
 ///
-/// Integers are encoded in little endian byte order.
+/// Integers respect the configured byte order.
 pub struct FixInt<T>(PhantomData<T>);
 
 macro_rules! impl_fix_int {
@@ -106,7 +107,10 @@ macro_rules! impl_fix_int {
             #[allow(irrefutable_let_patterns)]
             fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
                 let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
-                let len = <$type>::from_le_bytes(*bytes);
+                let len = match C::ByteOrder::ENDIAN {
+                    Endian::Big => <$type>::from_be_bytes(*bytes),
+                    Endian::Little => <$type>::from_le_bytes(*bytes),
+                };
                 // SAFETY: `fill_array` ensures we read exactly `size_of::<$type>()` bytes.
                 unsafe { reader.consume_unchecked(size_of::<$type>()) };
                 let Ok(len) = usize::try_from(len) else {
@@ -120,7 +124,11 @@ macro_rules! impl_fix_int {
                 let Ok(len) = <$type>::try_from(len) else {
                     return Err(write_length_encoding_overflow(type_name::<$type>()));
                 };
-                writer.write(&len.to_le_bytes())?;
+                let bytes = match C::ByteOrder::ENDIAN {
+                    Endian::Big => len.to_be_bytes(),
+                    Endian::Little => len.to_le_bytes(),
+                };
+                writer.write(&bytes)?;
                 Ok(())
             }
 
