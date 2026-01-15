@@ -94,6 +94,14 @@ impl TypeMeta {
             _ => panic!("Type is not zero-copy"),
         }
     }
+
+    #[cfg(all(test, feature = "std", feature = "derive"))]
+    pub(crate) const fn size_assert_static(self) -> usize {
+        match self {
+            TypeMeta::Static { size, zero_copy: _ } => size,
+            _ => panic!("Type is not static"),
+        }
+    }
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
@@ -1299,6 +1307,121 @@ mod tests {
             let deserialized: WithReference = deserialize(&serialized).unwrap();
             let bincode_deserialized: WithReference = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_skipped_fields() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: StructZeroCopy,
+            #[wincode(skip)]
+            b: [u8; 32],
+            c: StructStatic,
+            #[wincode(skip(default_val = 345))]
+            d: u32,
+        }
+
+        let expected = TypeMeta::Static {
+            size: size_of::<StructZeroCopy>()
+                + <StructStatic as SchemaWrite<DefaultConfig>>::TYPE_META.size_assert_static(),
+            zero_copy: false,
+        };
+        assert_eq!(<Test as SchemaWrite<DefaultConfig>>::TYPE_META, expected);
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let mut serialized = serialize(&test).unwrap();
+            let mut uninit_zeroed = MaybeUninit::<Test>::uninit();
+            Test::deserialize_into(serialized.as_mut(), &mut uninit_zeroed).unwrap();
+            let deserialized = unsafe { uninit_zeroed.assume_init() };
+            assert_eq!(deserialized.b, [0; 32]);
+            assert_eq!(deserialized.d, 345);
+            let reinitialized = Test {
+                b: test.b,
+                d: test.d,
+                ..deserialized
+            };
+            prop_assert_eq!(reinitialized, test);
+        });
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct TestTuple(StructZeroCopy, #[wincode(skip)] u64, u32);
+
+        let expected = TypeMeta::Static {
+            size: size_of::<StructZeroCopy>() + size_of::<u32>(),
+            zero_copy: false,
+        };
+        assert_eq!(
+            <TestTuple as SchemaWrite<DefaultConfig>>::TYPE_META,
+            expected
+        );
+
+        proptest!(proptest_cfg(), |(test: TestTuple)| {
+            let mut serialized = serialize(&test).unwrap();
+            let mut uninit_zeroed = MaybeUninit::<TestTuple>::uninit();
+            TestTuple::deserialize_into(serialized.as_mut(), &mut uninit_zeroed).unwrap();
+            let deserialized = unsafe { uninit_zeroed.assume_init() };
+            assert_eq!(deserialized.1, 0);
+            let reinitialized = TestTuple(deserialized.0, test.1, deserialized.2);
+            prop_assert_eq!(reinitialized, test);
+        });
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum TestEnum {
+            X([u64; 17], u8),
+            Y(Test),
+            Z(([u64; 16], u8), #[wincode(skip(default_val = 9))] u8, u64),
+            W {
+                a: u8,
+                #[wincode(skip(default_val = 123))]
+                b: u16,
+                c: [u64; 17],
+            },
+        }
+        let expected = TypeMeta::Static {
+            size: size_of::<u32>() // discriminant
+                + size_of::<u64>() * 17 + size_of::<u8>(),
+            zero_copy: false,
+        };
+        assert_eq!(
+            <TestEnum as SchemaWrite<DefaultConfig>>::TYPE_META,
+            expected
+        );
+
+        proptest!(proptest_cfg(), |(test: TestEnum)| {
+            let mut serialized = serialize(&test).unwrap();
+            let mut uninit_zeroed = MaybeUninit::<TestEnum>::uninit();
+            TestEnum::deserialize_into(serialized.as_mut(), &mut uninit_zeroed).unwrap();
+
+            let deserialized = unsafe { uninit_zeroed.assume_init() };
+            let reinitialized = match (deserialized, &test) {
+                (TestEnum::Y(deserialized_y), TestEnum::Y(test_y)) => {
+                    assert_eq!(deserialized_y.b, [0; 32]);
+                    assert_eq!(deserialized_y.d, 345);
+                    TestEnum::Y(Test {
+                        b: test_y.b,
+                        d: test_y.d,
+                        ..deserialized_y
+                    })
+                },
+                (TestEnum::Z(d_0, d_1, d_2), TestEnum::Z(_, t_1, _)) => {
+                    assert_eq!(d_1, 9);
+                    TestEnum::Z(d_0, *t_1, d_2)
+                },
+                (TestEnum::W { a: d_a, b: d_b, c:  d_c }, TestEnum::W { a: _, b: test_b, c: _ }) => {
+                    assert_eq!(d_b, 123);
+                    TestEnum::W {
+                        a: d_a,
+                        b: *test_b,
+                        c: d_c,
+                    }
+                },
+                (other, _) => other
+            };
+            prop_assert_eq!(reinitialized, test);
         });
     }
 

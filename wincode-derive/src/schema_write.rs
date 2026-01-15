@@ -24,16 +24,19 @@ fn impl_struct(
         return (quote! {Ok(0)}, quote! {Ok(())}, quote! {None});
     }
 
-    let target = fields.iter().map(|field| field.target_resolved());
-    let ident = fields.struct_member_ident_iter();
+    let target = fields.unskipped_iter().map(|field| field.target_resolved());
+    let mut size_count_idents = Vec::with_capacity(fields.len());
 
-    let writes = fields
-        .iter()
-        .enumerate()
-        .map(|(i, field)| {
-            let ident = field.struct_member_ident(i);
-            let target = field.target_resolved();
-            quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer, &src.#ident)?; }
+    let writes = fields.struct_members_iter()
+        .filter_map(|(field, ident)| {
+            if field.skip.is_none() {
+                let target = field.target_resolved();
+                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer, &src.#ident)?; };
+                size_count_idents.push(ident);
+                Some(write)
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
 
@@ -46,7 +49,7 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#ident)?;
+                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
@@ -100,41 +103,51 @@ fn impl_enum(
 
         let (size, write) = match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
-                let target = fields.iter().map(|field| field.target_resolved());
-                let ident = fields.enum_member_ident_iter(None);
+                let mut pattern_fragments = Vec::with_capacity(fields.len());
+                let mut size_count_idents = vec![];
+
                 let write = fields
-                    .iter()
-                    .zip(ident.clone())
-                    .map(|(field, ident)| {
-                        let target = field.target_resolved();
-                        quote! {
-                            <#target as SchemaWrite<WincodeConfig>>::write(writer, #ident)?;
+                    .enum_members_iter(None)
+                    .filter_map(|(field, ident)| {
+                        if field.skip.is_none() {
+                            let target = field.target_resolved();
+                            let write = quote! {
+                                <#target as SchemaWrite<WincodeConfig>>::write(writer, #ident)?;
+                            };
+                            pattern_fragments.push(quote! { #ident });
+                            size_count_idents.push(ident);
+                            Some(write)
+                        } else {
+                            if style.is_struct() {
+                                pattern_fragments.push(quote! { #ident: _ });
+                            } else {
+                                pattern_fragments.push(quote! { _ });
+                            }
+                            None
                         }
                     })
                     .collect::<Vec<_>>();
-                let ident_destructure = ident.clone();
                 let match_case = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#ident_destructure),*}
+                        #enum_ident::#variant_ident{#(#pattern_fragments),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#ident_destructure),*)
+                        #enum_ident::#variant_ident(#(#pattern_fragments),*)
                     }
                 };
 
+                let unskipped_targets =
+                    fields.unskipped_iter().map(|field| field.target_resolved());
+
                 // Prefix disambiguation needed, as our match statement will destructure enum variant identifiers.
                 let static_anon_idents = fields
-                    .member_anon_ident_iter(Some("__"))
+                    .unskipped_anon_ident_iter(Some("__"))
                     .collect::<Vec<_>>();
-                let static_targets = fields
-                    .iter()
-                    .map(|field| {
-                        let target = field.target_resolved();
-                        quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META}
-                    })
+                let static_targets = unskipped_targets
+                    .clone()
+                    .map(|target| quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META})
                     .collect::<Vec<_>>();
-
                 (
                     quote! {
                         #match_case => {
@@ -144,8 +157,9 @@ fn impl_enum(
 
                             let mut total = #size_of_discriminant;
                             #(
-                                total += <#target as SchemaWrite<WincodeConfig>>::size_of(#ident)?;
+                                total += <#unskipped_targets as SchemaWrite<WincodeConfig>>::size_of(#size_count_idents)?;
                             )*
+
                             Ok(total)
                         }
                     },

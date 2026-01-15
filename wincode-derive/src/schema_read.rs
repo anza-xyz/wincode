@@ -4,7 +4,7 @@ use {
         common::{
             default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
             get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
-            StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+            SkipMode, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
         },
     },
     darling::{
@@ -55,12 +55,21 @@ fn impl_struct(
             } else {
                 quote! { *init_count += 1; }
             };
-            quote! {
-                <#target as SchemaRead<'de, WincodeConfig>>::read(
-                    reader,
-                    unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
-                )?;
-                #init_count
+            if let Some(mode) = &field.skip {
+                match mode {
+                    SkipMode::Default => {
+                        quote! { unsafe { (*dst_ptr).#ident = Default::default() }; }
+                    }
+                    SkipMode::DefaultVal(val) => quote! { unsafe { (*dst_ptr).#ident = #val }; },
+                }
+            } else {
+                quote! {
+                    <#target as SchemaRead<'de, WincodeConfig>>::read(
+                        reader,
+                        unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
+                    )?;
+                    #init_count
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -350,7 +359,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
         let lifetimes = ty.lifetimes();
         // We must always extract the `Dst` from the type because `SchemaRead` implementations need
-        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self` 
+        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self`
         // (e.g., in the case of container types).
         let field_projection_type = if lifetimes.is_empty() {
             quote!(<#ty as SchemaRead<'_, WincodeConfig>>::Dst)
@@ -466,10 +475,8 @@ fn impl_enum(
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let idents = fields.enum_member_ident_iter(None).collect::<Vec<_>>();
-                let read = fields
-                    .iter()
-                    .zip(&idents)
+                let mut construct_idents = Vec::with_capacity(fields.len());
+                let read = fields.enum_members_iter(None)
                     .map(|(field, ident)| {
                         let target = field.target_resolved().with_lifetime("de");
 
@@ -480,26 +487,35 @@ fn impl_enum(
                         // a macro-generated shadowed enum that wraps all variant fields with `MaybeUninit`, which
                         // could be used to facilitate direct reads. The user would have to guarantee layout on
                         // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
-                        quote! {
-                            let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
-                        }
+                        let read = if let Some(mode) = &field.skip {
+                            match mode {
+                                SkipMode::Default => quote! { let #ident = Default::default(); },
+                                SkipMode::DefaultVal(val) => quote! { let #ident = #val; },
+                            }
+                        } else {
+                            quote! {
+                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+                            }
+                        };
+                        construct_idents.push(ident);
+                        read
                     })
                     .collect::<Vec<_>>();
 
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let static_anon_idents = fields.member_anon_ident_iter(None).collect::<Vec<_>>();
-                let static_targets = fields.iter().map(|field| {
+                let static_anon_idents = fields.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
+                let static_targets = fields.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
                     quote! {<#target as SchemaRead<'de, WincodeConfig>>::TYPE_META}
                 });
 
                 let constructor = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#idents),*}
+                        #enum_ident::#variant_ident{#(#construct_idents),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#idents),*)
+                        #enum_ident::#variant_ident(#(#construct_idents),*)
                     }
                 };
 
@@ -598,6 +614,11 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let field_suppress = suppress_unused_fields(&args);
     let struct_extensions = impl_struct_extensions(&args, &crate_name)?;
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
+    let has_skipped_struct_fields = if let Data::Struct(fields) = &args.data {
+        fields.iter().any(|field| field.skip.is_some())
+    } else {
+        false
+    };
 
     let (read_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
@@ -621,6 +642,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let zero_copy_impl = match &args.data {
         Data::Struct(fields)
             if repr.is_zero_copy_eligible()
+                && !has_skipped_struct_fields
                 // Generics will trigger "cannot use type generics in const context".
                 // Unfortunate, but generics in a zero-copy context are presumably a more niche use-case,
                 // so we'll deal with it for now.
