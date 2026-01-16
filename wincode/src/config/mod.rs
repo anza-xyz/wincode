@@ -178,6 +178,38 @@ impl<
         generate()
     }
 
+    /// Use target platform byte order.
+    ///
+    /// Will use the native byte order of the target platform.
+    #[cfg(target_endian = "little")]
+    pub const fn with_platform_endian(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        LittleEndian,
+        IntEncoding,
+    > {
+        generate()
+    }
+
+    /// Use target platform byte order.
+    ///
+    /// Will use the native byte order of the target platform.
+    #[cfg(target_endian = "big")]
+    pub const fn with_platform_endian(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        BigEndian,
+        IntEncoding,
+    > {
+        generate()
+    }
+
     /// Use [`FixInt`] for integer encoding.
     ///
     /// Default is [`FixInt`].
