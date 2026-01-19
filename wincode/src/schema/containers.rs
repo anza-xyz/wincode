@@ -123,6 +123,14 @@ pub struct Rc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
 
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+/// A [`bytes::Bytes`] with a customizable length encoding.
+pub struct Bytes<Len = BincodeLen>(PhantomData<Len>);
+
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+/// A [`bytes::BytesMut`] with a customizable length encoding.
+pub struct BytesMut<Len = BincodeLen>(PhantomData<Len>);
+
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
 ///
 /// Prefer [`Pod`] for types representable as raw bytes.
@@ -677,6 +685,82 @@ where
         let vec = <Vec<T, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+impl<Len> SchemaWrite for Bytes<Len>
+where
+    Len: SeqLen,
+{
+    type Src = bytes::Bytes;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(Len::write_bytes_needed(src.len())? + src.len())
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        Len::write(writer, src.len())?;
+        writer.write(src.as_ref())?;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+impl<'de, Len> SchemaRead<'de> for Bytes<Len>
+where
+    Len: SeqLen,
+{
+    type Dst = bytes::Bytes;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = Len::read::<u8>(reader)?;
+        let bytes = reader.fill_exact(len)?.to_vec();
+        unsafe { reader.consume_unchecked(len) };
+        dst.write(bytes::Bytes::from(bytes));
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+impl<Len> SchemaWrite for BytesMut<Len>
+where
+    Len: SeqLen,
+{
+    type Src = bytes::BytesMut;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(Len::write_bytes_needed(src.len())? + src.len())
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        Len::write(writer, src.len())?;
+        writer.write(src.as_ref())?;
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "alloc", feature = "bytes"))]
+impl<'de, Len> SchemaRead<'de> for BytesMut<Len>
+where
+    Len: SeqLen,
+{
+    type Dst = bytes::BytesMut;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = Len::read::<u8>(reader)?;
+        let bytes = reader.fill_exact(len)?.to_vec();
+        unsafe { reader.consume_unchecked(len) };
+        dst.write(bytes::BytesMut::from(bytes.as_slice()));
         Ok(())
     }
 }

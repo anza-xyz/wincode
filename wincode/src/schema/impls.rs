@@ -943,6 +943,56 @@ impl<'de> SchemaRead<'de> for String {
     }
 }
 
+#[cfg(feature = "bytes")]
+impl SchemaWrite for bytes::Bytes {
+    type Src = bytes::Bytes;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <containers::Bytes<BincodeLen>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <containers::Bytes<BincodeLen>>::write(writer, src)
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl<'de> SchemaRead<'de> for bytes::Bytes {
+    type Dst = bytes::Bytes;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        <containers::Bytes<BincodeLen>>::read(reader, dst)
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl SchemaWrite for bytes::BytesMut {
+    type Src = bytes::BytesMut;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <containers::BytesMut<BincodeLen>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <containers::BytesMut<BincodeLen>>::write(writer, src)
+    }
+}
+
+#[cfg(feature = "bytes")]
+impl<'de> SchemaRead<'de> for bytes::BytesMut {
+    type Dst = bytes::BytesMut;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        <containers::BytesMut<BincodeLen>>::read(reader, dst)
+    }
+}
+
 /// Implement `SchemaWrite` and `SchemaRead` for types that may be iterated over sequentially.
 ///
 /// Generally this should only be used on types for which we cannot provide an optimized implementation,

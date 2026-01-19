@@ -2714,4 +2714,24 @@ mod tests {
             prop_assert_eq!(ref_data, &data);
         });
     }
+
+    #[test]
+    #[cfg(feature = "bytes")]
+    fn test_bytes_roundtrip() {
+        proptest!(proptest_cfg(), |(data in proptest::collection::vec(any::<u8>(), 0..1000).prop_map(bytes::Bytes::from))| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized: bytes::Bytes = deserialize(&serialized).unwrap();
+            prop_assert_eq!(data, deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "bytes")]
+    fn test_bytes_mut_roundtrip() {
+        proptest!(proptest_cfg(), |(data in proptest::collection::vec(any::<u8>(), 0..1000).prop_map(|v| bytes::BytesMut::from(v.as_slice())))| {
+            let serialized = serialize(&data).unwrap();
+            let deserialized: bytes::BytesMut = deserialize(&serialized).unwrap();
+            prop_assert_eq!(data, deserialized);
+        });
+    }
 }
