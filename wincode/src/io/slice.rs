@@ -6,7 +6,7 @@ pub(super) mod trusted_slice {
 
     #[inline]
     pub(super) fn fill_buf(bytes: &[u8], n_bytes: usize) -> &[u8] {
-        unsafe { bytes.get_unchecked(..n_bytes.min(bytes.len())) }
+        &bytes[..n_bytes.min(bytes.len())]
     }
 
     #[inline]
@@ -219,8 +219,7 @@ impl<'a> Reader<'a> for &'a [u8] {
 
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+        Ok(&self[..n_bytes.min(self.len())])
     }
 
     #[inline]
@@ -269,8 +268,7 @@ impl<'a> Reader<'a> for &'a mut [u8] {
 
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+        Ok(&self[..n_bytes.min(self.len())])
     }
 
     #[inline]
