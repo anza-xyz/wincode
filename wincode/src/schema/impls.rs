@@ -3,18 +3,15 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
-    time::Duration,
 };
-#[cfg(feature = "std")]
-use crate::error::invalid_value;
 use {
     crate::{
         config::{Config, ConfigCore, ZeroCopy},
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, read_length_encoding_overflow, unaligned_pointer_read,
-            ReadResult, WriteResult,
+            invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
+            unaligned_pointer_read, ReadResult, WriteResult,
         },
         io::{Reader, Writer},
         len::SeqLen,
@@ -24,6 +21,7 @@ use {
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
+        time::Duration,
     },
 };
 #[cfg(feature = "alloc")]
@@ -1420,7 +1418,6 @@ where
     }
 }
 
-#[cfg(feature = "std")]
 impl<C: ConfigCore> SchemaWrite<C> for Duration {
     type Src = Duration;
 
@@ -1442,7 +1439,6 @@ impl<C: ConfigCore> SchemaWrite<C> for Duration {
     }
 }
 
-#[cfg(feature = "std")]
 impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
     type Dst = Duration;
 
