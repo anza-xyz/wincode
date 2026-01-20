@@ -2811,16 +2811,29 @@ mod tests {
     }
 
     #[test]
-    fn test_duration_invalid_nanos() {
+    fn test_duration_nanos_normalization() {
         use core::time::Duration;
 
-        proptest!(proptest_cfg(), |(secs in any::<u64>(), nanos in 1_000_000_000u32..=u32::MAX)| {
+        proptest!(proptest_cfg(), |(secs in 0u64..u64::MAX/2, nanos in 1_000_000_000u32..=u32::MAX)| {
             let mut bytes = Vec::new();
             bytes.extend_from_slice(&secs.to_le_bytes());
             bytes.extend_from_slice(&nanos.to_le_bytes());
 
-            let result: error::ReadResult<Duration> = deserialize(&bytes);
-            prop_assert!(result.is_err());
+            let result: Duration = deserialize(&bytes).unwrap();
+            let expected = Duration::new(secs, nanos);
+            prop_assert_eq!(result, expected);
         });
+    }
+
+    #[test]
+    fn test_duration_overflow() {
+        use core::time::Duration;
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
+        bytes.extend_from_slice(&1_000_000_000u32.to_le_bytes());
+
+        let result: error::ReadResult<Duration> = deserialize(&bytes);
+        assert!(result.is_err());
     }
 }

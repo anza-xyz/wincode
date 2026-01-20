@@ -1453,10 +1453,15 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let secs = <u64 as SchemaRead<'de, C>>::get(reader)?;
         let nanos = <u32 as SchemaRead<'de, C>>::get(reader)?;
-        if nanos >= 1_000_000_000 {
-            return Err(invalid_value("Duration nanos must be < 1_000_000_000"));
+        if nanos < 1_000_000_000 {
+            dst.write(Duration::new(secs, nanos));
+        } else {
+            let secs = secs
+                .checked_add((nanos / 1_000_000_000) as u64)
+                .ok_or_else(|| invalid_value("Duration overflow"))?;
+            let nanos = nanos % 1_000_000_000;
+            dst.write(Duration::new(secs, nanos));
         }
-        dst.write(Duration::new(secs, nanos));
         Ok(())
     }
 }
