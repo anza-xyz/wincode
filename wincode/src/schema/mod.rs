@@ -98,7 +98,7 @@ impl TypeMeta {
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
-pub trait SchemaWrite<C: ConfigCore> {
+pub unsafe trait SchemaWrite<C: ConfigCore> {
     type Src: ?Sized;
 
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
@@ -110,7 +110,7 @@ pub trait SchemaWrite<C: ConfigCore> {
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
-pub trait SchemaRead<'de, C: ConfigCore> {
+pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     type Dst;
 
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
@@ -601,7 +601,7 @@ mod tests {
         }
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCounted {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCounted {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -618,7 +618,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -642,7 +642,7 @@ mod tests {
         const TAG_BYTE: u8 = 1;
     }
 
-    impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
+    unsafe impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -659,7 +659,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -682,7 +682,7 @@ mod tests {
         ErrorsOnRead(ErrorsOnRead),
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -713,7 +713,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
