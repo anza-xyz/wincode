@@ -236,8 +236,7 @@ where
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-/// Variant of [`size_of_elem_iter`] specialized for slices, which can opt into
-/// an optimized implementation for bytes (`u8`s).
+/// Variant of [`size_of_elem_iter`] specialized for slices.
 fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
 where
     C: ConfigCore,
