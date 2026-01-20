@@ -2796,10 +2796,9 @@ mod tests {
 
     #[test]
     fn test_duration() {
-        use std::time::Duration;
+        use core::time::Duration;
 
-        proptest!(proptest_cfg(), |(secs in any::<u64>(), nanos in 0u32..1_000_000_000)| {
-            let val = Duration::new(secs, nanos);
+        proptest!(proptest_cfg(), |(val: Duration)| {
             let bincode_serialized = bincode::serialize(&val).unwrap();
             let schema_serialized = serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
@@ -2813,7 +2812,7 @@ mod tests {
 
     #[test]
     fn test_duration_invalid_nanos() {
-        use std::time::Duration;
+        use core::time::Duration;
 
         proptest!(proptest_cfg(), |(secs in any::<u64>(), nanos in 1_000_000_000u32..=u32::MAX)| {
             let mut bytes = Vec::new();

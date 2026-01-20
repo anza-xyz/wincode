@@ -1418,17 +1418,19 @@ where
     }
 }
 
+const DURATION_SIZE: usize = size_of::<u64>() + size_of::<u32>();
+
 impl<C: ConfigCore> SchemaWrite<C> for Duration {
     type Src = Duration;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<u64>() + size_of::<u32>(),
+        size: DURATION_SIZE,
         zero_copy: false,
     };
 
     #[inline]
     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
-        Ok(size_of::<u64>() + size_of::<u32>())
+        Ok(DURATION_SIZE)
     }
 
     #[inline]
@@ -1443,7 +1445,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
     type Dst = Duration;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<u64>() + size_of::<u32>(),
+        size: DURATION_SIZE,
         zero_copy: false,
     };
 
