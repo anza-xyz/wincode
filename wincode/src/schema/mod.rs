@@ -5,7 +5,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
 //! # use rand::prelude::*;
-//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16Len}, containers::{self, Pod}};
+//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
 //!
@@ -23,7 +23,7 @@
 //!     #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
 //!     signature: Vec<Signature>,
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16>")]
 //!     address: Vec<Address>,
 //! }
 //!
@@ -42,6 +42,7 @@
 //! ```
 use {
     crate::{
+        config::{self, ConfigCore, DefaultConfig},
         error::{ReadResult, WriteResult},
         io::*,
         len::SeqLen,
@@ -96,7 +97,7 @@ impl TypeMeta {
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
-pub trait SchemaWrite {
+pub trait SchemaWrite<C: ConfigCore> {
     type Src: ?Sized;
 
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
@@ -108,7 +109,7 @@ pub trait SchemaWrite {
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
-pub trait SchemaRead<'de> {
+pub trait SchemaRead<'de, C: ConfigCore> {
     type Dst;
 
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
@@ -130,18 +131,17 @@ pub trait SchemaRead<'de> {
     }
 }
 
-/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`].
+/// Marker trait for types that can be deserialized via direct borrows from a [`Reader`]
+/// using the default configuration. See [`config::ZeroCopy`] for configuration
+/// aware methods.
 ///
-/// <div class="warning">
-/// You should not manually implement this trait for your own type unless you absolutely
-/// know what you're doing. The derive macros will automatically implement this trait for your type
-/// if it is eligible for zero-copy deserialization.
-/// </div>
+/// Always prefer using [`config::ZeroCopy`] for your implementations to keep them fully
+/// generic.
 ///
 /// # Safety
 ///
 /// - The type must not have any invalid bit patterns, no layout requirements, no endianness checks, etc.
-pub unsafe trait ZeroCopy: 'static {
+pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// Get a reference to a type from the given bytes.
     ///
     /// # Examples
@@ -168,9 +168,9 @@ pub unsafe trait ZeroCopy: 'static {
     #[inline(always)]
     fn from_bytes<'de>(mut bytes: &'de [u8]) -> ReadResult<&'de Self>
     where
-        Self: SchemaRead<'de, Dst = Self> + Sized,
+        Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de>>::get(&mut bytes)
+        <&Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
     }
 
     /// Get a mutable reference to a type from the given bytes.
@@ -202,24 +202,27 @@ pub unsafe trait ZeroCopy: 'static {
     #[inline(always)]
     fn from_bytes_mut<'de>(mut bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
     where
-        Self: SchemaRead<'de, Dst = Self> + Sized,
+        Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de>>::get(&mut bytes)
+        <&mut Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
     }
 }
 
+unsafe impl<T> ZeroCopy for T where T: config::ZeroCopy<DefaultConfig> {}
+
 /// A type that can be read (deserialized) from a [`Reader`] without borrowing from it.
-pub trait SchemaReadOwned: for<'de> SchemaRead<'de> {}
-impl<T> SchemaReadOwned for T where T: for<'de> SchemaRead<'de> {}
+pub trait SchemaReadOwned<C: ConfigCore>: for<'de> SchemaRead<'de, C> {}
+impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de, C> {}
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-fn size_of_elem_iter<'a, T, Len>(
+fn size_of_elem_iter<'a, T, Len, C>(
     value: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<usize>
 where
-    Len: SeqLen,
-    T: SchemaWrite + 'a,
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C> + 'a,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
@@ -235,23 +238,25 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`size_of_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn size_of_elem_slice<T, Len>(value: &[T::Src]) -> WriteResult<usize>
+fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
-    size_of_elem_iter::<T, Len>(value.iter())
+    size_of_elem_iter::<T, Len, C>(value.iter())
 }
 
 #[inline(always)]
-fn write_elem_iter<'a, T, Len>(
+fn write_elem_iter<'a, T, Len, C>(
     writer: &mut impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
-    Len: SeqLen,
-    T: SchemaWrite + 'a,
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C> + 'a,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
@@ -279,10 +284,11 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn write_elem_slice<T, Len>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
+fn write_elem_slice<T, Len, C>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     if let TypeMeta::Static {
@@ -301,7 +307,7 @@ where
         writer.finish()?;
         return Ok(());
     }
-    write_elem_iter::<T, Len>(writer, src.iter())
+    write_elem_iter::<T, Len, C>(writer, src.iter())
 }
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
@@ -310,10 +316,12 @@ mod tests {
 
     use {
         crate::{
+            config::{self, Config, Configuration, DefaultConfig},
             containers::{self, Elem, Pod},
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
+            len::{BincodeLen, FixInt},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
@@ -450,8 +458,14 @@ mod tests {
             size,
             zero_copy: true,
         };
-        assert_eq!(<StructZeroCopy as SchemaWrite>::TYPE_META, expected);
-        assert_eq!(<StructZeroCopy as SchemaRead<'_>>::TYPE_META, expected);
+        assert_eq!(
+            <StructZeroCopy as SchemaWrite<DefaultConfig>>::TYPE_META,
+            expected
+        );
+        assert_eq!(
+            <StructZeroCopy as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            expected
+        );
     }
 
     #[test]
@@ -465,8 +479,11 @@ mod tests {
             size: size_of::<[u8; 32]>(),
             zero_copy: true,
         };
-        assert_eq!(<Address as SchemaWrite>::TYPE_META, expected);
-        assert_eq!(<Address as SchemaRead<'_>>::TYPE_META, expected);
+        assert_eq!(<Address as SchemaWrite<DefaultConfig>>::TYPE_META, expected);
+        assert_eq!(
+            <Address as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            expected
+        );
     }
 
     #[test]
@@ -475,15 +492,27 @@ mod tests {
             size: size_of::<u64>() + size_of::<bool>() + size_of::<[u8; 32]>(),
             zero_copy: false,
         };
-        assert_eq!(<StructStatic as SchemaWrite>::TYPE_META, expected);
-        assert_eq!(<StructStatic as SchemaRead<'_>>::TYPE_META, expected);
+        assert_eq!(
+            <StructStatic as SchemaWrite<DefaultConfig>>::TYPE_META,
+            expected
+        );
+        assert_eq!(
+            <StructStatic as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            expected
+        );
     }
 
     #[test]
     fn struct_non_static_derive_size() {
         let expected = TypeMeta::Dynamic;
-        assert_eq!(<StructNonStatic as SchemaWrite>::TYPE_META, expected);
-        assert_eq!(<StructNonStatic as SchemaRead<'_>>::TYPE_META, expected);
+        assert_eq!(
+            <StructNonStatic as SchemaWrite<DefaultConfig>>::TYPE_META,
+            expected
+        );
+        assert_eq!(
+            <StructNonStatic as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            expected
+        );
     }
 
     thread_local! {
@@ -571,7 +600,7 @@ mod tests {
         }
     }
 
-    impl SchemaWrite for DropCounted {
+    impl<C: Config> SchemaWrite<C> for DropCounted {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -583,12 +612,12 @@ mod tests {
             Ok(1)
         }
         fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
-            u8::write(writer, &Self::TAG_BYTE)?;
+            <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
     }
 
-    impl<'de> SchemaRead<'de> for DropCounted {
+    impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -612,7 +641,7 @@ mod tests {
         const TAG_BYTE: u8 = 1;
     }
 
-    impl SchemaWrite for ErrorsOnRead {
+    impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -625,11 +654,11 @@ mod tests {
         }
 
         fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
-            u8::write(writer, &Self::TAG_BYTE)
+            <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)
         }
     }
 
-    impl<'de> SchemaRead<'de> for ErrorsOnRead {
+    impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -652,7 +681,7 @@ mod tests {
         ErrorsOnRead(ErrorsOnRead),
     }
 
-    impl SchemaWrite for DropCountedMaybeError {
+    impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -662,20 +691,28 @@ mod tests {
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
             match src {
-                DropCountedMaybeError::DropCounted(v) => DropCounted::size_of(v),
-                DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::size_of(v),
+                DropCountedMaybeError::DropCounted(v) => {
+                    <DropCounted as SchemaWrite<C>>::size_of(v)
+                }
+                DropCountedMaybeError::ErrorsOnRead(v) => {
+                    <ErrorsOnRead as SchemaWrite<C>>::size_of(v)
+                }
             }
         }
 
         fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
             match src {
-                DropCountedMaybeError::DropCounted(v) => DropCounted::write(writer, v),
-                DropCountedMaybeError::ErrorsOnRead(v) => ErrorsOnRead::write(writer, v),
+                DropCountedMaybeError::DropCounted(v) => {
+                    <DropCounted as SchemaWrite<C>>::write(writer, v)
+                }
+                DropCountedMaybeError::ErrorsOnRead(v) => {
+                    <ErrorsOnRead as SchemaWrite<C>>::write(writer, v)
+                }
             }
         }
     }
 
-    impl<'de> SchemaRead<'de> for DropCountedMaybeError {
+    impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -684,7 +721,7 @@ mod tests {
         };
 
         fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            let byte = u8::get(reader)?;
+            let byte = <u8 as SchemaRead<'de, C>>::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {
                     dst.write(DropCountedMaybeError::DropCounted(DropCounted::new()));
@@ -834,7 +871,8 @@ mod tests {
         let _guard = TLDropGuard::new();
         let serialized =
             { serialize(&(DropCounted::new(), DropCounted::new(), ErrorsOnRead)).unwrap() };
-        let deserialized = <(DropCounted, DropCounted, ErrorsOnRead)>::deserialize(&serialized);
+        let deserialized: ReadResult<(DropCounted, DropCounted, ErrorsOnRead)> =
+            deserialize(&serialized);
         assert!(deserialized.is_err());
     }
 
@@ -963,7 +1001,7 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
                 builder.read_a(reader)?.read_b(reader)?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
@@ -981,7 +1019,7 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<TestTuple>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut test);
+                let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
                 builder.read_0(reader)?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the first initialized field should be dropped.
@@ -1012,10 +1050,10 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut test);
+                let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
-                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
                         inner_builder.read_a(reader)?;
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
@@ -1052,10 +1090,10 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut outer_builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
-                        let mut inner_builder = InnerUninitBuilder::from_maybe_uninit_mut(inner);
+                        let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
                         inner_builder.read_a(reader)?;
                         inner_builder.read_b(reader)?;
                         inner_builder.read_c(reader)?;
@@ -1087,7 +1125,7 @@ mod tests {
             let serialized = serialize(&test).unwrap();
             let mut uninit = MaybeUninit::<Test>::uninit();
             let reader = &mut serialized.as_slice();
-            let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
                 .read_a(reader)?
                 .read_b(reader)?
@@ -1104,7 +1142,7 @@ mod tests {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal, struct_extensions)]
         struct Test {
-            #[wincode(with = "containers::Vec<Pod<_>>")]
+            #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
             a: Vec<u8>,
             #[wincode(with = "containers::Pod<_>")]
             b: [u8; 32],
@@ -1113,7 +1151,7 @@ mod tests {
 
         proptest!(proptest_cfg(), |(test: Test)| {
             let mut uninit = MaybeUninit::<Test>::uninit();
-            let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
                 .write_a(test.a.clone())
                 .write_b(test.b)
@@ -1145,7 +1183,7 @@ mod tests {
 
         proptest!(proptest_cfg(), |(test: Test)| {
             let mut uninit = MaybeUninit::<TestRef>::uninit();
-            let mut builder = TestRefUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            let mut builder = TestRefUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
                 .write_a(test.a.as_slice())
                 .write_b(test.b.as_deref());
@@ -1170,14 +1208,14 @@ mod tests {
         #[derive(SchemaWrite, SchemaRead)]
         #[wincode(internal, from = "Test", struct_extensions)]
         struct TestMapped {
-            a: containers::Vec<containers::Pod<u8>>,
+            a: containers::Vec<containers::Pod<u8>, BincodeLen>,
             b: containers::Pod<[u8; 32]>,
             c: u64,
         }
 
         proptest!(proptest_cfg(), |(test: Test)| {
             let mut uninit = MaybeUninit::<Test>::uninit();
-            let mut builder = TestMappedUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+            let mut builder = TestMappedUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
                 .write_a(test.a.clone())
                 .write_b(test.b)
@@ -1205,7 +1243,7 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut builder = TestUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
                     .read_a(reader)?
                     .read_b(reader)?
@@ -1230,7 +1268,7 @@ mod tests {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<TestTuple>::uninit();
                 let reader = &mut serialized.as_slice();
-                let mut builder = TestTupleUninitBuilder::from_maybe_uninit_mut(&mut uninit);
+                let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
                     .read_0(reader)?
                     .read_1(reader)?;
@@ -1279,8 +1317,14 @@ mod tests {
         )]
         #[wincode(internal)]
         enum Enum {
-            A { name: String, id: u64 },
-            B(String, #[wincode(with = "containers::Vec<Pod<_>>")] Vec<u8>),
+            A {
+                name: String,
+                id: u64,
+            },
+            B(
+                String,
+                #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")] Vec<u8>,
+            ),
             C,
         }
 
@@ -1352,7 +1396,7 @@ mod tests {
         }
 
         assert!(matches!(
-            <Enum as SchemaWrite>::TYPE_META,
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1,
                 zero_copy: false
@@ -1360,7 +1404,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            <Enum as SchemaRead<'_>>::TYPE_META,
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1,
                 zero_copy: false
@@ -1379,7 +1423,7 @@ mod tests {
         }
 
         assert!(matches!(
-            <Enum as SchemaWrite>::TYPE_META,
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 4,
                 zero_copy: false
@@ -1387,7 +1431,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            <Enum as SchemaRead<'_>>::TYPE_META,
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 4,
                 zero_copy: false
@@ -1473,7 +1517,7 @@ mod tests {
         }
 
         assert_eq!(
-            <Enum as SchemaWrite>::TYPE_META,
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 // (account for discriminant u32)
                 size: 8 + 4,
@@ -1481,7 +1525,7 @@ mod tests {
             }
         );
         assert_eq!(
-            <Enum as SchemaRead<'_>>::TYPE_META,
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 // (account for discriminant u32)
                 size: 8 + 4,
@@ -1506,8 +1550,14 @@ mod tests {
             C { a: u8, b: u8 },
         }
 
-        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
-        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
 
         proptest!(proptest_cfg(), |(e: Enum)| {
             let serialized = serialize(&e).unwrap();
@@ -1527,14 +1577,14 @@ mod tests {
         // Single variant enums should use the `TypeMeta` of the variant, but the zero-copy
         // flag should be `false`, due to the discriminant having potentially invalid bit patterns.
         assert_eq!(
-            <Enum as SchemaWrite>::TYPE_META,
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1 + 32 + 4,
                 zero_copy: false
             }
         );
         assert_eq!(
-            <Enum as SchemaRead<'_>>::TYPE_META,
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1 + 32 + 4,
                 zero_copy: false
@@ -1559,8 +1609,14 @@ mod tests {
             NonUnit(u8),
         }
 
-        assert_eq!(<Enum as SchemaWrite>::TYPE_META, TypeMeta::Dynamic);
-        assert_eq!(<Enum as SchemaRead<'_>>::TYPE_META, TypeMeta::Dynamic);
+        assert_eq!(
+            <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
 
         proptest!(proptest_cfg(), |(e: Enum)| {
             let serialized = serialize(&e).unwrap();
@@ -1581,7 +1637,7 @@ mod tests {
         let bincode_serialized = bincode::serialize(&val).unwrap();
         assert_eq!(&serialized, &bincode_serialized);
         assert_eq!(
-            PhantomData::<StructStatic>::size_of(&val).unwrap(),
+            <PhantomData<StructStatic> as SchemaWrite<DefaultConfig>>::size_of(&val).unwrap(),
             bincode::serialized_size(&val).unwrap() as usize
         );
         let deserialized: PhantomData<StructStatic> = deserialize(&serialized).unwrap();
@@ -1596,7 +1652,7 @@ mod tests {
         let bincode_serialized = bincode::serialize(&()).unwrap();
         assert_eq!(&serialized, &bincode_serialized);
         assert_eq!(
-            <()>::size_of(&()).unwrap(),
+            <() as SchemaWrite<DefaultConfig>>::size_of(&()).unwrap(),
             bincode::serialized_size(&()).unwrap() as usize
         );
         assert!(deserialize::<()>(&serialized).is_ok());
@@ -1631,7 +1687,7 @@ mod tests {
         #[allow(dead_code)]
         struct Signature([u8; 64]);
 
-        type Target = containers::Box<[Pod<Signature>]>;
+        type Target = containers::Box<[Pod<Signature>], BincodeLen>;
         proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<Signature>(), 1..=32).prop_map(|vec| vec.into_boxed_slice()))| {
             let serialized = Target::serialize(&slice).unwrap();
             // Deliberately trigger the drop with a failed deserialization
@@ -1651,7 +1707,7 @@ mod tests {
         }
 
         assert!(matches!(
-            <Padded as SchemaWrite>::TYPE_META,
+            <Padded as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 // Serialized size is still the size of the byte, not the in-memory size.
                 size: 1,
@@ -1661,7 +1717,7 @@ mod tests {
         ));
 
         assert!(matches!(
-            <Padded as SchemaRead<'_>>::TYPE_META,
+            <Padded as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 // Serialized size is still the size of the byte, not the in-memory size.
                 size: 1,
@@ -1679,7 +1735,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&val).unwrap();
             let schema_serialized = serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            prop_assert_eq!(char::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
+            prop_assert_eq!(<char as SchemaWrite<DefaultConfig>>::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
 
             let bincode_deserialized: char = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: char = deserialize(&schema_serialized).unwrap();
@@ -1702,11 +1758,11 @@ mod tests {
         #[test]
         fn test_elem_vec_compat(val in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <containers::Vec<Elem<StructStatic>>>::serialize(&val).unwrap();
+            let schema_serialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::serialize(&val).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = <containers::Vec<Elem<StructStatic>>>::deserialize(&schema_serialized).unwrap();
+            let schema_deserialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
         }
@@ -1734,7 +1790,6 @@ mod tests {
             prop_assert_eq!(&vec, &bincode_deserialized);
             prop_assert_eq!(vec, schema_deserialized);
         }
-
 
         #[test]
         fn test_vec_elem_non_static(vec in proptest::collection::vec(any::<StructNonStatic>(), 0..=16)) {
@@ -1838,7 +1893,6 @@ mod tests {
             prop_assert_eq!(&map, &bincode_deserialized);
             prop_assert_eq!(map, schema_deserialized);
         }
-
 
         #[test]
         fn test_hash_map_non_static(map in proptest::collection::hash_map(any::<u64>(), any::<StructNonStatic>(), 0..=16)) {
@@ -1983,7 +2037,6 @@ mod tests {
             prop_assert_eq!(heap.as_slice(), bincode_deserialized.as_slice());
             prop_assert_eq!(heap.as_slice(), schema_deserialized.as_slice());
         }
-
 
         #[test]
         fn test_binary_heap_non_static(heap in proptest::collection::binary_heap(any::<StructNonStatic>(), 0..=16)) {
@@ -2550,7 +2603,7 @@ mod tests {
     fn test_result_type_meta_static() {
         // Result<u64, u64> should be TypeMeta::Static because both T and E are Static with equal sizes
         assert!(matches!(
-            <Result<u64, u64> as SchemaRead>::TYPE_META,
+            <Result<u64, u64> as SchemaRead<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 12,
                 zero_copy: false
@@ -2573,7 +2626,7 @@ mod tests {
     fn test_result_type_meta_dynamic() {
         // Result<u64, String> should be TypeMeta::Dynamic because String is Dynamic
         assert!(matches!(
-            <Result<u64, String> as SchemaRead>::TYPE_META,
+            <Result<u64, String> as SchemaRead<DefaultConfig>>::TYPE_META,
             TypeMeta::Dynamic
         ));
 
@@ -2593,7 +2646,7 @@ mod tests {
     fn test_result_type_meta_different_sizes() {
         // Result<u64, u32> should be TypeMeta::Dynamic because T and E have different sizes
         assert!(matches!(
-            <Result<u64, u32> as SchemaRead>::TYPE_META,
+            <Result<u64, u32> as SchemaRead<DefaultConfig>>::TYPE_META,
             TypeMeta::Dynamic
         ));
 
@@ -2651,7 +2704,7 @@ mod tests {
     /// Serialize a single instance of type `T` into a buffer aligned for `T`.
     fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned<T>>
     where
-        T: SchemaWrite<Src = T> + ZeroCopy,
+        T: SchemaWrite<DefaultConfig, Src = T> + ZeroCopy,
     {
         assert_eq!(T::size_of(src)?, size_of::<T>());
         let mut b: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(1);
@@ -2712,6 +2765,32 @@ mod tests {
 
             let ref_data = StructZeroCopy::from_bytes(&serialized).unwrap();
             prop_assert_eq!(ref_data, &data);
+        });
+    }
+
+    #[test]
+    fn test_custom_preallocation_size_limit() {
+        let c = Configuration::default().with_preallocation_size_limit::<64>();
+        proptest!(proptest_cfg(), |(value in proptest::collection::vec(any::<u8>(), 0..=128))| {
+            let wincode_serialized = config::serialize(&value, c).unwrap();
+            let wincode_deserialized: Result<Vec<u8>, _> = config::deserialize(&wincode_serialized, c);
+            if value.len() <= 64 {
+                prop_assert_eq!(value, wincode_deserialized.unwrap());
+            } else {
+                prop_assert!(wincode_deserialized.is_err());
+            }
+        });
+    }
+
+    #[test]
+    fn test_custom_length_encoding() {
+        let c = Configuration::default().with_length_encoding::<FixInt<u32>>();
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let wincode_serialized = config::serialize(&value, c).unwrap();
+            let wincode_deserialized: Vec<u8> = config::deserialize(&wincode_serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_le_bytes(wincode_serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, wincode_deserialized);
         });
     }
 }

@@ -7,14 +7,14 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
-//! # use wincode::{containers::self, len::ShortU16Len};
+//! # use wincode::{containers::self, len::ShortU16};
 //! # use wincode_derive::SchemaWrite;
 //! # use serde::Serialize;
 //! # use solana_short_vec;
 //! #[derive(Serialize, SchemaWrite)]
 //! struct MyStruct {
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<_, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<_, ShortU16>")]
 //!     vec: Vec<u8>,
 //! }
 //!
@@ -32,7 +32,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc", feature = "derive"))] {
 //! # use wincode_derive::SchemaWrite;
-//! # use wincode::{containers::self, len::ShortU16Len};
+//! # use wincode::{containers::self, len::ShortU16};
 //! # use serde::Serialize;
 //! # use solana_short_vec;
 //! #[derive(Serialize, SchemaWrite)]
@@ -44,7 +44,7 @@
 //! #[derive(Serialize, SchemaWrite)]
 //! struct MyStruct {
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Point, ShortU16Len>")]
+//!     #[wincode(with = "containers::Vec<Point, ShortU16>")]
 //!     vec: Vec<Point>,
 //! }
 //!
@@ -58,17 +58,18 @@
 //! ```
 use {
     crate::{
+        config::{ConfigCore, ZeroCopy},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        TypeMeta, ZeroCopy,
+        TypeMeta,
     },
     core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };
 #[cfg(feature = "alloc")]
 use {
     crate::{
-        len::{BincodeLen, SeqLen},
+        len::SeqLen,
         schema::{size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
@@ -77,11 +78,11 @@ use {
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
 #[cfg(feature = "alloc")]
-pub struct Vec<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
+pub struct Vec<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`VecDeque`](std::collections::VecDeque) with a customizable length encoding.
 #[cfg(feature = "alloc")]
-pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
+pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 /// A [`Box<[T]>`](std::boxed::Box) with a customizable length encoding.
 ///
@@ -89,7 +90,7 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 ///
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive", feature = "solana-short-vec"))] {
-/// # use wincode::{containers, len::ShortU16Len};
+/// # use wincode::{containers, len::ShortU16};
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
@@ -100,7 +101,7 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 /// #[derive(Serialize, SchemaWrite)]
 /// struct MyStruct {
 ///     #[serde(with = "solana_short_vec")]
-///     #[wincode(with = "containers::Box<[Address], ShortU16Len>")]
+///     #[wincode(with = "containers::Box<[Address], ShortU16>")]
 ///     address: Box<[Address]>
 /// }
 ///
@@ -113,15 +114,15 @@ pub struct VecDeque<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
 /// # }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct Box<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+pub struct Box<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
 /// Like [`Box`], for [`Rc`].
-pub struct Rc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 #[cfg(feature = "alloc")]
 /// Like [`Box`], for [`Arc`].
-pub struct Arc<T: ?Sized, Len = BincodeLen>(PhantomData<T>, PhantomData<Len>);
+pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
 /// Indicates that the type is an element of a sequence, composable with [`containers`](self).
 ///
@@ -208,9 +209,9 @@ pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 //   - The type's in‑memory representation is exactly its serialized bytes.
 //   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
 //   - Does not contain references or pointers.
-unsafe impl<T> ZeroCopy for Pod<T> where T: Copy + 'static {}
+unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
 
-impl<T> SchemaWrite for Pod<T>
+impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -233,7 +234,7 @@ where
     }
 }
 
-impl<'de, T> SchemaRead<'de> for Pod<T>
+impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -255,9 +256,9 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<T> SchemaWrite for Elem<T>
+impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
 where
-    T: SchemaWrite,
+    T: SchemaWrite<C>,
 {
     type Src = T::Src;
 
@@ -279,9 +280,9 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<'de, T> SchemaRead<'de> for Elem<T>
+impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
 where
-    T: SchemaRead<'de>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = T::Dst;
 
@@ -294,35 +295,35 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for Vec<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = vec::Vec<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_slice::<T, Len>(src)
+        size_of_elem_slice::<T, Len, C>(src)
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len>(writer, src)
+        write_elem_slice::<T, Len, C>(writer, src)
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for Vec<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = vec::Vec<T::Dst>;
 
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = Len::read::<T::Dst>(reader)?;
+        let len = Len::read_prealloc_check::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
 
         match T::TYPE_META {
@@ -408,30 +409,30 @@ impl<T> Drop for SliceDropGuard<T> {
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident) => {
         #[cfg(feature = "alloc")]
-        impl<T, Len> SchemaWrite for $container<[T], Len>
+        impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
         where
-            Len: SeqLen,
-            T: SchemaWrite,
+            Len: SeqLen<C>,
+            T: SchemaWrite<C>,
             T::Src: Sized,
         {
             type Src = $target<[T::Src]>;
 
             #[inline(always)]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                size_of_elem_slice::<T, Len>(src)
+                size_of_elem_slice::<T, Len, C>(src)
             }
 
             #[inline(always)]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_slice::<T, Len>(writer, src)
+                write_elem_slice::<T, Len, C>(writer, src)
             }
         }
 
         #[cfg(feature = "alloc")]
-        impl<'de, T, Len> SchemaRead<'de> for $container<[T], Len>
+        impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for $container<[T], Len>
         where
-            Len: SeqLen,
-            T: SchemaRead<'de>,
+            Len: SeqLen<C>,
+            T: SchemaRead<'de, C>,
         {
             type Dst = $target<[T::Dst]>;
 
@@ -495,7 +496,7 @@ macro_rules! impl_heap_slice {
                     }
                 }
 
-                let len = Len::read::<T::Dst>(reader)?;
+                let len = Len::read_prealloc_check::<T::Dst>(reader)?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
 
@@ -575,17 +576,17 @@ impl_heap_slice!(Rc => AllocRc);
 impl_heap_slice!(Arc => AllocArc);
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for VecDeque<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = collections::VecDeque<T::Src>;
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len>(value.iter())
+        size_of_elem_iter::<T, Len, C>(value.iter())
     }
 
     #[inline(always)]
@@ -617,15 +618,15 @@ where
             return Ok(());
         }
 
-        write_elem_iter::<T, Len>(writer, src.iter())
+        write_elem_iter::<T, Len, C>(writer, src.iter())
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for VecDeque<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for VecDeque<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
 {
     type Dst = collections::VecDeque<T::Dst>;
 
@@ -641,33 +642,33 @@ where
 
 #[cfg(feature = "alloc")]
 /// A [`BinaryHeap`](alloc::collections::BinaryHeap) with a customizable length encoding.
-pub struct BinaryHeap<T, Len = BincodeLen>(PhantomData<Len>, PhantomData<T>);
+pub struct BinaryHeap<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 #[cfg(feature = "alloc")]
-impl<T, Len> SchemaWrite for BinaryHeap<T, Len>
+impl<T, Len, C: ConfigCore> SchemaWrite<C> for BinaryHeap<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaWrite,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = collections::BinaryHeap<T::Src>;
 
     #[inline(always)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_slice::<T, Len>(src.as_slice())
+        size_of_elem_slice::<T, Len, C>(src.as_slice())
     }
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len>(writer, src.as_slice())
+        write_elem_slice::<T, Len, C>(writer, src.as_slice())
     }
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len> SchemaRead<'de> for BinaryHeap<T, Len>
+impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for BinaryHeap<T, Len>
 where
-    Len: SeqLen,
-    T: SchemaRead<'de>,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
     T::Dst: Ord,
 {
     type Dst = collections::BinaryHeap<T::Dst>;

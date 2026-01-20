@@ -13,7 +13,7 @@ use {
     },
     proc_macro2::TokenStream,
     quote::quote,
-    syn::{parse_quote, DeriveInput, Type},
+    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
 };
 
 fn impl_struct(
@@ -33,7 +33,7 @@ fn impl_struct(
         .map(|(i, field)| {
             let ident = field.struct_member_ident(i);
             let target = field.target_resolved();
-            quote! { <#target as SchemaWrite>::write(writer, &src.#ident)?; }
+            quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer, &src.#ident)?; }
         })
         .collect::<Vec<_>>();
 
@@ -41,17 +41,17 @@ fn impl_struct(
 
     (
         quote! {
-            if let TypeMeta::Static { size, .. } = <Self as SchemaWrite>::TYPE_META {
+            if let TypeMeta::Static { size, .. } = <Self as SchemaWrite<WincodeConfig>>::TYPE_META {
                 return Ok(size);
             }
             let mut total = 0usize;
             #(
-                total += <#target as SchemaWrite>::size_of(&src.#ident)?;
+                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#ident)?;
             )*
             Ok(total)
         },
         quote! {
-            match <Self as SchemaWrite>::TYPE_META {
+            match <Self as SchemaWrite<WincodeConfig>>::TYPE_META {
                 TypeMeta::Static { size, .. } => {
                     // SAFETY: `size` is the serialized size of the struct, which is the sum
                     // of the serialized sizes of the fields.
@@ -92,10 +92,10 @@ fn impl_enum(
         let discriminant = variant.discriminant(i);
         // Bincode always encodes the discriminant using the index of the field order.
         let size_of_discriminant = quote! {
-            #tag_encoding::size_of(&#discriminant)?
+            <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
         };
         let write_discriminant = quote! {
-            #tag_encoding::write(writer, &#discriminant)?;
+            <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer, &#discriminant)?;
         };
 
         let (size, write) = match fields.style {
@@ -108,7 +108,7 @@ fn impl_enum(
                     .map(|(field, ident)| {
                         let target = field.target_resolved();
                         quote! {
-                            <#target as SchemaWrite>::write(writer, #ident)?;
+                            <#target as SchemaWrite<WincodeConfig>>::write(writer, #ident)?;
                         }
                     })
                     .collect::<Vec<_>>();
@@ -131,27 +131,27 @@ fn impl_enum(
                     .iter()
                     .map(|field| {
                         let target = field.target_resolved();
-                        quote! {<#target as SchemaWrite>::TYPE_META}
+                        quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META}
                     })
                     .collect::<Vec<_>>();
 
                 (
                     quote! {
                         #match_case => {
-                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite>::TYPE_META #(,#static_targets)*) {
+                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*) {
                                 return Ok(disc_size + #(#static_anon_idents)+*);
                             }
 
                             let mut total = #size_of_discriminant;
                             #(
-                                total += <#target as SchemaWrite>::size_of(#ident)?;
+                                total += <#target as SchemaWrite<WincodeConfig>>::size_of(#ident)?;
                             )*
                             Ok(total)
                         }
                     },
                     quote! {
                         #match_case => {
-                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite>::TYPE_META #(,#static_targets)*) {
+                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*) {
                                 let summed_sizes = disc_size + #(#static_anon_idents)+*;
                                 // SAFETY: `summed_sizes` is the sum of the static sizes of the fields + the discriminant size,
                                 // which is the serialized size of the variant.
@@ -208,10 +208,24 @@ fn impl_enum(
     )
 }
 
+fn append_config(generics: &mut Generics) {
+    generics
+        .params
+        .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
+}
+
+fn append_generics(generics: &Generics) -> Generics {
+    let mut generics = generics.clone();
+    append_config(&mut generics);
+    generics
+}
+
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaWrite)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
+    let appended_generics = append_generics(&args.generics);
+    let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
+    let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
     let crate_name = get_crate_name(&args);
     let src_dst = get_src_dst(&args);
@@ -238,8 +252,8 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta};
-            impl #impl_generics #crate_name::SchemaWrite for #ident #ty_generics #where_clause {
+            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config};
+            impl #impl_generics #crate_name::SchemaWrite<WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 
                 #[allow(clippy::arithmetic_side_effects)]
