@@ -2793,4 +2793,35 @@ mod tests {
             prop_assert_eq!(value, wincode_deserialized);
         });
     }
+
+    #[test]
+    fn test_duration() {
+        use std::time::Duration;
+
+        proptest!(proptest_cfg(), |(secs in any::<u64>(), nanos in 0u32..1_000_000_000)| {
+            let val = Duration::new(secs, nanos);
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Duration = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Duration = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(val, bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_duration_invalid_nanos() {
+        use std::time::Duration;
+
+        proptest!(proptest_cfg(), |(secs in any::<u64>(), nanos in 1_000_000_000u32..=u32::MAX)| {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&secs.to_le_bytes());
+            bytes.extend_from_slice(&nanos.to_le_bytes());
+
+            let result: error::ReadResult<Duration> = deserialize(&bytes);
+            prop_assert!(result.is_err());
+        });
+    }
 }

@@ -98,3 +98,8 @@ pub const fn invalid_utf8_encoding(error: Utf8Error) -> ReadError {
 pub const fn invalid_char_lead(val: u8) -> ReadError {
     ReadError::InvalidCharLead(val)
 }
+
+#[cold]
+pub const fn invalid_value(msg: &'static str) -> ReadError {
+    ReadError::InvalidValue(msg)
+}

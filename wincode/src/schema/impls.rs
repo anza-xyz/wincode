@@ -3,7 +3,10 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
+    time::Duration,
 };
+#[cfg(feature = "std")]
+use crate::error::invalid_value;
 use {
     crate::{
         config::{Config, ConfigCore, ZeroCopy},
@@ -1413,6 +1416,49 @@ where
         // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact_mut` ensures we read exactly `len * size` bytes.
         let slice = unsafe { zero_copy::cast_slice_to_slice_t_mut::<C, T::Dst>(bytes, len)? };
         dst.write(slice);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<C: ConfigCore> SchemaWrite<C> for Duration {
+    type Src = Duration;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<u64>() + size_of::<u32>(),
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(size_of::<u64>() + size_of::<u32>())
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <u64 as SchemaWrite<C>>::write(writer, &src.as_secs())?;
+        <u32 as SchemaWrite<C>>::write(writer, &src.subsec_nanos())?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
+    type Dst = Duration;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<u64>() + size_of::<u32>(),
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let secs = <u64 as SchemaRead<'de, C>>::get(reader)?;
+        let nanos = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        if nanos >= 1_000_000_000 {
+            return Err(invalid_value("Duration nanos must be < 1_000_000_000"));
+        }
+        dst.write(Duration::new(secs, nanos));
         Ok(())
     }
 }
