@@ -59,7 +59,7 @@ macro_rules! impl_int {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                 Ok(writer.write(&src.to_le_bytes())?)
             }
         }
@@ -77,7 +77,7 @@ macro_rules! impl_int {
 
             #[inline(always)]
             fn read(
-                reader: &mut impl Reader<'de>,
+                reader: &mut (impl Reader<'de> + ?Sized),
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 // SAFETY: integer is plain ol' data.
@@ -106,7 +106,7 @@ macro_rules! impl_int {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                 let src = *src as $cast;
                 // bincode defaults to little endian encoding.
                 // noop on LE machines.
@@ -124,7 +124,7 @@ macro_rules! impl_int {
 
             #[inline]
             fn read(
-                reader: &mut impl Reader<'de>,
+                reader: &mut (impl Reader<'de> + ?Sized),
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 let casted = <$cast as SchemaRead<'de, C>>::get(reader)?;
@@ -190,7 +190,7 @@ impl<C: ConfigCore> SchemaWrite<C> for bool {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         unsafe { Ok(writer.write_t(&(*src as u8))?) }
     }
 }
@@ -204,7 +204,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for bool {
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: u8 is plain ol' data.
         let byte = <u8 as SchemaRead<'de, C>>::get(reader)?;
         match byte {
@@ -231,7 +231,7 @@ impl<C: ConfigCore> SchemaWrite<C> for char {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         let mut buf = [0; 4];
         let str = src.encode_utf8(&mut buf);
         writer.write(str.as_bytes())?;
@@ -243,7 +243,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
     type Dst = char;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let b0 = *reader.peek()?;
 
         let len = match b0 {
@@ -287,7 +287,7 @@ impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
     }
 
     #[inline]
-    fn write(_writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+    fn write(_writer: &mut (impl Writer + ?Sized), _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -301,7 +301,7 @@ impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for PhantomData<T> {
     };
 
     #[inline]
-    fn read(_reader: &mut impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(_reader: &mut (impl Reader<'de> + ?Sized), _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         Ok(())
     }
 }
@@ -320,7 +320,7 @@ impl<C: ConfigCore> SchemaWrite<C> for () {
     }
 
     #[inline]
-    fn write(_writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+    fn write(_writer: &mut (impl Writer + ?Sized), _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -334,7 +334,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
     };
 
     #[inline]
-    fn read(_reader: &mut impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(_reader: &mut (impl Reader<'de> + ?Sized), _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         Ok(())
     }
 }
@@ -353,7 +353,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         <containers::Vec<T, C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -366,7 +366,7 @@ where
     type Dst = Vec<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Vec<T, C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -385,7 +385,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         <containers::VecDeque<T, C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -398,7 +398,7 @@ where
     type Dst = VecDeque<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::VecDeque<T, C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -416,7 +416,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, C::LengthEncoding, C>(writer, value)
     }
 }
@@ -443,7 +443,7 @@ where
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         if let TypeMeta::Static {
             zero_copy: true, ..
         } = T::TYPE_META
@@ -510,7 +510,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static {
                 zero_copy: true, ..
@@ -548,7 +548,7 @@ where
     type Dst = Option<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = <u8 as SchemaRead<'de, C>>::get(reader)?;
         match variant {
             0 => dst.write(Option::None),
@@ -578,7 +578,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         match value {
             Option::Some(value) => {
                 <u8 as SchemaWrite<C>>::write(writer, &1)?;
@@ -609,7 +609,7 @@ where
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let variant = <u32 as SchemaRead<'de, C>>::get(reader)?;
         match variant {
             0 => dst.write(Result::Ok(T::get(reader)?)),
@@ -653,7 +653,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         match value {
             Result::Ok(value) => {
                 <u32 as SchemaWrite<C>>::write(writer, &0)?;
@@ -682,7 +682,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         T::write(writer, *value)
     }
 }
@@ -712,7 +712,7 @@ macro_rules! impl_heap_container {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
                 T::write(writer, value)
             }
         }
@@ -736,7 +736,7 @@ macro_rules! impl_heap_container {
 
             #[inline]
             fn read(
-                reader: &mut impl Reader<'de>,
+                reader: &mut (impl Reader<'de> + ?Sized),
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 struct DropGuard<T>(*mut MaybeUninit<T>);
@@ -782,7 +782,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         <containers::Box<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -801,7 +801,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         <containers::Rc<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -820,7 +820,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), value: &Self::Src) -> WriteResult<()> {
         <containers::Arc<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -833,7 +833,7 @@ where
     type Dst = Box<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Box<[T], C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -846,7 +846,7 @@ where
     type Dst = Rc<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Rc<[T], C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -859,7 +859,7 @@ where
     type Dst = Arc<[T::Dst]>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Arc<[T], C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -875,7 +875,7 @@ impl<C: Config> SchemaWrite<C> for str {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         C::LengthEncoding::write(writer, src.len())?;
         writer.write(src.as_bytes())?;
         Ok(())
@@ -892,7 +892,7 @@ impl<C: Config> SchemaWrite<C> for String {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         <str as SchemaWrite<C>>::write(writer, src)
     }
 }
@@ -901,7 +901,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
     type Dst = &'de str;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read(reader)?;
         let bytes = reader.borrow_exact(len)?;
         match core::str::from_utf8(bytes) {
@@ -919,7 +919,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for String {
     type Dst = String;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<u8>(reader)?;
         let bytes = reader.fill_exact(len)?.to_vec();
         unsafe { reader.consume_unchecked(len) };
@@ -972,7 +972,7 @@ macro_rules! impl_seq {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                 if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
@@ -1007,7 +1007,7 @@ macro_rules! impl_seq {
             type Dst = $target<$key::Dst, $value::Dst>;
 
             #[inline]
-            fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader)?;
 
                 let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
@@ -1052,7 +1052,7 @@ macro_rules! impl_seq {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                 write_elem_iter::<$key, C::LengthEncoding, C>(writer, src.iter())
             }
         }
@@ -1066,7 +1066,7 @@ macro_rules! impl_seq {
             type Dst = $target<$key::Dst>;
 
             #[inline]
-            fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader)?;
 
                 let map = match $key::TYPE_META {
@@ -1117,7 +1117,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         <containers::BinaryHeap<T, C::LengthEncoding>>::write(writer, src)
     }
 }
@@ -1131,7 +1131,7 @@ where
     type Dst = BinaryHeap<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::BinaryHeap<T, C::LengthEncoding>>::read(reader, dst)
     }
 }
@@ -1324,7 +1324,7 @@ mod zero_copy {
     /// multiplied by the size of the element type.
     #[inline(always)]
     pub(super) fn read_slice_len_checked<'de, C: Config>(
-        reader: &mut impl Reader<'de>,
+        reader: &mut (impl Reader<'de> + ?Sized),
         size: usize,
     ) -> ReadResult<(usize, usize)> {
         let len = C::LengthEncoding::read(reader)?;
@@ -1343,7 +1343,7 @@ where
 
     const TYPE_META: TypeMeta = zero_copy::type_meta_t::<T, C>();
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let bytes = reader.borrow_exact(size)?;
         // SAFETY:
@@ -1363,7 +1363,7 @@ where
 
     const TYPE_META: TypeMeta = zero_copy::type_meta_t::<T, C>();
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let bytes = reader.borrow_exact_mut(size)?;
         // SAFETY:
@@ -1383,7 +1383,7 @@ where
 
     const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T, C>();
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader, size)?;
         let bytes = reader.borrow_exact(total_size)?;
@@ -1404,7 +1404,7 @@ where
 
     const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T, C>();
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader, size)?;
         let bytes = reader.borrow_exact_mut(total_size)?;

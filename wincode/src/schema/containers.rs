@@ -228,7 +228,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(writer.write_t(src)?) }
     }
@@ -245,7 +245,7 @@ where
         zero_copy: true,
     };
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(reader.copy_into_t(dst)?) }
     }
@@ -270,7 +270,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         T::write(writer, src)
     }
 }
@@ -289,7 +289,7 @@ where
     const TYPE_META: TypeMeta = T::TYPE_META;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         T::read(reader, dst)
     }
 }
@@ -309,7 +309,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, Len, C>(writer, src)
     }
 }
@@ -322,7 +322,7 @@ where
 {
     type Dst = vec::Vec<T::Dst>;
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader)?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
 
@@ -423,7 +423,7 @@ macro_rules! impl_heap_slice {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                 write_elem_slice::<T, Len, C>(writer, src)
             }
         }
@@ -438,7 +438,7 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn read(
-                reader: &mut impl Reader<'de>,
+                reader: &mut (impl Reader<'de> + ?Sized),
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 /// Drop guard for `TypeMeta::Static { zero_copy: true }` types.
@@ -590,7 +590,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         if let TypeMeta::Static {
             size,
             zero_copy: true,
@@ -631,7 +631,7 @@ where
     type Dst = collections::VecDeque<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
         let vec = <Vec<T, Len>>::get(reader)?;
@@ -659,7 +659,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, Len, C>(writer, src.as_slice())
     }
 }
@@ -674,7 +674,7 @@ where
     type Dst = collections::BinaryHeap<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let vec = <Vec<T, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));

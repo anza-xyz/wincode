@@ -125,7 +125,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 }
 
                 #[inline]
-                fn write(writer: &mut impl crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
+                fn write(writer: &mut (impl crate::io::Writer + ?Sized), value: &Self::Src) -> crate::WriteResult<()>
                 {
                     use crate::io::Writer;
                     if let TypeMeta::Static { size, .. } = Self::TYPE_META {
@@ -154,7 +154,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects, clippy::type_complexity)]
                 fn read(
-                    reader: &mut impl crate::io::Reader<'de>,
+                    reader: &mut (impl crate::io::Reader<'de> + ?Sized),
                     dst: &mut core::mem::MaybeUninit<Self::Dst>
                 ) -> crate::ReadResult<()>
                 {

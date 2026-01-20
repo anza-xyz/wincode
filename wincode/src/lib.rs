@@ -434,7 +434,7 @@
 //! impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!     fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 //!         // Normally we have to do a big ugly cast like this
 //!         // to get a mutable `MaybeUninit<Payload>`.
 //!         let payload = unsafe {

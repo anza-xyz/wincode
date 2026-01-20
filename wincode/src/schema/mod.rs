@@ -105,7 +105,7 @@ pub trait SchemaWrite<C: ConfigCore> {
     /// Get the serialized size of `Self::Src`.
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
     /// Write `Self::Src` to `writer`.
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
+    fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
@@ -119,11 +119,11 @@ pub trait SchemaRead<'de, C: ConfigCore> {
     /// # Safety
     ///
     /// - Implementation must properly initialize the `Self::Dst`.
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
+    fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut impl Reader<'de>) -> ReadResult<Self::Dst> {
+    fn get(reader: &mut (impl Reader<'de> + ?Sized)) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
@@ -250,7 +250,7 @@ where
 
 #[inline(always)]
 fn write_elem_iter<'a, T, Len, C>(
-    writer: &mut impl Writer,
+    writer: &mut (impl Writer + ?Sized),
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -284,7 +284,7 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn write_elem_slice<T, Len, C>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
+fn write_elem_slice<T, Len, C>(writer: &mut (impl Writer + ?Sized), src: &[T::Src]) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
@@ -611,7 +611,7 @@ mod tests {
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut (impl Writer + ?Sized), _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
@@ -625,7 +625,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             // This will increment the counter.
             dst.write(DropCounted::new());
@@ -653,7 +653,7 @@ mod tests {
             Ok(1)
         }
 
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut (impl Writer + ?Sized), _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)
         }
     }
@@ -667,7 +667,7 @@ mod tests {
         };
 
         fn read(
-            reader: &mut impl Reader<'de>,
+            reader: &mut (impl Reader<'de> + ?Sized),
             _dst: &mut MaybeUninit<Self::Dst>,
         ) -> ReadResult<()> {
             reader.consume(1)?;
@@ -700,7 +700,7 @@ mod tests {
             }
         }
 
-        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => {
                     <DropCounted as SchemaWrite<C>>::write(writer, v)
@@ -720,7 +720,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: &mut (impl Reader<'de> + ?Sized), dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = <u8 as SchemaRead<'de, C>>::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {

@@ -265,7 +265,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 }
 
                 #[inline]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(writer: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
                     #write_impl
                 }
             }

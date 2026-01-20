@@ -58,7 +58,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
-        src: &mut impl Reader<'de>,
+        src: &mut (impl Reader<'de> + ?Sized),
     ) -> ReadResult<<Self as SchemaRead<'de, DefaultConfig>>::Dst> {
         Self::get(src)
     }
@@ -66,7 +66,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into `dst`.
     #[inline]
     fn deserialize_from_into<'de>(
-        src: &mut impl Reader<'de>,
+        src: &mut (impl Reader<'de> + ?Sized),
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, DefaultConfig>>::Dst>,
     ) -> ReadResult<()> {
         Self::read(src, dst)
@@ -111,7 +111,7 @@ pub trait Serialize: SchemaWrite<DefaultConfig> {
 
     /// Serialize a serializable type into the given byte buffer.
     #[inline]
-    fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn serialize_into(dst: &mut (impl Writer + ?Sized), src: &Self::Src) -> WriteResult<()> {
         <Self as config::Serialize<DefaultConfig>>::serialize_into(
             dst,
             src,
@@ -230,7 +230,7 @@ where
 /// requires [`SchemaReadOwned`] instead of [`SchemaRead`]. If you are deserializing
 /// from raw bytes, always prefer [`deserialize`] for maximum flexibility.
 #[inline(always)]
-pub fn deserialize_from<'de, T>(src: &mut impl Reader<'de>) -> ReadResult<T>
+pub fn deserialize_from<'de, T>(src: &mut (impl Reader<'de> + ?Sized)) -> ReadResult<T>
 where
     T: SchemaReadOwned<DefaultConfig, Dst = T>,
 {
@@ -267,7 +267,7 @@ where
 ///
 /// Like [`serialize`], but allows the caller to provide their own writer.
 #[inline]
-pub fn serialize_into<T>(dst: &mut impl Writer, src: &T) -> WriteResult<()>
+pub fn serialize_into<T>(dst: &mut (impl Writer + ?Sized), src: &T) -> WriteResult<()>
 where
     T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {
