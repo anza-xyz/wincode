@@ -2815,9 +2815,8 @@ mod tests {
         use core::time::Duration;
 
         proptest!(proptest_cfg(), |(secs in 0u64..u64::MAX/2, nanos in 1_000_000_000u32..=u32::MAX)| {
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(&secs.to_le_bytes());
-            bytes.extend_from_slice(&nanos.to_le_bytes());
+            let mut bytes = serialize(&secs).unwrap();
+            bytes.extend(serialize(&nanos).unwrap());
 
             let result: Duration = deserialize(&bytes).unwrap();
             let expected = Duration::new(secs, nanos);
@@ -2829,9 +2828,8 @@ mod tests {
     fn test_duration_overflow() {
         use core::time::Duration;
 
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&u64::MAX.to_le_bytes());
-        bytes.extend_from_slice(&1_000_000_000u32.to_le_bytes());
+        let mut bytes = serialize(&u64::MAX).unwrap();
+        bytes.extend(serialize(&1_000_000_000u32).unwrap());
 
         let result: error::ReadResult<Duration> = deserialize(&bytes);
         assert!(result.is_err());
