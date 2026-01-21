@@ -52,6 +52,7 @@ use {
 
 pub mod containers;
 mod impls;
+pub mod int_encoding;
 
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
@@ -236,8 +237,7 @@ where
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-/// Variant of [`size_of_elem_iter`] specialized for slices, which can opt into
-/// an optimized implementation for bytes (`u8`s).
+/// Variant of [`size_of_elem_iter`] specialized for slices.
 fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
 where
     C: ConfigCore,
@@ -321,11 +321,12 @@ mod tests {
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
-            len::{BincodeLen, FixInt},
+            len::{BincodeLen, FixIntLen},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
         },
+        bincode::Options,
         core::{marker::PhantomData, ptr},
         proptest::prelude::*,
         std::{
@@ -2784,7 +2785,8 @@ mod tests {
 
     #[test]
     fn test_custom_length_encoding() {
-        let c = Configuration::default().with_length_encoding::<FixInt<u32>>();
+        let c = Configuration::default().with_length_encoding::<FixIntLen<u32>>();
+
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {
             let wincode_serialized = config::serialize(&value, c).unwrap();
             let wincode_deserialized: Vec<u8> = config::deserialize(&wincode_serialized, c).unwrap();
@@ -2807,6 +2809,29 @@ mod tests {
             let schema_deserialized: Duration = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+    fn test_byte_order_configuration() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: Vec<u64>)| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+
+            let deserialized: Vec<u64> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u64::from_be_bytes(serialized[0..8].try_into().unwrap()) as usize);
+
+            if !value.is_empty() {
+                for (i, chunk) in serialized[8..].chunks(8).enumerate() {
+                    let val = u64::from_be_bytes(chunk.try_into().unwrap());
+                    prop_assert_eq!(val, value[i]);
+                }
+            }
+
+            prop_assert_eq!(value, deserialized);
         });
     }
 
@@ -2821,6 +2846,17 @@ mod tests {
             let result: Duration = deserialize(&bytes).unwrap();
             let expected = Duration::new(secs, nanos);
             prop_assert_eq!(result, expected);
+    fn test_custom_length_encoding_and_byte_order() {
+        let c = Configuration::default()
+            .with_length_encoding::<FixIntLen<u32>>()
+            .with_big_endian();
+
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let serialized = config::serialize(&value, c).unwrap();
+            let deserialized: Vec<u8> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_be_bytes(serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, deserialized);
         });
     }
 
@@ -2833,5 +2869,34 @@ mod tests {
 
         let result: error::ReadResult<Duration> = deserialize(&bytes);
         assert!(result.is_err());
+    fn test_all_integers_with_custom_byte_order() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            let deserialized: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_floats_with_custom_byte_order() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: (f32, f64))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            let deserialized: (f32, f64) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
     }
 }

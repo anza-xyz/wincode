@@ -345,10 +345,10 @@ mod vec {
     }
 
     #[inline]
-    pub(super) fn finish(inner: &mut Vec<u8>, pos: &mut usize) {
-        if *pos > inner.len() {
+    pub(super) fn finish(inner: &mut Vec<u8>, pos: usize) {
+        if pos > inner.len() {
             unsafe {
-                inner.set_len(*pos);
+                inner.set_len(pos);
             }
         }
     }
@@ -452,7 +452,7 @@ impl Writer for Cursor<&mut Vec<u8>> {
 
     #[inline]
     fn finish(&mut self) -> WriteResult<()> {
-        vec::finish(self.inner, &mut self.pos);
+        vec::finish(self.inner, self.pos);
         Ok(())
     }
 
@@ -501,7 +501,7 @@ impl Writer for Cursor<Vec<u8>> {
 
     #[inline]
     fn finish(&mut self) -> WriteResult<()> {
-        vec::finish(&mut self.inner, &mut self.pos);
+        vec::finish(&mut self.inner, self.pos);
         Ok(())
     }
 

@@ -241,7 +241,7 @@
 //! let serialized = wincode::serialize(&byte_ref).unwrap();
 //! let deserialized: ByteRef<'_> = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(byte_ref, deserialized);
-//! # }  
+//! # }
 //! ```
 //!
 //! ### struct newtype

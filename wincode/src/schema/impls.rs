@@ -13,6 +13,7 @@ use {
             invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
             unaligned_pointer_read, ReadResult, WriteResult,
         },
+        int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
         schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
@@ -23,6 +24,7 @@ use {
         mem::{self, transmute, MaybeUninit},
         time::Duration,
     },
+    paste::paste,
 };
 #[cfg(feature = "alloc")]
 use {
@@ -41,141 +43,239 @@ use {
     },
 };
 
-macro_rules! impl_int {
-    ($type:ty, zero_copy: $zero_copy:expr) => {
-        impl<C: ConfigCore> SchemaWrite<C> for $type {
-            type Src = $type;
+macro_rules! impl_int_config_dependent {
+    ($($type:ty),*) => {
+        paste! {
+            $(
+                unsafe impl<C: ConfigCore> ZeroCopy<C> for $type where C::IntEncoding: ZeroCopy<C> {}
 
-            const TYPE_META: TypeMeta = TypeMeta::Static {
-                size: size_of::<$type>(),
-                #[cfg(target_endian = "little")]
-                zero_copy: true,
-                #[cfg(not(target_endian = "little"))]
-                zero_copy: $zero_copy,
-            };
+                impl<C: ConfigCore> SchemaWrite<C> for $type {
+                    type Src = $type;
 
-            #[inline(always)]
-            fn size_of(_src: &Self::Src) -> WriteResult<usize> {
-                Ok(size_of::<$type>())
-            }
+                    const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
+                        TypeMeta::Static {
+                            size: size_of::<$type>(),
+                            zero_copy: C::IntEncoding::ZERO_COPY,
+                        }
+                    } else {
+                        TypeMeta::Dynamic
+                    };
 
-            #[inline(always)]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                Ok(writer.write(&src.to_le_bytes())?)
-            }
-        }
+                    #[inline(always)]
+                    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                        Ok(C::IntEncoding::[<size_of_ $type>](*src))
+                    }
 
-        impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
-            type Dst = $type;
+                    #[inline(always)]
+                    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                        C::IntEncoding::[<encode_ $type>](*src, writer)
+                    }
+                }
 
-            const TYPE_META: TypeMeta = TypeMeta::Static {
-                size: size_of::<$type>(),
-                #[cfg(target_endian = "little")]
-                zero_copy: true,
-                #[cfg(not(target_endian = "little"))]
-                zero_copy: $zero_copy,
-            };
+                impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+                    type Dst = $type;
 
-            #[inline(always)]
-            fn read(
-                reader: &mut impl Reader<'de>,
-                dst: &mut MaybeUninit<Self::Dst>,
-            ) -> ReadResult<()> {
-                // SAFETY: integer is plain ol' data.
-                let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
-                // bincode defaults to little endian encoding.
-                dst.write(<$type>::from_le_bytes(*bytes));
-                unsafe { reader.consume_unchecked(size_of::<$type>()) };
+                    const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
+                        TypeMeta::Static {
+                            size: size_of::<$type>(),
+                            zero_copy: C::IntEncoding::ZERO_COPY,
+                        }
+                    } else {
+                        TypeMeta::Dynamic
+                    };
 
-                Ok(())
-            }
-        }
-    };
-
-    ($type:ty as $cast:ty) => {
-        impl<C: ConfigCore> SchemaWrite<C> for $type {
-            type Src = $type;
-
-            const TYPE_META: TypeMeta = TypeMeta::Static {
-                size: size_of::<$cast>(),
-                zero_copy: false,
-            };
-
-            #[inline]
-            fn size_of(_src: &Self::Src) -> WriteResult<usize> {
-                Ok(size_of::<$cast>())
-            }
-
-            #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                let src = *src as $cast;
-                // bincode defaults to little endian encoding.
-                // noop on LE machines.
-                Ok(writer.write(&src.to_le_bytes())?)
-            }
-        }
-
-        impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
-            type Dst = $type;
-
-            const TYPE_META: TypeMeta = TypeMeta::Static {
-                size: size_of::<$cast>(),
-                zero_copy: false,
-            };
-
-            #[inline]
-            fn read(
-                reader: &mut impl Reader<'de>,
-                dst: &mut MaybeUninit<Self::Dst>,
-            ) -> ReadResult<()> {
-                let casted = <$cast as SchemaRead<'de, C>>::get(reader)?;
-                let val = casted
-                    .try_into()
-                    .map_err(|_| pointer_sized_decode_error())?;
-
-                dst.write(val);
-
-                Ok(())
-            }
+                    #[inline(always)]
+                    fn read(
+                        reader: &mut impl Reader<'de>,
+                        dst: &mut MaybeUninit<Self::Dst>,
+                    ) -> ReadResult<()> {
+                        let val = C::IntEncoding::[<decode_ $type>](reader)?;
+                        dst.write(val);
+                        Ok(())
+                    }
+                }
+            )*
         }
     };
 }
 
-// SAFETY:
-// - u8 is a canonical zero-copy type: no endianness, no layout, no validation.
-unsafe impl<C: ConfigCore> ZeroCopy<C> for u8 {}
+impl_int_config_dependent!(u16, u32, u64, u128, i16, i32, i64, i128);
 
-// SAFETY:
-// - i8 is similarly a canonical zero-copy type: no endianness, no layout, no validation.
-unsafe impl<C: ConfigCore> ZeroCopy<C> for i8 {}
-
-macro_rules! impl_numeric_zero_copy {
-    ($($ty:ty),+ $(,)?) => {
+/// Implementations for `f32` and `f64` using fixed-width encoding and the
+/// configured byte order.
+///
+/// This matches bincode: floats are always fixed-width, independent of integer
+/// encoding choices.
+/// - Varint saves space when small values map to small bit-patterns. IEEE-754
+///   floats do not have that property, so varint rarely (if ever) helps and costs more.
+/// - Exact bit patterns must round-trip (-0.0, NaN payloads, subnormals), which
+///   fixed-width preserves without extra rules or validation.
+macro_rules! impl_float {
+    ($($ty:ty),*) => {
         $(
-            unsafe impl<C: ConfigCore> ZeroCopy<C> for $ty {}
-        )+
+            unsafe impl<C: ConfigCore> ZeroCopy<C> for $ty where C::ByteOrder: PlatformEndian {}
+
+            impl<C: ConfigCore> SchemaWrite<C> for $ty {
+                type Src = $ty;
+
+                const TYPE_META: TypeMeta = TypeMeta::Static {
+                    size: size_of::<$ty>(),
+                    #[cfg(target_endian = "big")]
+                    zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
+                    #[cfg(target_endian = "little")]
+                    zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                };
+
+                #[inline(always)]
+                fn size_of(_val: &Self::Src) -> WriteResult<usize> {
+                    Ok(size_of::<$ty>())
+                }
+
+                #[inline(always)]
+                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                    let bytes = match C::ByteOrder::ENDIAN {
+                        Endian::Big => src.to_be_bytes(),
+                        Endian::Little => src.to_le_bytes(),
+                    };
+                    writer.write(&bytes)?;
+                    Ok(())
+                }
+            }
+
+            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $ty {
+                type Dst = $ty;
+
+                const TYPE_META: TypeMeta = TypeMeta::Static {
+                    size: size_of::<$ty>(),
+                    #[cfg(target_endian = "big")]
+                    zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
+                    #[cfg(target_endian = "little")]
+                    zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                };
+
+                #[inline(always)]
+                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                    let bytes = *reader.fill_array::<{ size_of::<$ty>() }>()?;
+                    // SAFETY: fill_array is guaranteed to consume `size_of::<$ty>()` bytes.
+                    unsafe { reader.consume_unchecked(size_of::<$ty>()) };
+                    let val = match C::ByteOrder::ENDIAN {
+                        Endian::Big => <$ty>::from_be_bytes(bytes),
+                        Endian::Little => <$ty>::from_le_bytes(bytes),
+                    };
+                    dst.write(val);
+                    Ok(())
+                }
+            }
+        )*
     };
 }
 
-// SAFETY: Primitive numeric types with fixed size. Only valid on little endian
-// platforms because Bincode specifies little endian integer encoding.
-#[cfg(target_endian = "little")]
-impl_numeric_zero_copy!(u16, i16, u32, i32, u64, i64, u128, i128, f32, f64);
+impl_float!(f32, f64);
 
-impl_int!(u8, zero_copy: true);
-impl_int!(i8, zero_copy: true);
-impl_int!(u16, zero_copy: false);
-impl_int!(i16, zero_copy: false);
-impl_int!(u32, zero_copy: false);
-impl_int!(i32, zero_copy: false);
-impl_int!(u64, zero_copy: false);
-impl_int!(i64, zero_copy: false);
-impl_int!(u128, zero_copy: false);
-impl_int!(i128, zero_copy: false);
-impl_int!(f32, zero_copy: false);
-impl_int!(f64, zero_copy: false);
-impl_int!(usize as u64);
-impl_int!(isize as i64);
+macro_rules! impl_pointer_width {
+    ($($type:ty => $target:ty),*) => {
+        $(
+            impl<C: ConfigCore> SchemaWrite<C> for $type {
+                type Src = $type;
+
+                const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
+                    TypeMeta::Static {
+                        size: size_of::<$target>(),
+                        zero_copy: false,
+                    }
+                } else {
+                    TypeMeta::Dynamic
+                };
+
+                #[inline(always)]
+                fn size_of(val: &Self::Src) -> WriteResult<usize> {
+                    <$target as SchemaWrite<C>>::size_of(&(*val as $target))
+                }
+
+                #[inline(always)]
+                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                    <$target as SchemaWrite<C>>::write(writer, &(*src as $target))
+                }
+            }
+
+            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+                type Dst = $type;
+
+                const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
+                    TypeMeta::Static {
+                        size: size_of::<$target>(),
+                        zero_copy: false,
+                    }
+                } else {
+                    TypeMeta::Dynamic
+                };
+
+                #[inline(always)]
+                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                    let target = <$target as SchemaRead<C>>::get(reader)?;
+                    let val = target.try_into().map_err(|_| pointer_sized_decode_error())?;
+                    dst.write(val);
+                    Ok(())
+                }
+            }
+        )*
+    };
+}
+
+impl_pointer_width!(usize => u64, isize => i64);
+
+macro_rules! impl_byte {
+    ($($type:ty),*) => {
+        $(
+            // SAFETY:
+            // - canonical zero-copy type: no endianness, no layout, no validation.
+            unsafe impl<C: ConfigCore> ZeroCopy<C> for $type {}
+
+            impl<C: ConfigCore> SchemaWrite<C> for $type {
+                type Src = $type;
+
+                const TYPE_META: TypeMeta = TypeMeta::Static {
+                    size: size_of::<$type>(),
+                    zero_copy: true,
+                };
+
+                #[inline(always)]
+                fn size_of(_val: &Self::Src) -> WriteResult<usize> {
+                    Ok(size_of::<$type>())
+                }
+
+                #[inline(always)]
+                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                    writer.write(&[*src as u8])?;
+                    Ok(())
+                }
+            }
+
+            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+                type Dst = $type;
+
+                const TYPE_META: TypeMeta = TypeMeta::Static {
+                    size: size_of::<$type>(),
+                    zero_copy: true,
+                };
+
+                #[inline(always)]
+                fn read(
+                    reader: &mut impl Reader<'de>,
+                    dst: &mut MaybeUninit<Self::Dst>,
+                ) -> ReadResult<()> {
+                    let byte = *reader.fill_array::<{ 1 }>()?;
+                    // SAFETY: `fill_array` guarantees we get one byte.
+                    unsafe { reader.consume_unchecked(1) };
+                    dst.write(byte[0] as $type);
+                    Ok(())
+                }
+            }
+        )*
+    };
+}
+
+impl_byte!(u8, i8);
 
 impl<C: ConfigCore> SchemaWrite<C> for bool {
     type Src = bool;
