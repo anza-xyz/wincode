@@ -2809,6 +2809,10 @@ mod tests {
             let schema_deserialized: Duration = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
@@ -2846,6 +2850,10 @@ mod tests {
             let result: Duration = deserialize(&bytes).unwrap();
             let expected = Duration::new(secs, nanos);
             prop_assert_eq!(result, expected);
+        });
+    }
+
+    #[test]
     fn test_custom_length_encoding_and_byte_order() {
         let c = Configuration::default()
             .with_length_encoding::<FixIntLen<u32>>()
@@ -2869,6 +2877,9 @@ mod tests {
 
         let result: error::ReadResult<Duration> = deserialize(&bytes);
         assert!(result.is_err());
+    }
+
+    #[test]
     fn test_all_integers_with_custom_byte_order() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
