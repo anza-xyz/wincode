@@ -253,7 +253,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config};
-            impl #impl_generics #crate_name::SchemaWrite<WincodeConfig> for #ident #ty_generics #where_clause {
+            unsafe impl #impl_generics #crate_name::SchemaWrite<WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 
                 #[allow(clippy::arithmetic_side_effects)]

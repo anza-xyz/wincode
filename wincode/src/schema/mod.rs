@@ -98,28 +98,71 @@ impl TypeMeta {
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
-pub trait SchemaWrite<C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `size_of`
+pub unsafe trait SchemaWrite<C: ConfigCore> {
     type Src: ?Sized;
 
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes written by
+    ///   `write`. `size_of` must always return `Ok(size)`.
+    /// - If `zero_copy` is `true`, `Src`'s in-memory representation must
+    ///   correspond exactly to the serialized form. There must be no padding in
+    ///   the in-memory representation of `Src`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     /// Get the serialized size of `Self::Src`.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
+
     /// Write `Self::Src` to `writer`.
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
-pub trait SchemaRead<'de, C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `read`.
+pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     type Dst;
 
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes read by `read`.
+    /// - If `zero_copy` is `true`, `Dst`'s in-memory representation must
+    ///   correspond exactly to the serialized form, and all byte sequences must
+    ///   be valid in-memory representations of `Dst`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     /// Read into `dst` from `reader`.
     ///
     /// # Safety
     ///
-    /// - Implementation must properly initialize the `Self::Dst`.
+    /// You must initialize `dst` if **and only if** you return `Ok(())`. In the
+    /// `Err(…)` case, initializing `dst` can lead to memory leaks.
+    ///
+    /// It is permissible to not initialize `dst` if `dst` is an inhabited
+    /// zero-sized type.
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
@@ -601,7 +644,7 @@ mod tests {
         }
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCounted {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCounted {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -618,7 +661,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -642,7 +685,7 @@ mod tests {
         const TAG_BYTE: u8 = 1;
     }
 
-    impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
+    unsafe impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -659,7 +702,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -682,7 +725,7 @@ mod tests {
         ErrorsOnRead(ErrorsOnRead),
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -713,7 +756,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {

@@ -49,7 +49,7 @@ macro_rules! impl_int_config_dependent {
             $(
                 unsafe impl<C: ConfigCore> ZeroCopy<C> for $type where C::IntEncoding: ZeroCopy<C> {}
 
-                impl<C: ConfigCore> SchemaWrite<C> for $type {
+                unsafe impl<C: ConfigCore> SchemaWrite<C> for $type {
                     type Src = $type;
 
                     const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
@@ -72,7 +72,7 @@ macro_rules! impl_int_config_dependent {
                     }
                 }
 
-                impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+                unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
                     type Dst = $type;
 
                     const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
@@ -115,7 +115,7 @@ macro_rules! impl_float {
         $(
             unsafe impl<C: ConfigCore> ZeroCopy<C> for $ty where C::ByteOrder: PlatformEndian {}
 
-            impl<C: ConfigCore> SchemaWrite<C> for $ty {
+            unsafe impl<C: ConfigCore> SchemaWrite<C> for $ty {
                 type Src = $ty;
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -142,7 +142,7 @@ macro_rules! impl_float {
                 }
             }
 
-            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $ty {
+            unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for $ty {
                 type Dst = $ty;
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -175,7 +175,7 @@ impl_float!(f32, f64);
 macro_rules! impl_pointer_width {
     ($($type:ty => $target:ty),*) => {
         $(
-            impl<C: ConfigCore> SchemaWrite<C> for $type {
+            unsafe impl<C: ConfigCore> SchemaWrite<C> for $type {
                 type Src = $type;
 
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
@@ -198,7 +198,7 @@ macro_rules! impl_pointer_width {
                 }
             }
 
-            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+            unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
                 type Dst = $type;
 
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
@@ -231,7 +231,7 @@ macro_rules! impl_byte {
             // - canonical zero-copy type: no endianness, no layout, no validation.
             unsafe impl<C: ConfigCore> ZeroCopy<C> for $type {}
 
-            impl<C: ConfigCore> SchemaWrite<C> for $type {
+            unsafe impl<C: ConfigCore> SchemaWrite<C> for $type {
                 type Src = $type;
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -251,7 +251,7 @@ macro_rules! impl_byte {
                 }
             }
 
-            impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
+            unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for $type {
                 type Dst = $type;
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -277,7 +277,7 @@ macro_rules! impl_byte {
 
 impl_byte!(u8, i8);
 
-impl<C: ConfigCore> SchemaWrite<C> for bool {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for bool {
     type Src = bool;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -296,7 +296,7 @@ impl<C: ConfigCore> SchemaWrite<C> for bool {
     }
 }
 
-impl<'de, C: ConfigCore> SchemaRead<'de, C> for bool {
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for bool {
     type Dst = bool;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -321,7 +321,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for bool {
     }
 }
 
-impl<C: ConfigCore> SchemaWrite<C> for char {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for char {
     type Src = char;
 
     #[inline]
@@ -340,7 +340,7 @@ impl<C: ConfigCore> SchemaWrite<C> for char {
     }
 }
 
-impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
     type Dst = char;
 
     #[inline]
@@ -374,7 +374,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
     }
 }
 
-impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
     type Src = PhantomData<T>;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -393,7 +393,7 @@ impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
     }
 }
 
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for PhantomData<T> {
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for PhantomData<T> {
     type Dst = PhantomData<T>;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -407,7 +407,7 @@ impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for PhantomData<T> {
     }
 }
 
-impl<C: ConfigCore> SchemaWrite<C> for () {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for () {
     type Src = ();
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -426,7 +426,7 @@ impl<C: ConfigCore> SchemaWrite<C> for () {
     }
 }
 
-impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
     type Dst = ();
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -441,7 +441,7 @@ impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
 }
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for Vec<T>
+unsafe impl<T, C: Config> SchemaWrite<C> for Vec<T>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -460,7 +460,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for Vec<T>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Vec<T>
 where
     T: SchemaRead<'de, C>,
 {
@@ -473,7 +473,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for VecDeque<T>
+unsafe impl<T, C: Config> SchemaWrite<C> for VecDeque<T>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -492,7 +492,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for VecDeque<T>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for VecDeque<T>
 where
     T: SchemaRead<'de, C>,
 {
@@ -504,7 +504,7 @@ where
     }
 }
 
-impl<T, C: Config> SchemaWrite<C> for [T]
+unsafe impl<T, C: Config> SchemaWrite<C> for [T]
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -527,7 +527,7 @@ where
 //   so there is no length encoding.
 unsafe impl<const N: usize, C: ConfigCore, T> ZeroCopy<C> for [T; N] where T: ZeroCopy<C> {}
 
-impl<'de, T, const N: usize, C: ConfigCore> SchemaRead<'de, C> for [T; N]
+unsafe impl<'de, T, const N: usize, C: ConfigCore> SchemaRead<'de, C> for [T; N]
 where
     T: SchemaRead<'de, C>,
 {
@@ -580,7 +580,7 @@ where
     }
 }
 
-impl<T, const N: usize, C: ConfigCore> SchemaWrite<C> for [T; N]
+unsafe impl<T, const N: usize, C: ConfigCore> SchemaWrite<C> for [T; N]
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -642,7 +642,7 @@ where
     }
 }
 
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Option<T>
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Option<T>
 where
     T: SchemaRead<'de, C>,
 {
@@ -661,7 +661,7 @@ where
     }
 }
 
-impl<T, C: ConfigCore> SchemaWrite<C> for Option<T>
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Option<T>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -690,7 +690,7 @@ where
     }
 }
 
-impl<'de, T, E, C: Config> SchemaRead<'de, C> for Result<T, E>
+unsafe impl<'de, T, E, C: Config> SchemaRead<'de, C> for Result<T, E>
 where
     T: SchemaRead<'de, C>,
     E: SchemaRead<'de, C>,
@@ -722,7 +722,7 @@ where
     }
 }
 
-impl<T, E, C: Config> SchemaWrite<C> for Result<T, E>
+unsafe impl<T, E, C: Config> SchemaWrite<C> for Result<T, E>
 where
     T: SchemaWrite<C>,
     E: SchemaWrite<C>,
@@ -768,7 +768,7 @@ where
     }
 }
 
-impl<'a, T, C: ConfigCore> SchemaWrite<C> for &'a T
+unsafe impl<'a, T, C: ConfigCore> SchemaWrite<C> for &'a T
 where
     T: SchemaWrite<C>,
     T: ?Sized,
@@ -791,7 +791,7 @@ where
 macro_rules! impl_heap_container {
     ($container:ident) => {
         #[cfg(feature = "alloc")]
-        impl<T, C: ConfigCore> SchemaWrite<C> for $container<T>
+        unsafe impl<T, C: ConfigCore> SchemaWrite<C> for $container<T>
         where
             T: SchemaWrite<C>,
         {
@@ -819,7 +819,7 @@ macro_rules! impl_heap_container {
         }
 
         #[cfg(feature = "alloc")]
-        impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for $container<T>
+        unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for $container<T>
         where
             T: SchemaRead<'de, C>,
         {
@@ -870,7 +870,7 @@ impl_heap_container!(Rc);
 impl_heap_container!(Arc);
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for Box<[T]>
+unsafe impl<T, C: Config> SchemaWrite<C> for Box<[T]>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -889,7 +889,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for Rc<[T]>
+unsafe impl<T, C: Config> SchemaWrite<C> for Rc<[T]>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -908,7 +908,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for Arc<[T]>
+unsafe impl<T, C: Config> SchemaWrite<C> for Arc<[T]>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -927,7 +927,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for Box<[T]>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Box<[T]>
 where
     T: SchemaRead<'de, C>,
 {
@@ -940,7 +940,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for Rc<[T]>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Rc<[T]>
 where
     T: SchemaRead<'de, C>,
 {
@@ -953,7 +953,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for Arc<[T]>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Arc<[T]>
 where
     T: SchemaRead<'de, C>,
 {
@@ -965,7 +965,7 @@ where
     }
 }
 
-impl<C: Config> SchemaWrite<C> for str {
+unsafe impl<C: Config> SchemaWrite<C> for str {
     type Src = str;
 
     #[inline]
@@ -984,7 +984,7 @@ impl<C: Config> SchemaWrite<C> for str {
 }
 
 #[cfg(feature = "alloc")]
-impl<C: Config> SchemaWrite<C> for String {
+unsafe impl<C: Config> SchemaWrite<C> for String {
     type Src = String;
 
     #[inline]
@@ -998,7 +998,7 @@ impl<C: Config> SchemaWrite<C> for String {
     }
 }
 
-impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
     type Dst = &'de str;
 
     #[inline]
@@ -1016,7 +1016,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, C: Config> SchemaRead<'de, C> for String {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
     type Dst = String;
 
     #[inline]
@@ -1042,7 +1042,7 @@ impl<'de, C: Config> SchemaRead<'de, C> for String {
 macro_rules! impl_seq {
     ($feature: literal, $target: ident<$key: ident : $($constraint:path)|*, $value: ident>, $with_capacity: expr) => {
         #[cfg(feature = $feature)]
-        impl<C: Config, $key, $value> SchemaWrite<C> for $target<$key, $value>
+        unsafe impl<C: Config, $key, $value> SchemaWrite<C> for $target<$key, $value>
         where
             $key: SchemaWrite<C>,
             $key::Src: Sized,
@@ -1099,7 +1099,7 @@ macro_rules! impl_seq {
         }
 
         #[cfg(feature = $feature)]
-        impl<'de, C: Config, $key, $value> SchemaRead<'de, C> for $target<$key, $value>
+        unsafe impl<'de, C: Config, $key, $value> SchemaRead<'de, C> for $target<$key, $value>
         where
             $key: SchemaRead<'de, C>,
             $value: SchemaRead<'de, C>
@@ -1141,7 +1141,7 @@ macro_rules! impl_seq {
 
     ($feature: literal, $target: ident <$key: ident : $($constraint:path)|*>, $with_capacity: expr, $insert: ident) => {
         #[cfg(feature = $feature)]
-        impl<C: Config, $key: SchemaWrite<C>> SchemaWrite<C> for $target<$key>
+        unsafe impl<C: Config, $key: SchemaWrite<C>> SchemaWrite<C> for $target<$key>
         where
             $key::Src: Sized,
         {
@@ -1159,7 +1159,7 @@ macro_rules! impl_seq {
         }
 
         #[cfg(feature = $feature)]
-        impl<'de, C: Config, $key> SchemaRead<'de, C> for $target<$key>
+        unsafe impl<'de, C: Config, $key> SchemaRead<'de, C> for $target<$key>
         where
             $key: SchemaRead<'de, C>
             $(,$key::Dst: $constraint+)*,
@@ -1205,7 +1205,7 @@ impl_seq! { "std", HashSet<K: Hash | Eq>, HashSet::with_capacity, insert }
 impl_seq! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
-impl<T, C: Config> SchemaWrite<C> for BinaryHeap<T>
+unsafe impl<T, C: Config> SchemaWrite<C> for BinaryHeap<T>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
@@ -1224,7 +1224,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, C: Config> SchemaRead<'de, C> for BinaryHeap<T>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for BinaryHeap<T>
 where
     T: SchemaRead<'de, C>,
     T::Dst: Ord,
@@ -1436,7 +1436,7 @@ mod zero_copy {
     }
 }
 
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de T
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de T
 where
     T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
@@ -1456,7 +1456,7 @@ where
     }
 }
 
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de mut T
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for &'de mut T
 where
     T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
@@ -1476,7 +1476,7 @@ where
     }
 }
 
-impl<'de, T, C: Config> SchemaRead<'de, C> for &'de [T]
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for &'de [T]
 where
     T: SchemaRead<'de, C> + ZeroCopy<C>,
 {
@@ -1497,7 +1497,7 @@ where
     }
 }
 
-impl<'de, T, C: Config> SchemaRead<'de, C> for &'de mut [T]
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for &'de mut [T]
 where
     T: SchemaRead<'de, C> + ZeroCopy<C>,
 {

@@ -167,7 +167,7 @@ pub mod short_vec {
         },
     };
 
-    impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
+    unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
         type Dst = Self;
 
         #[inline]
@@ -180,7 +180,7 @@ pub mod short_vec {
         }
     }
 
-    impl<C: ConfigCore> SchemaWrite<C> for ShortU16 {
+    unsafe impl<C: ConfigCore> SchemaWrite<C> for ShortU16 {
         type Src = Self;
 
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
