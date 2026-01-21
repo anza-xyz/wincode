@@ -104,37 +104,43 @@ macro_rules! impl_fix_int {
 ///
 /// This trait provides encoding, decoding, and sizing for all integer types.
 ///
-/// The `STATIC` constant controls whether the encoding yields a compile-time known
-/// serialized size for every integer type. Only set this to true if for every
-/// integer type `T` the encoded size is constant and equals `size_of::<T>()`
-/// (including any platform-specific types like `usize`/`isize`).
+/// # SAFETY
 ///
-/// Setting this incorrectly can break trusted-window sizing and slice fast paths,
-/// which rely on `TypeMeta::Static` to precompute exact byte counts.
+/// Implementors must adhere to the Safety section of the associated constants
+/// `STATIC` and `ZERO_COPY`.
 ///
-/// The `ZERO_COPY` constant controls whether the encoding is bitwise identical to
-/// the in-memory representation for every integer type. This must respect both the
-/// configured byte order and the platform endianness. If set incorrectly, zero-copy
-/// deserialization can yield incorrect values or unsound behavior.
-pub trait IntEncoding<B: ByteOrder>: 'static {
+/// `size_of_*` implementations must always correspond to the number of bytes read by the
+/// corresponding `decode_*` and bytes written by the corresponding `encode_*`.
+pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     /// Whether the encoded length for all integer types `T` is constant and equal
     /// to `size_of::<T>()`.
     ///
-    /// This must only be true when the encoding size does not depend on the value.
-    /// For example, any variable-length encoding must set this to false.
+    /// # SAFETY
+    ///
+    /// If `STATIC` is `true`, for all integer types `T`, the encoded size must be
+    /// constant for all values of `T` and equal to `size_of::<T>()`.
     const STATIC: bool;
 
     /// Whether the encoding format for integer types `T` matches their in-memory representation.
     ///
-    /// This must only be true when decoding can be done by reinterpreting bytes
-    /// without validation or byte swapping. In particular, this must be false when
-    /// the configured byte order does not match the platform endianness.
+    /// # SAFETY
+    ///
+    /// If `ZERO_COPY` is `true`, for all integer types `T`, the in-memory representation
+    /// must correspond exactly to the serialized form, and all byte sequences must
+    /// be valid in-memory representations of `T`. This must respect both the
+    /// configured byte order and the platform endianness, and any direct reads must
+    /// uphold `T`'s alignment requirements.
     const ZERO_COPY: bool;
 
     /// Encode the given `u16` value and write it to the writer.
     fn encode_u16(val: u16, writer: &mut impl Writer) -> WriteResult<()>;
 
-    // Get the encoded size of the given `u16` value.
+    /// Get the encoded size of the given `u16` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_u16`] function
+    /// and read by the [`decode_u16`] function for this particular u16 instance.
     fn size_of_u16(val: u16) -> usize;
 
     /// Decode a `u16` value from the reader.
@@ -144,6 +150,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_u32(val: u32, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u32` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_u32`] function
+    /// and read by the [`decode_u32`] function for this particular u32 instance.
     fn size_of_u32(val: u32) -> usize;
 
     /// Decode a `u32` value from the reader.
@@ -153,6 +164,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_u64(val: u64, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u64` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_u64`] function
+    /// and read by the [`decode_u64`] function for this particular u64 instance.
     fn size_of_u64(val: u64) -> usize;
 
     /// Decode a `u64` value from the reader.
@@ -162,6 +178,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_u128(val: u128, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u128` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_u128`] function
+    /// and read by the [`decode_u128`] function for this particular u128 instance.
     fn size_of_u128(val: u128) -> usize;
 
     /// Decode a `u128` value from the reader.
@@ -171,6 +192,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_i16(val: i16, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i16` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_i16`] function
+    /// and read by the [`decode_i16`] function for this particular i16 instance.
     fn size_of_i16(val: i16) -> usize;
 
     /// Decode a `i16` value from the reader.
@@ -180,6 +206,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_i32(val: i32, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i32` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_i32`] function
+    /// and read by the [`decode_i32`] function for this particular i32 instance.
     fn size_of_i32(val: i32) -> usize;
 
     /// Decode a `i32` value from the reader.
@@ -189,6 +220,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_i64(val: i64, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i64` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_i64`] function
+    /// and read by the [`decode_i64`] function for this particular i64 instance.
     fn size_of_i64(val: i64) -> usize;
 
     /// Decode a `i64` value from the reader.
@@ -198,6 +234,11 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
     fn encode_i128(val: i128, writer: &mut impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i128` value.
+    ///
+    /// # SAFETY
+    ///
+    /// Must return the exact number of bytes written by the [`encode_i128`] function
+    /// and read by the [`decode_i128`] function for this particular i128 instance.
     fn size_of_i128(val: i128) -> usize;
 
     /// Decode a `i128` value from the reader.
@@ -211,7 +252,7 @@ pub trait IntEncoding<B: ByteOrder>: 'static {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixInt;
 
-impl IntEncoding<BigEndian> for FixInt {
+unsafe impl IntEncoding<BigEndian> for FixInt {
     const STATIC: bool = true;
     #[cfg(target_endian = "big")]
     const ZERO_COPY: bool = true;
@@ -221,7 +262,7 @@ impl IntEncoding<BigEndian> for FixInt {
     impl_fix_int!(BigEndian => u16, u32, u64, u128, i16, i32, i64, i128);
 }
 
-impl IntEncoding<LittleEndian> for FixInt {
+unsafe impl IntEncoding<LittleEndian> for FixInt {
     const STATIC: bool = true;
     #[cfg(target_endian = "big")]
     const ZERO_COPY: bool = false;
