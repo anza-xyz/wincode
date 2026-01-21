@@ -322,7 +322,7 @@ mod tests {
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
-            len::{BincodeLen, FixInt},
+            len::{BincodeLen, FixIntLen},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
@@ -2786,7 +2786,7 @@ mod tests {
 
     #[test]
     fn test_custom_length_encoding() {
-        let c = Configuration::default().with_length_encoding::<FixInt<u32>>();
+        let c = Configuration::default().with_length_encoding::<FixIntLen<u32>>();
 
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {
             let wincode_serialized = config::serialize(&value, c).unwrap();
@@ -2827,7 +2827,7 @@ mod tests {
     #[test]
     fn test_custom_length_encoding_and_byte_order() {
         let c = Configuration::default()
-            .with_length_encoding::<FixInt<u32>>()
+            .with_length_encoding::<FixIntLen<u32>>()
             .with_big_endian();
 
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {

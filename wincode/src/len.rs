@@ -52,15 +52,15 @@ pub trait SeqLen<C: ConfigCore> {
 
 /// Use the configuration's integer encoding for sequence length encoding.
 ///
-/// For example, if the configuration's integer encoding is `FixInt`, then `UseInt<u64>`
+/// For example, if the configuration's integer encoding is `FixInt`, then `UseIntLen<u64>`
 /// will use the fixed-width u64 encoding.
-/// If the configuration's integer encoding is `VarInt`, then `UseInt<u64>` will use
+/// If the configuration's integer encoding is `VarInt`, then `UseIntLen<u64>` will use
 /// the variable-width u64 encoding.
 ///
 /// This is bincode's default behavior.
-pub struct UseInt<T>(PhantomData<T>);
+pub struct UseIntLen<T>(PhantomData<T>);
 
-impl<T, C: ConfigCore> SeqLen<C> for UseInt<T>
+impl<T, C: ConfigCore> SeqLen<C> for UseIntLen<T>
 where
     T: SchemaWrite<C> + for<'de> SchemaRead<'de, C>,
     T::Src: TryFrom<usize>,
@@ -98,11 +98,11 @@ where
 /// Fixed-width integer length encoding.
 ///
 /// Integers respect the configured byte order.
-pub struct FixInt<T>(PhantomData<T>);
+pub struct FixIntLen<T>(PhantomData<T>);
 
 macro_rules! impl_fix_int {
     ($type:ty) => {
-        impl<C: ConfigCore> SeqLen<C> for FixInt<$type> {
+        impl<C: ConfigCore> SeqLen<C> for FixIntLen<$type> {
             #[inline(always)]
             #[allow(irrefutable_let_patterns)]
             fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
@@ -153,7 +153,7 @@ impl_fix_int!(i64);
 impl_fix_int!(i128);
 
 /// Bincode always uses a `u64` encoded with the configuration's integer encoding.
-pub type BincodeLen = UseInt<u64>;
+pub type BincodeLen = UseIntLen<u64>;
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
