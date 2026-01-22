@@ -250,6 +250,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             #[must_use]
             #vis struct #builder_ident < #(#generic_lifetimes,)* #(#generic_const,)* #(#generic_type_params,)* > #where_clause {
                 inner: &'_wincode_inner mut core::mem::MaybeUninit<#builder_dst>,
+                base_ptr: *mut #builder_dst,
                 init_set: #builder_bit_set_ty,
                 _config: core::marker::PhantomData<WincodeConfig>,
             }
@@ -266,9 +267,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             let bit_set_index = LitInt::new(&(1u128 << real_index).to_string(), Span::call_site());
             quote! {
                 if self.init_set & #bit_set_index != 0 {
-                    // SAFETY: We are dropping an initialized field.
+                    // SAFETY: Use cached base_ptr instead of inner.as_mut_ptr()
                     unsafe {
-                        ptr::drop_in_place(&raw mut (*dst_ptr).#field_ident);
+                        ptr::drop_in_place(&raw mut (*self.base_ptr).#field_ident);
                     }
                 }
             }
@@ -276,7 +277,6 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         quote! {
             impl #builder_impl_generics ::core::ops::Drop for #builder_ident #builder_ty_generics #builder_where_clause {
                 fn drop(&mut self) {
-                    let dst_ptr = self.inner.as_mut_ptr();
                     #(#drops)*
                 }
             }
@@ -296,6 +296,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                 #vis const fn from_maybe_uninit_mut(inner: &'_wincode_inner mut MaybeUninit<#builder_dst>) -> Self {
                     Self {
                         inner,
+                        base_ptr:inner.as_mut_ptr(), // Cache here
                         init_set: 0,
                         _config: core::marker::PhantomData,
                     }
@@ -377,7 +378,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
                 // - We return the field as `&mut MaybeUninit<#target>`, so
                 //   the field is never exposed as initialized.
-                unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
+                // OLD: unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
+                // NEW: Use cached base_ptr
+                unsafe { &mut *(&raw mut (*self.base_ptr).#ident).cast() }
             }
 
             /// Write a value to the maybe uninitialized field.
