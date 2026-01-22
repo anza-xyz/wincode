@@ -5,8 +5,6 @@ use {
         collections::{BTreeMap, BTreeSet, HashMap, LinkedList, VecDeque},
         hint::black_box,
     },
-    wincode::{deserialize, serialize, serialize_into, serialized_size, SchemaRead, SchemaWrite},
-    std::{collections::HashMap, hint::black_box},
     wincode::{
         config::DefaultConfig, deserialize, serialize, serialize_into, serialized_size, SchemaRead,
         SchemaWrite,
