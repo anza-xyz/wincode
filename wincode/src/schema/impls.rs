@@ -1520,7 +1520,7 @@ where
 
 const DURATION_SIZE: usize = size_of::<u64>() + size_of::<u32>();
 
-impl<C: ConfigCore> SchemaWrite<C> for Duration {
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
     type Src = Duration;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -1541,7 +1541,7 @@ impl<C: ConfigCore> SchemaWrite<C> for Duration {
     }
 }
 
-impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
     type Dst = Duration;
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
