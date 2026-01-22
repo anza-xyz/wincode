@@ -8,7 +8,7 @@
 //! additional configuration parameter.
 use {
     crate::{
-        int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian},
+        int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian, VarInt},
         len::{BincodeLen, SeqLen},
     },
     core::marker::PhantomData,
@@ -221,6 +221,27 @@ impl<
         LengthEncoding,
         ByteOrder,
         FixInt,
+    > {
+        generate()
+    }
+
+    /// Use [`VarInt`] for integer encoding.
+    ///
+    /// Default is [`FixInt`].
+    ///
+    /// Performance note: variable length integer encoding will hurt serialization and deserialization
+    /// performance significantly relative to fixed width integer encoding. Additionally, all zero-copy
+    /// capabilities on integers will be lost. Variable length integer encoding may be beneficial if
+    /// reducing the resulting size of serialized data is important, but if serialization / deserialization
+    /// performance is important, fixed width integer encoding is highly recommended.
+    pub const fn with_varint_encoding(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        VarInt,
     > {
         generate()
     }

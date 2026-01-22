@@ -2941,6 +2941,135 @@ mod tests {
     }
 
     #[test]
+    fn test_all_integers_with_varint() {
+        let c = Configuration::default().with_varint_encoding();
+        let bincode_c = bincode::DefaultOptions::new().with_varint_encoding();
+
+        proptest!(proptest_cfg(), |(value: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            prop_assert_eq!(bincode_c.serialized_size(&value).unwrap(), config::serialized_size(&value, c).unwrap());
+
+            let deserialized: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_all_integers_with_varint_big_endian() {
+        let c = Configuration::default()
+            .with_varint_encoding()
+            .with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_varint_encoding()
+            .with_big_endian();
+
+        proptest!(proptest_cfg(), |(value: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            prop_assert_eq!(bincode_c.serialized_size(&value).unwrap(), config::serialized_size(&value, c).unwrap());
+
+            let deserialized: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_varint_boundaries() {
+        let c = Configuration::default().with_varint_encoding();
+        let bincode_c = bincode::DefaultOptions::new().with_varint_encoding();
+
+        fn assert_varint_roundtrip<T, C, O>(val: T, c: C, bincode_c: O)
+        where
+            C: Config + Copy,
+            O: Options + Copy,
+            T: serde::Serialize
+                + for<'de> Deserialize<'de>
+                + PartialEq
+                + core::fmt::Debug
+                + SchemaWrite<C, Src = T>
+                + for<'de> SchemaRead<'de, C, Dst = T>,
+        {
+            let bincode_serialized = bincode_c.serialize(&val).unwrap();
+            let serialized = config::serialize(&val, c).unwrap();
+            assert_eq!(bincode_serialized, serialized);
+            assert_eq!(
+                bincode_c.serialized_size(&val).unwrap(),
+                config::serialized_size(&val, c).unwrap()
+            );
+            let deserialized: T = config::deserialize(&serialized, c).unwrap();
+            assert_eq!(val, deserialized);
+        }
+
+        for val in [0u16, 1, 250, 251, 252, u16::MAX] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [
+            0u32,
+            1,
+            250,
+            251,
+            252,
+            u16::MAX as u32,
+            u16::MAX as u32 + 1,
+            u32::MAX,
+        ] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [
+            0u64,
+            1,
+            250,
+            251,
+            252,
+            u16::MAX as u64,
+            u16::MAX as u64 + 1,
+            u32::MAX as u64,
+            u32::MAX as u64 + 1,
+            u64::MAX,
+        ] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [
+            0u128,
+            1,
+            250,
+            251,
+            252,
+            u16::MAX as u128,
+            u16::MAX as u128 + 1,
+            u32::MAX as u128,
+            u32::MAX as u128 + 1,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            u128::MAX,
+        ] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [0i16, 1, -1, 2, -2, i16::MIN, i16::MAX] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [0i32, 1, -1, 2, -2, i32::MIN, i32::MAX] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [0i64, 1, -1, 2, -2, i64::MIN, i64::MAX] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+
+        for val in [0i128, 1, -1, 2, -2, i128::MIN, i128::MAX] {
+            assert_varint_roundtrip(val, c, bincode_c);
+        }
+    }
+
+    #[test]
     fn test_floats_with_custom_byte_order() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()

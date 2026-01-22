@@ -24,7 +24,7 @@ pub enum ReadError {
 pub type ReadResult<T> = core::result::Result<T, ReadError>;
 
 #[cold]
-const fn read_size_limit(len: usize) -> ReadError {
+pub const fn read_size_limit(len: usize) -> ReadError {
     ReadError::ReadSizeLimit(len)
 }
 
