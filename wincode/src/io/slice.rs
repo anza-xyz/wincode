@@ -6,7 +6,7 @@ pub(super) mod trusted_slice {
 
     #[inline]
     pub(super) fn fill_buf(bytes: &[u8], n_bytes: usize) -> &[u8] {
-        unsafe { bytes.get_unchecked(..n_bytes.min(bytes.len())) }
+        &bytes[..n_bytes.min(bytes.len())]
     }
 
     #[inline]
@@ -219,8 +219,7 @@ impl<'a> Reader<'a> for &'a [u8] {
 
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+        Ok(&self[..n_bytes.min(self.len())])
     }
 
     #[inline]
@@ -269,8 +268,7 @@ impl<'a> Reader<'a> for &'a mut [u8] {
 
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+        Ok(&self[..n_bytes.min(self.len())])
     }
 
     #[inline]
@@ -377,16 +375,6 @@ fn advance_slice_mut_checked<'a, T>(
     Ok(dst)
 }
 
-/// Get a slice of `len` bytes for writing returning an error if the input slice does not have
-/// at least `len` bytes remaining.
-#[inline]
-fn get_slice_mut_checked<T>(input: &mut [T], len: usize) -> WriteResult<&'_ mut [T]> {
-    let Some((dst, _)) = input.split_at_mut_checked(len) else {
-        return Err(write_size_limit(len));
-    };
-    Ok(dst)
-}
-
 impl Writer for &mut [MaybeUninit<u8>] {
     type Trusted<'b>
         = TrustedSliceWriter<'b>
@@ -403,27 +391,6 @@ impl Writer for &mut [MaybeUninit<u8>] {
     #[inline]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedSliceWriter::new(advance_slice_mut_checked(
-            self, n_bytes,
-        )?))
-    }
-}
-
-impl Writer for [MaybeUninit<u8>] {
-    type Trusted<'b>
-        = TrustedSliceWriter<'b>
-    where
-        Self: 'b;
-
-    #[inline]
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let dst = get_slice_mut_checked(self, src.len())?;
-        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) };
-        Ok(())
-    }
-
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        Ok(TrustedSliceWriter::new(get_slice_mut_checked(
             self, n_bytes,
         )?))
     }
@@ -447,31 +414,6 @@ impl Writer for &mut [u8] {
     #[inline]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         let buf = advance_slice_mut_checked(self, n_bytes)?;
-        // SAFETY: we just created a slice of `n_bytes` initialized bytes, so casting to
-        // `&mut [MaybeUninit<u8>]` is safe.
-        let buf = unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(buf) };
-        Ok(TrustedSliceWriter::new(buf))
-    }
-}
-
-impl Writer for [u8] {
-    type Trusted<'b>
-        = TrustedSliceWriter<'b>
-    where
-        Self: 'b;
-
-    #[inline]
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let dst = get_slice_mut_checked(self, src.len())?;
-        // Avoid the bounds check of `copy_from_slice` by using `copy_nonoverlapping`,
-        // since we already bounds check in `get_slice_mut`.
-        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), src.len()) };
-        Ok(())
-    }
-
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        let buf = get_slice_mut_checked(self, n_bytes)?;
         // SAFETY: we just created a slice of `n_bytes` initialized bytes, so casting to
         // `&mut [MaybeUninit<u8>]` is safe.
         let buf = unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(buf) };
@@ -554,7 +496,7 @@ mod tests {
             {
                 $buffer.resize(capacity, 0);
                 $buffer.fill(0);
-                let $writer = $buffer.as_mut_slice();
+                let mut $writer = $buffer.as_mut_slice();
                 $body_write
                 $body_check;
                 $buffer.clear();
@@ -562,7 +504,7 @@ mod tests {
             {
                 $buffer.fill(0);
                 $buffer.clear();
-                let $writer = $buffer.spare_capacity_mut();
+                let mut $writer = $buffer.spare_capacity_mut();
                 $body_write
                 unsafe { $buffer.set_len(capacity) }
                 $body_check;
@@ -670,10 +612,7 @@ mod tests {
         #[test]
         fn test_writer_write_input_too_large(bytes in proptest::collection::vec(any::<u8>(), 1..=100)) {
             let mut buffer = Vec::with_capacity(bytes.len() - 1);
-            let writer = &mut buffer.spare_capacity_mut();
-            prop_assert!(matches!(writer.write(&bytes), Err(WriteError::WriteSizeLimit(x)) if x == bytes.len()));
-
-            let writer = buffer.spare_capacity_mut();
+            let mut writer = buffer.spare_capacity_mut();
             prop_assert!(matches!(writer.write(&bytes), Err(WriteError::WriteSizeLimit(x)) if x == bytes.len()));
         }
 

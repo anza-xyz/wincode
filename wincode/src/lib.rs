@@ -241,7 +241,7 @@
 //! let serialized = wincode::serialize(&byte_ref).unwrap();
 //! let deserialized: ByteRef<'_> = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(byte_ref, deserialized);
-//! # }  
+//! # }
 //! ```
 //!
 //! ### struct newtype
@@ -431,7 +431,7 @@
 //! }
 //!
 //! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
-//! impl<'de, C: Config> SchemaRead<'de, C> for Message {
+//! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
 //!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {

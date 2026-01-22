@@ -105,7 +105,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         });
 
         let stream = quote! {
-            impl<Cfg: crate::config::Config, #(#params),*> crate::SchemaWrite<Cfg> for #params_tuple
+            unsafe impl<Cfg: crate::config::Config, #(#params),*> crate::SchemaWrite<Cfg> for #params_tuple
             where
                 #(#params: crate::SchemaWrite<Cfg>,)*
                 #(#params::Src: Sized,)*
@@ -143,7 +143,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 }
             }
 
-            impl<'de, Cfg: crate::config::Config, #(#params),*> crate::SchemaRead<'de, Cfg> for #params_tuple
+            unsafe impl<'de, Cfg: crate::config::Config, #(#params),*> crate::SchemaRead<'de, Cfg> for #params_tuple
             where
                 #(#params: crate::SchemaRead<'de, Cfg>,)*
             {

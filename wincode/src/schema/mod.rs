@@ -52,6 +52,7 @@ use {
 
 pub mod containers;
 mod impls;
+pub mod int_encoding;
 
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
@@ -97,28 +98,71 @@ impl TypeMeta {
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
-pub trait SchemaWrite<C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `size_of`
+pub unsafe trait SchemaWrite<C: ConfigCore> {
     type Src: ?Sized;
 
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes written by
+    ///   `write`. `size_of` must always return `Ok(size)`.
+    /// - If `zero_copy` is `true`, `Src`'s in-memory representation must
+    ///   correspond exactly to the serialized form. There must be no padding in
+    ///   the in-memory representation of `Src`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     /// Get the serialized size of `Self::Src`.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
+
     /// Write `Self::Src` to `writer`.
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
-pub trait SchemaRead<'de, C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `read`.
+pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     type Dst;
 
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes read by `read`.
+    /// - If `zero_copy` is `true`, `Dst`'s in-memory representation must
+    ///   correspond exactly to the serialized form, and all byte sequences must
+    ///   be valid in-memory representations of `Dst`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     /// Read into `dst` from `reader`.
     ///
     /// # Safety
     ///
-    /// - Implementation must properly initialize the `Self::Dst`.
+    /// You must initialize `dst` if **and only if** you return `Ok(())`. In the
+    /// `Err(…)` case, initializing `dst` can lead to memory leaks.
+    ///
+    /// It is permissible to not initialize `dst` if `dst` is an inhabited
+    /// zero-sized type.
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
@@ -236,8 +280,7 @@ where
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-/// Variant of [`size_of_elem_iter`] specialized for slices, which can opt into
-/// an optimized implementation for bytes (`u8`s).
+/// Variant of [`size_of_elem_iter`] specialized for slices.
 fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
 where
     C: ConfigCore,
@@ -321,11 +364,12 @@ mod tests {
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
-            len::{BincodeLen, FixInt},
+            len::{BincodeLen, FixIntLen},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             WriteResult, ZeroCopy,
         },
+        bincode::Options,
         core::{marker::PhantomData, ptr},
         proptest::prelude::*,
         std::{
@@ -600,7 +644,7 @@ mod tests {
         }
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCounted {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCounted {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -617,7 +661,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCounted {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -641,7 +685,7 @@ mod tests {
         const TAG_BYTE: u8 = 1;
     }
 
-    impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
+    unsafe impl<C: Config> SchemaWrite<C> for ErrorsOnRead {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -658,7 +702,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for ErrorsOnRead {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -681,7 +725,7 @@ mod tests {
         ErrorsOnRead(ErrorsOnRead),
     }
 
-    impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
+    unsafe impl<C: Config> SchemaWrite<C> for DropCountedMaybeError {
         type Src = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -712,7 +756,7 @@ mod tests {
         }
     }
 
-    impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
+    unsafe impl<'de, C: Config> SchemaRead<'de, C> for DropCountedMaybeError {
         type Dst = Self;
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
@@ -2784,13 +2828,88 @@ mod tests {
 
     #[test]
     fn test_custom_length_encoding() {
-        let c = Configuration::default().with_length_encoding::<FixInt<u32>>();
+        let c = Configuration::default().with_length_encoding::<FixIntLen<u32>>();
+
         proptest!(proptest_cfg(), |(value: Vec<u8>)| {
             let wincode_serialized = config::serialize(&value, c).unwrap();
             let wincode_deserialized: Vec<u8> = config::deserialize(&wincode_serialized, c).unwrap();
             let len = value.len();
             prop_assert_eq!(len, u32::from_le_bytes(wincode_serialized[0..4].try_into().unwrap()) as usize);
             prop_assert_eq!(value, wincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_byte_order_configuration() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: Vec<u64>)| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+
+            let deserialized: Vec<u64> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u64::from_be_bytes(serialized[0..8].try_into().unwrap()) as usize);
+
+            if !value.is_empty() {
+                for (i, chunk) in serialized[8..].chunks(8).enumerate() {
+                    let val = u64::from_be_bytes(chunk.try_into().unwrap());
+                    prop_assert_eq!(val, value[i]);
+                }
+            }
+
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_custom_length_encoding_and_byte_order() {
+        let c = Configuration::default()
+            .with_length_encoding::<FixIntLen<u32>>()
+            .with_big_endian();
+
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let serialized = config::serialize(&value, c).unwrap();
+            let deserialized: Vec<u8> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_be_bytes(serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_all_integers_with_custom_byte_order() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            let deserialized: (u16, u32, u64, u128, i16, i32, i64, i128, usize, isize) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_floats_with_custom_byte_order() {
+        let c = Configuration::default().with_big_endian();
+        let bincode_c = bincode::DefaultOptions::new()
+            .with_big_endian()
+            .with_fixint_encoding();
+
+        proptest!(proptest_cfg(), |(value: (f32, f64))| {
+            let bincode_serialized = bincode_c.serialize(&value).unwrap();
+            let serialized = config::serialize(&value, c).unwrap();
+            prop_assert_eq!(&bincode_serialized, &serialized);
+            let deserialized: (f32, f64) = config::deserialize(&serialized, c).unwrap();
+            prop_assert_eq!(value, deserialized);
         });
     }
 }

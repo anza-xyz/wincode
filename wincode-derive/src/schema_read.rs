@@ -173,7 +173,7 @@ fn impl_struct(
 ///     body: Body,
 /// }
 ///
-/// impl<'de> SchemaRead<'de> for Message {
+/// unsafe impl<'de> SchemaRead<'de> for Message {
 ///     type Dst = Message;
 ///
 ///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -699,7 +699,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
             #zero_copy_impl
 
-            impl #impl_generics SchemaRead<'de, WincodeConfig> for #ident #ty_generics #where_clause {
+            unsafe impl #impl_generics SchemaRead<'de, WincodeConfig> for #ident #ty_generics #where_clause {
                 type Dst = #src_dst;
 
                 #[allow(clippy::arithmetic_side_effects)]

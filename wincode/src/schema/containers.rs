@@ -211,7 +211,7 @@ pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 //   - Does not contain references or pointers.
 unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
 
-impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -234,7 +234,7 @@ where
     }
 }
 
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
 where
     T: Copy + 'static,
 {
@@ -256,7 +256,7 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
 where
     T: SchemaWrite<C>,
 {
@@ -280,7 +280,7 @@ where
 // Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
 // so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
 #[allow(deprecated)]
-impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
 where
     T: SchemaRead<'de, C>,
 {
@@ -295,7 +295,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
+unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
@@ -315,7 +315,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
+unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaRead<'de, C>,
@@ -409,7 +409,7 @@ impl<T> Drop for SliceDropGuard<T> {
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident) => {
         #[cfg(feature = "alloc")]
-        impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
+        unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
         where
             Len: SeqLen<C>,
             T: SchemaWrite<C>,
@@ -429,7 +429,7 @@ macro_rules! impl_heap_slice {
         }
 
         #[cfg(feature = "alloc")]
-        impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for $container<[T], Len>
+        unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for $container<[T], Len>
         where
             Len: SeqLen<C>,
             T: SchemaRead<'de, C>,
@@ -576,7 +576,7 @@ impl_heap_slice!(Rc => AllocRc);
 impl_heap_slice!(Arc => AllocArc);
 
 #[cfg(feature = "alloc")]
-impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
+unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
@@ -623,7 +623,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for VecDeque<T, Len>
+unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for VecDeque<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaRead<'de, C>,
@@ -645,7 +645,7 @@ where
 pub struct BinaryHeap<T, Len>(PhantomData<Len>, PhantomData<T>);
 
 #[cfg(feature = "alloc")]
-impl<T, Len, C: ConfigCore> SchemaWrite<C> for BinaryHeap<T, Len>
+unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for BinaryHeap<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
@@ -665,7 +665,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for BinaryHeap<T, Len>
+unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for BinaryHeap<T, Len>
 where
     Len: SeqLen<C>,
     T: SchemaRead<'de, C>,
