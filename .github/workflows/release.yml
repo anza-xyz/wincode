@@ -46,14 +46,16 @@ jobs:
 
       - name: Check tag does not exist
         run: |
-          tag="${{ steps.meta.outputs.tag }}"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "Tag already exists: $tag. Please bump the version first (or delete the existing tag) and retry."
             echo "Tag exists: $tag" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "Tag: ${{ steps.meta.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Ref: ${{ steps.meta.outputs.ref }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "Ref: $REF" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          REF: ${{ steps.meta.outputs.ref }}
 
   publish:
     runs-on: ubuntu-latest
