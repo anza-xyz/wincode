@@ -29,41 +29,6 @@
 //! # }
 //! ```
 //!
-//! For "plain old data" (see [`Pod`](containers::Pod)) fields (POD newtypes, arrays of POD newtypes, etc),
-//! use [`containers`] to leverage optimized read/write implementations.
-//!
-//! ```
-//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{containers::{self, Pod}};
-//! # use wincode_derive::{SchemaWrite, SchemaRead};
-//! # use serde::{Serialize, Deserialize};
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy)]
-//! struct Address([u8; 32]);
-//!
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy)]
-//! struct Hash([u8; 32]);
-//!
-//! # #[derive(serde::Serialize, serde::Deserialize, PartialEq, Eq, Debug)]
-//! #[derive(SchemaWrite, SchemaRead)]
-//! struct MyStruct {
-//!     #[wincode(with = "Pod<_>")]
-//!     hash: Hash,
-//!     #[wincode(with = "containers::Vec<Pod<_>>")]
-//!     addresses: Vec<Address>,
-//! }
-//!
-//! let val = MyStruct {
-//!     hash: Hash([0; 32]),
-//!     addresses: vec![Address([0; 32]), Address([1; 32])]
-//! };
-//! assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap());
-//! # }
-//! ```
-//!
 //! # Motivation
 //!
 //! Typical Rust API design employs a *construct-then-move* style of programming.
@@ -198,13 +163,71 @@
 //!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
 //!
-//! # Zero copy deserialization
+//! # Zero-copy deserialization
 //!
-//! `wincode` supports zero copy deserialization of contiguous byte slices
-//! (serialized with `Vec<u8>`, `Box<[u8]>`, `[u8; N]`, etc.).
+//! `wincode`'s zero-copy deserialization is built on the following primitives:
+//! - [`u8`]
+//! - [`i8`]
+//!
+//! In addition to the following on little endian targets:
+//! - [`u16`], [`i16`], [`u32`], [`i32`], [`u64`], [`i64`], [`u128`], [`i128`], [`f32`], [`f64`]
+//!
+//! Types with alignment greater than 1 can force the compiler to insert padding into your structs.
+//! Zero-copy requires padding-free layouts; if the layout has implicit padding, `wincode` will not
+//! qualify the type as zero-copy.
+//!
+//! ---
+//!
+//! Within `wincode`, any type that is composed entirely of the above primitives is
+//! eligible for zero-copy deserialization. This includes arrays, slices, and structs.
+//!
+//! Structs deriving [`SchemaRead`] are eligible for zero-copy deserialization
+//! as long as they are composed entirely of the above zero-copy types, are annotated with
+//! `#[repr(transparent)]` or `#[repr(C)]`, and have no implicit padding. Use appropriate
+//! field ordering or add explicit padding fields if needed to eliminate implicit padding.
+//!
+//! Note that tuples are **not** eligible for zero-copy deserialization, as Rust does not
+//! currently guarantee tuple layout.
+//!
+//! ## Field reordering
+//! If your struct has implicit padding, you may be able to reorder fields to avoid it.
 //!
 //! ```
-//! # #[cfg(feature = "derive")] {
+//! #[repr(C)]
+//! struct HasPadding {
+//!    a: u8,
+//!    b: u32,
+//!    c: u16,
+//!    d: u8,
+//! }
+//!
+//! #[repr(C)]
+//! struct ZeroPadding {
+//!    b: u32,
+//!    c: u16,
+//!    a: u8,
+//!    d: u8,
+//! }
+//! ```
+//!
+//! ## Explicit padding
+//! You may need to add an explicit padding field if reordering fields cannot yield
+//! a padding-free layout.
+//!
+//! ```
+//! #[repr(C)]
+//! struct HasPadding {
+//!    a: u32,
+//!    b: u16,
+//!    _pad: [u8; 2],
+//! }
+//! ```
+//!
+//! ## Examples
+//!
+//! ### `&[u8]`
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
 //! use wincode::{SchemaWrite, SchemaRead};
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -216,10 +239,71 @@
 //! let bytes: Vec<u8> = vec![1, 2, 3, 4, 5];
 //! let byte_ref = ByteRef { bytes: &bytes };
 //! let serialized = wincode::serialize(&byte_ref).unwrap();
-//! let deserialized = wincode::deserialize(&serialized).unwrap();
+//! let deserialized: ByteRef<'_> = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(byte_ref, deserialized);
-//! # }  
+//! # }
 //! ```
+//!
+//! ### struct newtype
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use rand::random;
+//! # use std::array;
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! #[repr(transparent)]
+//! struct Signature([u8; 64]);
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! struct Data<'a> {
+//!     signature: &'a Signature,
+//!     data: &'a [u8],
+//! }
+//!
+//! let signature = Signature(array::from_fn(|_| random()));
+//! let data = Data {
+//!     signature: &signature,
+//!     data: &[1, 2, 3, 4, 5],
+//! };
+//! let serialized = wincode::serialize(&data).unwrap();
+//! let deserialized: Data<'_> = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(data, deserialized);
+//! # }
+//! ```
+//!
+//! ### `&[u8; N]`
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, SchemaRead)]
+//! struct HeaderRef<'a> {
+//!     magic: &'a [u8; 7],
+//! }
+//!
+//! let header = HeaderRef { magic: b"W1NC0D3" };
+//! let serialized = wincode::serialize(&header).unwrap();
+//! let deserialized: HeaderRef<'_> = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(header, deserialized);
+//! # }
+//! ```
+//!
+//! ## In-place mutation
+//!
+//! wincode supports in-place mutation of zero-copy types.
+//! See [`deserialize_mut`] or [`ZeroCopy::from_bytes_mut`] for more details.
+//!
+//! ## `ZeroCopy` and `config::ZeroCopy` methods
+//!
+//! The [`ZeroCopy`] and [`config::ZeroCopy`] traits provide some convenience methods for
+//! working with zero-copy types.
+//!
+//! See those trait definitions for more details.
+//!
 //! # Derive attributes
 //!
 //! ## Top level
@@ -229,6 +313,7 @@
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
+//! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
 //!
 //! ### `no_suppress_unused`
 //!
@@ -279,11 +364,47 @@
 //! to reduce the amount of boilerplate that is typically required when dealing with uninitialized
 //! fields.
 //!
-//! For example:
+//! `#[wincode(struct_extensions)]` generates a corresponding uninit builder struct for the type.
+//! The name of the builder struct is the name of the type with `UninitBuilder` appended.
+//! E.g., `Header` -> `HeaderUninitBuilder`.
+//!
+//! The builder has automatic initialization tracking that does bookkeeping of which fields have been initialized.
+//! Calling `write_<field_name>` or `read_<field_name>`, for example, will mark the field as
+//! initialized so that it's properly dropped if the builder is dropped on error or panic.
+//!
+//! The builder struct has the following methods:
+//! - `from_maybe_uninit_mut`
+//!   - Creates a new builder from a mutable `MaybeUninit` reference to the type.
+//! - `into_assume_init_mut`
+//!   - Assumes the builder is fully initialized, drops it, and returns a mutable reference to the inner type.
+//! - `finish`
+//!   - Forgets the builder, disabling the drop logic.
+//! - `is_init`
+//!   - Checks if the builder is fully initialized by checking if all field initialization bits are set.
+//!
+//! For each field, the builder struct provides the following methods:
+//! - `uninit_<field_name>_mut`
+//!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
+//! - `read_<field_name>`
+//!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
+//! - `write_<field_name>`
+//!   - Writes a `MaybeUninit`'s `<field_name>` slot with the given value.
+//! - `init_<field_name>_with`
+//!   - Initializes the `<field_name>` slot with a given initializer function.
+//! - `assume_init_<field_name>`
+//!   - Marks the `<field_name>` slot as initialized.
+//!
+//! #### Safety
+//!
+//! Correct code will call `finish` or `into_assume_init_mut` once all fields have been initialized.
+//! Failing to do so will result in the initialized fields being dropped when the builder is dropped, which
+//! is undefined behavior if the `MaybeUninit` is later assumed to be initialized (e.g., on successful deserialization).
+//!
+//! #### Example
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult};
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config};
 //! # use serde::{Serialize, Deserialize};
 //! # use core::mem::MaybeUninit;
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -310,30 +431,37 @@
 //! }
 //!
 //! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
-//! impl<'de> SchemaRead<'de> for Message {
+//! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
 //!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-//!         // We have to do a big ugly cast like this to get a mutable MaybeUninit<Payload>.
-//!         let mut payload = unsafe {
+//!         // Normally we have to do a big ugly cast like this
+//!         // to get a mutable `MaybeUninit<Payload>`.
+//!         let payload = unsafe {
 //!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
 //!         };
-//!         // `Payload::uninit_header_mut` is generated by `#[wincode(struct_extensions)]`.
-//!         // This avoids having to do a big ugly cast like we had to do for payload above.
-//!         //
-//!         // Project a mutable `MaybeUninit<Header>` from the `MaybeUninit<Payload>`.
-//!         let header = Payload::uninit_header_mut(payload);
-//!         // Similarly, `Header::read_num_required_signatures` is generated
-//!         // by `#[wincode(struct_extensions)]`.
-//!         //
-//!         // Read directly into the projected MaybeUninit<Header> slot.
-//!         Header::read_num_required_signatures(reader, header)?;
-//!         // ...
-//!         Header::read_num_signed_accounts(reader, header)?;
-//!         Header::read_num_unsigned_accounts(reader, header)?;
-//!         // Alternatively, we could have done `Payload::read_header(reader, payload)?;`
+//!         // Note that the order matters here. Values are dropped in reverse
+//!         // declaration order, and we need to ensure `header_builder` is dropped
+//!         // before `payload_builder` in the event of an error or panic.
+//!         let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!         unsafe {
+//!             // payload.header will be marked as initialized if the function succeeds.
+//!             payload_builder.init_header_with(|header| {
+//!                 // Read directly into the projected MaybeUninit<Header> slot.
+//!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
+//!                 header_builder.read_num_required_signatures(reader)?;
+//!                 header_builder.read_num_signed_accounts(reader)?;
+//!                 header_builder.read_num_unsigned_accounts(reader)?;
+//!                 header_builder.finish();
+//!                 Ok(())
+//!             })?;
+//!         }
+//!         // Alternatively, we could have done `payload_builder.read_header(reader)?;`
 //!         // rather than reading all the fields individually.
-//!         Payload::read_data(reader, payload)?;
+//!         payload_builder.read_data(reader)?;
+//!         // Message is fully initialized, so we forget the builders
+//!         // to avoid dropping the initialized fields.
+//!         payload_builder.finish();
 //!         Ok(())
 //!     }
 //! }
@@ -353,15 +481,6 @@
 //! assert_eq!(msg, deserialized);
 //! # }
 //! ```
-//!
-//! `#[wincode(struct_extensions)]` generates three methods per field:
-//! - `uninit_<field_name>_mut`
-//!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
-//! - `read_<field_name>`
-//!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
-//! - `write_uninit_<field_name>`
-//!   - Writes a `MaybeUninit`'s `<field_name>` slot with the given value.
-//!
 //!
 //! ## Field level
 //! |Attribute|Type|Default|Description
@@ -415,9 +534,9 @@ mod schema;
 pub use schema::*;
 mod serde;
 pub use serde::*;
+pub mod config;
 #[cfg(test)]
 mod proptest_config;
-mod util;
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
 // Include tuple impls.

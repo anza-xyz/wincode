@@ -40,15 +40,24 @@ pub enum ReadError {
     InvalidBoolEncoding(u8),
     #[error("Sequence length would overflow length encoding scheme: {0}")]
     LengthEncodingOverflow(&'static str),
+    #[error("Invalid value: {0}")]
+    InvalidValue(&'static str),
     #[error("Invalid char lead: {0}")]
     InvalidCharLead(u8),
     #[error("Custom error: {0}")]
     Custom(&'static str),
+    #[error("Zero-copy read would be unaligned")]
+    UnalignedPointerRead,
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
 pub type WriteResult<T> = core::result::Result<T, WriteError>;
 pub type ReadResult<T> = core::result::Result<T, ReadError>;
+
+#[cold]
+pub const fn unaligned_pointer_read() -> ReadError {
+    ReadError::UnalignedPointerRead
+}
 
 #[cold]
 pub const fn preallocation_size_limit(needed: usize, limit: usize) -> ReadError {
@@ -88,4 +97,9 @@ pub const fn invalid_utf8_encoding(error: Utf8Error) -> ReadError {
 #[cold]
 pub const fn invalid_char_lead(val: u8) -> ReadError {
     ReadError::InvalidCharLead(val)
+}
+
+#[cold]
+pub const fn invalid_value(msg: &'static str) -> ReadError {
+    ReadError::InvalidValue(msg)
 }

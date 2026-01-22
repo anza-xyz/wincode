@@ -8,6 +8,7 @@ use {
     syn::{parse_macro_input, DeriveInput},
 };
 
+mod assert_zero_copy;
 mod common;
 mod schema_read;
 mod schema_write;

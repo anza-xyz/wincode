@@ -1,12 +1,12 @@
 use {super::*, core::marker::PhantomData};
 
 /// Helpers for trusted slice operations.
-pub(crate) mod trusted_slice {
+pub(super) mod trusted_slice {
     use super::*;
 
     #[inline]
     pub(super) fn fill_buf(bytes: &[u8], n_bytes: usize) -> &[u8] {
-        unsafe { bytes.get_unchecked(..n_bytes.min(bytes.len())) }
+        &bytes[..n_bytes.min(bytes.len())]
     }
 
     #[inline]
@@ -49,7 +49,7 @@ pub struct TrustedSliceReaderZeroCopy<'a> {
 }
 
 impl<'a> TrustedSliceReaderZeroCopy<'a> {
-    pub const fn new(bytes: &'a [u8]) -> Self {
+    pub(super) const fn new(bytes: &'a [u8]) -> Self {
         Self { cursor: bytes }
     }
 }
@@ -89,8 +89,66 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n_bytes)?))
+    }
+}
+
+/// In-memory [`Reader`] for mutable slices that does not perform bounds checking,
+/// with zero-copy support.
+///
+/// # Safety
+///
+/// - The inner buffer must have sufficient capacity for all reads. It is UB if this is not upheld.
+pub struct TrustedSliceReaderZeroCopyMut<'a> {
+    cursor: &'a mut [u8],
+}
+
+impl<'a> TrustedSliceReaderZeroCopyMut<'a> {
+    pub(super) const fn new(bytes: &'a mut [u8]) -> Self {
+        Self { cursor: bytes }
+    }
+}
+
+impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
+    type Trusted<'b>
+        = Self
+    where
+        Self: 'b;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        Ok(trusted_slice::fill_buf(self.cursor, n_bytes))
+    }
+
+    #[inline]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        Ok(trusted_slice::fill_exact(self.cursor, n_bytes))
+    }
+
+    #[inline]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        let (src, rest) = unsafe { mem::take(&mut self.cursor).split_at_mut_unchecked(len) };
+        self.cursor = rest;
+        Ok(src)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        self.cursor = unsafe { mem::take(&mut self.cursor).get_unchecked_mut(amt..) };
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        unsafe { Self::consume_unchecked(self, amt) };
+        Ok(())
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReaderZeroCopyMut::new(
+            self.borrow_exact_mut(n_bytes)?,
+        ))
     }
 }
 
@@ -110,7 +168,7 @@ pub struct TrustedSliceReader<'a, 'b> {
 }
 
 impl<'a, 'b> TrustedSliceReader<'a, 'b> {
-    pub const fn new(bytes: &'b [u8]) -> Self {
+    pub(super) const fn new(bytes: &'b [u8]) -> Self {
         Self {
             cursor: bytes,
             _marker: PhantomData,
@@ -146,7 +204,7 @@ impl<'a, 'b> Reader<'a> for TrustedSliceReader<'a, 'b> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         let (src, rest) = unsafe { self.cursor.split_at_unchecked(n_bytes) };
         self.cursor = rest;
         Ok(TrustedSliceReader::new(src))
@@ -161,10 +219,10 @@ impl<'a> Reader<'a> for &'a [u8] {
 
     #[inline]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        // SAFETY: we clamp the end bound to the length of the slice.
-        Ok(unsafe { self.get_unchecked(..n_bytes.min(self.len())) })
+        Ok(&self[..n_bytes.min(self.len())])
     }
 
+    #[inline]
     fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
         let Some(src) = self.get(..n_bytes) else {
             return Err(read_size_limit(n_bytes));
@@ -197,8 +255,59 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n)?))
+    }
+}
+
+impl<'a> Reader<'a> for &'a mut [u8] {
+    type Trusted<'b>
+        = TrustedSliceReaderZeroCopyMut<'a>
+    where
+        Self: 'b;
+
+    #[inline]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        Ok(&self[..n_bytes.min(self.len())])
+    }
+
+    #[inline]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        let Some(src) = self.get(..n_bytes) else {
+            return Err(read_size_limit(n_bytes));
+        };
+        Ok(src)
+    }
+
+    #[inline]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        let Some((src, rest)) = mem::take(self).split_at_mut_checked(len) else {
+            return Err(read_size_limit(len));
+        };
+        *self = rest;
+        Ok(src)
+    }
+
+    #[inline]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        *self = unsafe { mem::take(self).get_unchecked_mut(amt..) };
+    }
+
+    #[inline]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        if self.len() < amt {
+            return Err(read_size_limit(amt));
+        }
+        // SAFETY: we just checked that self.len() >= amt.
+        unsafe { self.consume_unchecked(amt) };
+        Ok(())
+    }
+
+    #[inline]
+    unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceReaderZeroCopyMut::new(
+            self.borrow_exact_mut(n)?,
+        ))
     }
 }
 
@@ -225,7 +334,7 @@ impl core::ops::Deref for TrustedSliceWriter<'_> {
 
 impl<'a> TrustedSliceWriter<'a> {
     #[inline(always)]
-    pub const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
+    pub(super) const fn new(buffer: &'a mut [MaybeUninit<u8>]) -> Self {
         Self { buffer }
     }
 }
@@ -244,7 +353,7 @@ impl<'a> Writer for TrustedSliceWriter<'a> {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
         Ok(TrustedSliceWriter::new(trusted_slice::get_slice_mut(
             &mut self.buffer,
             n_bytes,
@@ -255,7 +364,10 @@ impl<'a> Writer for TrustedSliceWriter<'a> {
 /// Get a slice of `len` bytes for writing, advancing the writer by `len` bytes, or
 /// returning an error if the input slice does not have at least `len` bytes remaining.
 #[inline]
-fn get_slice_mut_checked<'a, T>(input: &mut &'a mut [T], len: usize) -> WriteResult<&'a mut [T]> {
+fn advance_slice_mut_checked<'a, T>(
+    input: &mut &'a mut [T],
+    len: usize,
+) -> WriteResult<&'a mut [T]> {
     let Some((dst, rest)) = mem::take(input).split_at_mut_checked(len) else {
         return Err(write_size_limit(len));
     };
@@ -271,14 +383,14 @@ impl Writer for &mut [MaybeUninit<u8>] {
 
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let dst = get_slice_mut_checked(self, src.len())?;
+        let dst = advance_slice_mut_checked(self, src.len())?;
         unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) };
         Ok(())
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        Ok(TrustedSliceWriter::new(get_slice_mut_checked(
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        Ok(TrustedSliceWriter::new(advance_slice_mut_checked(
             self, n_bytes,
         )?))
     }
@@ -292,7 +404,7 @@ impl Writer for &mut [u8] {
 
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let dst = get_slice_mut_checked(self, src.len())?;
+        let dst = advance_slice_mut_checked(self, src.len())?;
         // Avoid the bounds check of `copy_from_slice` by using `copy_nonoverlapping`,
         // since we already bounds check in `get_slice_mut`.
         unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), src.len()) };
@@ -300,8 +412,8 @@ impl Writer for &mut [u8] {
     }
 
     #[inline]
-    fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        let buf = get_slice_mut_checked(self, n_bytes)?;
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        let buf = advance_slice_mut_checked(self, n_bytes)?;
         // SAFETY: we just created a slice of `n_bytes` initialized bytes, so casting to
         // `&mut [MaybeUninit<u8>]` is safe.
         let buf = unsafe { transmute::<&mut [u8], &mut [MaybeUninit<u8>]>(buf) };
@@ -312,7 +424,7 @@ impl Writer for &mut [u8] {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
-    use {super::*, crate::proptest_config::proptest_cfg, proptest::prelude::*};
+    use {super::*, crate::proptest_config::proptest_cfg, alloc::vec::Vec, proptest::prelude::*};
 
     #[test]
     fn test_reader_peek() {
@@ -354,11 +466,11 @@ mod tests {
         }};
     }
 
-    /// Execute the given block with slice writer and trusted slice writer for the given buffer.
+    /// Execute the given block with slice reference writer and trusted slice writer for the given buffer.
     macro_rules! with_writers {
         ($buffer:expr, |$writer:ident| $body:block) => {{
             {
-                let mut $writer = $buffer.spare_capacity_mut();
+                let $writer = &mut $buffer.spare_capacity_mut();
                 $body
                 $buffer.clear();
             }
@@ -370,9 +482,32 @@ mod tests {
             {
                 let _capacity = $buffer.capacity();
                 $buffer.resize(_capacity, 0);
-                let mut $writer = $buffer.as_mut_slice();
+                let $writer = &mut $buffer.as_mut_slice();
                 $body
                 $buffer.clear();
+            }
+        }};
+    }
+
+    // Execute the given block with slice writer of the given preallocated buffer.
+    macro_rules! with_known_len_writers {
+        ($buffer:expr, |$writer:ident| $body_write:block, $body_check:expr) => {{
+            let capacity = $buffer.capacity();
+            {
+                $buffer.resize(capacity, 0);
+                $buffer.fill(0);
+                let mut $writer = $buffer.as_mut_slice();
+                $body_write
+                $body_check;
+                $buffer.clear();
+            }
+            {
+                $buffer.fill(0);
+                $buffer.clear();
+                let mut $writer = $buffer.spare_capacity_mut();
+                $body_write
+                unsafe { $buffer.set_len(capacity) }
+                $body_check;
             }
         }};
     }
@@ -387,8 +522,7 @@ mod tests {
                 let half = bytes.len() / 2;
                 let dst = vec.spare_capacity_mut();
                 reader.copy_into_slice(&mut dst[..half]).unwrap();
-                reader
-                    .as_trusted_for(bytes.len() - half)
+                unsafe { reader.as_trusted_for(bytes.len() - half) }
                     .unwrap()
                     .copy_into_slice(&mut dst[half..])
                     .unwrap();
@@ -469,6 +603,10 @@ mod tests {
                 unsafe { buffer.set_len(written) };
                 prop_assert_eq!(&buffer, &bytes);
             });
+
+            with_known_len_writers!(&mut buffer, |writer| {
+                writer.write(&bytes).unwrap();
+            }, prop_assert_eq!(&buffer, &bytes));
         }
 
         #[test]
@@ -488,6 +626,10 @@ mod tests {
                 unsafe { buffer.set_len(written) };
                 prop_assert_eq!(&buffer, &int.to_le_bytes());
             });
+
+            with_known_len_writers!(&mut buffer, |writer| {
+                unsafe { writer.write_t(&int).unwrap() };
+            }, prop_assert_eq!(&buffer, &int.to_le_bytes()));
         }
 
         #[test]
@@ -501,6 +643,10 @@ mod tests {
                 unsafe { buffer.set_len(written) };
                 prop_assert_eq!(&buffer, &bytes);
             });
+
+            with_known_len_writers!(&mut buffer, |writer| {
+                unsafe { writer.write_slice_t(&ints).unwrap() };
+            }, prop_assert_eq!(&buffer, &bytes));
         }
     }
 }

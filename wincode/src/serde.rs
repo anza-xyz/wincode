@@ -2,10 +2,11 @@
 use alloc::vec::Vec;
 use {
     crate::{
+        config::{self, DefaultConfig},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        SchemaReadOwned, TypeMeta,
+        SchemaReadOwned,
     },
     core::mem::MaybeUninit,
 };
@@ -18,17 +19,16 @@ use {
 /// Using containers (indirect deserialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Deserialize, containers::{self, Pod}};
+/// # use wincode::{Deserialize, containers, len::BincodeLen};
 /// let vec: Vec<u8> = vec![1, 2, 3];
 /// let bytes = wincode::serialize(&vec).unwrap();
-/// // Use the optimized `Pod` container
-/// type Dst = containers::Vec<Pod<u8>>;
+/// type Dst = containers::Vec<u8, BincodeLen>;
 /// let deserialized = Dst::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct deserialization (`T::Dst = T`) (non-optimized):
+/// Using direct deserialization (`T::Dst = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
@@ -37,63 +37,43 @@ use {
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
-pub trait Deserialize<'de>: SchemaRead<'de> {
-    /// Deserialize `bytes` into a new `Self::Dst`.
+pub trait Deserialize<'de>: SchemaRead<'de, DefaultConfig> {
+    /// Deserialize the input `src` bytes into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
-        let mut dst = MaybeUninit::uninit();
-        Self::deserialize_into(src, &mut dst)?;
-        // SAFETY: Implementor ensures `SchemaRead` properly initializes the `Self::Dst`.
-        Ok(unsafe { dst.assume_init() })
+    fn deserialize(mut src: &'de [u8]) -> ReadResult<Self::Dst> {
+        Self::get(&mut src)
     }
 
-    /// Deserialize `bytes` into `target`.
+    /// Deserialize the input `src` bytes into `dst`.
     #[inline]
     fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
-            }
-            _ => {
-                Self::read(&mut src, dst)?;
-            }
-        }
-        Ok(())
+        Self::read(&mut src, dst)
     }
 }
 
-impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de> {}
+impl<'de, T> Deserialize<'de> for T where T: SchemaRead<'de, DefaultConfig> {}
 
 /// A variant of [`Deserialize`] for types that can be deserialized without borrowing from the reader.
-pub trait DeserializeOwned: SchemaReadOwned {
+pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
         src: &mut impl Reader<'de>,
-    ) -> ReadResult<<Self as SchemaRead<'de>>::Dst> {
-        let mut dst = MaybeUninit::uninit();
-        Self::deserialize_from_into(src, &mut dst)?;
-        Ok(unsafe { dst.assume_init() })
+    ) -> ReadResult<<Self as SchemaRead<'de, DefaultConfig>>::Dst> {
+        Self::get(src)
     }
 
     /// Deserialize from the given [`Reader`] into `dst`.
+    #[inline]
     fn deserialize_from_into<'de>(
         src: &mut impl Reader<'de>,
-        dst: &mut MaybeUninit<<Self as SchemaRead<'de>>::Dst>,
+        dst: &mut MaybeUninit<<Self as SchemaRead<'de, DefaultConfig>>::Dst>,
     ) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                Self::read(&mut src.as_trusted_for(size)?, dst)?;
-            }
-            _ => {
-                Self::read(src, dst)?;
-            }
-        }
-        Ok(())
+        Self::read(src, dst)
     }
 }
 
-impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
+impl<T> DeserializeOwned for T where T: SchemaReadOwned<DefaultConfig> {}
 
 /// Helper over [`SchemaWrite`] that automatically constructs a writer
 /// and serializes a source.
@@ -103,17 +83,16 @@ impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
 /// Using containers (indirect serialization):
 /// ```
 /// # #[cfg(feature = "alloc")] {
-/// # use wincode::{Serialize, containers::{self, Pod}};
+/// # use wincode::{Serialize, containers, len::BincodeLen};
 /// let vec: Vec<u8> = vec![1, 2, 3];
-/// // Use the optimized `Pod` container
-/// type Src = containers::Vec<Pod<u8>>;
+/// type Src = containers::Vec<u8, BincodeLen>;
 /// let bytes = Src::serialize(&vec).unwrap();
 /// let deserialized: Vec<u8> = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
 ///
-/// Using direct serialization (`T::Src = T`) (non-optimized):
+/// Using direct serialization (`T::Src = T`):
 /// ```
 /// # #[cfg(feature = "alloc")] {
 /// let vec: Vec<u8> = vec![1, 2, 3];
@@ -122,47 +101,32 @@ impl<T> DeserializeOwned for T where T: SchemaReadOwned {}
 /// assert_eq!(vec, deserialized);
 /// # }
 /// ```
-pub trait Serialize: SchemaWrite {
+pub trait Serialize: SchemaWrite<DefaultConfig> {
     /// Serialize a serializable type into a `Vec` of bytes.
     #[cfg(feature = "alloc")]
+    #[inline]
     fn serialize(src: &Self::Src) -> WriteResult<Vec<u8>> {
-        let capacity = Self::size_of(src)?;
-        let mut buffer = Vec::with_capacity(capacity);
-        let mut writer = buffer.spare_capacity_mut();
-        Self::serialize_into(&mut writer, src)?;
-        let len = writer.len();
-        unsafe {
-            #[allow(clippy::arithmetic_side_effects)]
-            buffer.set_len(capacity - len);
-        }
-        Ok(buffer)
+        <Self as config::Serialize<DefaultConfig>>::serialize(src, DefaultConfig::default())
     }
 
     /// Serialize a serializable type into the given byte buffer.
     #[inline]
     fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                Self::write(&mut dst.as_trusted_for(size)?, src)?;
-                dst.finish()?;
-                Ok(())
-            }
-            _ => {
-                Self::write(dst, src)?;
-                dst.finish()?;
-                Ok(())
-            }
-        }
+        <Self as config::Serialize<DefaultConfig>>::serialize_into(
+            dst,
+            src,
+            DefaultConfig::default(),
+        )
     }
 
     /// Get the size in bytes of the type when serialized.
     #[inline]
     fn serialized_size(src: &Self::Src) -> WriteResult<u64> {
-        Self::size_of(src).map(|size| size as u64)
+        <Self as config::Serialize<DefaultConfig>>::serialized_size(src, DefaultConfig::default())
     }
 }
 
-impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
+impl<T> Serialize for T where T: SchemaWrite<DefaultConfig> + ?Sized {}
 
 /// Deserialize a type from the given bytes.
 ///
@@ -188,9 +152,74 @@ impl<T> Serialize for T where T: SchemaWrite + ?Sized {}
 #[inline(always)]
 pub fn deserialize<'de, T>(src: &'de [u8]) -> ReadResult<T>
 where
-    T: SchemaRead<'de, Dst = T>,
+    T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
     T::deserialize(src)
+}
+
+/// Deserialize a type from the given bytes, with the ability
+/// to form mutable references for types that are [`ZeroCopy`](crate::ZeroCopy).
+/// This can allow mutating the serialized data in place.
+///
+/// # Examples
+///
+/// ## Zero-copy types
+/// ```
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// # use wincode::{SchemaWrite, SchemaRead};
+/// # #[derive(Debug, PartialEq, Eq)]
+/// #[derive(SchemaWrite, SchemaRead)]
+/// #[repr(C)]
+/// struct Data {
+///     bytes: [u8; 7],
+///     the_answer: u8,
+/// }
+///
+/// let data = Data { bytes: [0; 7], the_answer: 0 };
+///
+/// let mut serialized = wincode::serialize(&data).unwrap();
+/// let data_mut: &mut Data = wincode::deserialize_mut(&mut serialized).unwrap();
+/// data_mut.bytes = *b"wincode";
+/// data_mut.the_answer = 42;
+///
+/// let deserialized: Data = wincode::deserialize(&serialized).unwrap();
+/// assert_eq!(deserialized, Data { bytes: *b"wincode", the_answer: 42 });
+/// # }
+/// ```
+///
+/// ## Mutable zero-copy members
+/// ```
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// # use wincode::{SchemaWrite, SchemaRead};
+/// # #[derive(Debug, PartialEq, Eq)]
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct Data {
+///     bytes: [u8; 7],
+///     the_answer: u8,
+/// }
+/// # #[derive(Debug, PartialEq, Eq)]
+/// #[derive(SchemaRead)]
+/// struct DataMut<'a> {
+///     bytes: &'a mut [u8; 7],
+///     the_answer: u8,
+/// }
+///
+/// let data = Data { bytes: [0; 7], the_answer: 42 };
+///
+/// let mut serialized = wincode::serialize(&data).unwrap();
+/// let data_mut: DataMut<'_> = wincode::deserialize_mut(&mut serialized).unwrap();
+/// *data_mut.bytes = *b"wincode";
+///
+/// let deserialized: Data = wincode::deserialize(&serialized).unwrap();
+/// assert_eq!(deserialized, Data { bytes: *b"wincode", the_answer: 42 });
+/// # }
+/// ```
+#[inline(always)]
+pub fn deserialize_mut<'de, T>(mut src: &'de mut [u8]) -> ReadResult<T>
+where
+    T: SchemaRead<'de, DefaultConfig, Dst = T>,
+{
+    <T as SchemaRead<'de, DefaultConfig>>::get(&mut src)
 }
 
 /// Deserialize a type from the given bytes into the given target.
@@ -200,10 +229,10 @@ where
 /// Because not all readers will support zero-copy deserialization, this function
 /// requires [`SchemaReadOwned`] instead of [`SchemaRead`]. If you are deserializing
 /// from raw bytes, always prefer [`deserialize`] for maximum flexibility.
-#[inline]
+#[inline(always)]
 pub fn deserialize_from<'de, T>(src: &mut impl Reader<'de>) -> ReadResult<T>
 where
-    T: SchemaReadOwned<Dst = T>,
+    T: SchemaReadOwned<DefaultConfig, Dst = T>,
 {
     T::deserialize_from(src)
 }
@@ -229,7 +258,7 @@ where
 #[cfg(feature = "alloc")]
 pub fn serialize<T>(src: &T) -> WriteResult<Vec<u8>>
 where
-    T: SchemaWrite<Src = T> + ?Sized,
+    T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {
     T::serialize(src)
 }
@@ -240,7 +269,7 @@ where
 #[inline]
 pub fn serialize_into<T>(dst: &mut impl Writer, src: &T) -> WriteResult<()>
 where
-    T: SchemaWrite<Src = T> + ?Sized,
+    T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {
     T::serialize_into(dst, src)
 }
@@ -249,7 +278,7 @@ where
 #[inline(always)]
 pub fn serialized_size<T>(src: &T) -> WriteResult<u64>
 where
-    T: SchemaWrite<Src = T> + ?Sized,
+    T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {
     T::serialized_size(src)
 }

@@ -23,3 +23,11 @@ assert_eq!(wincode::serialize(&val).unwrap(), bincode::serialize(&val).unwrap())
 ```
 
 See the [`docs`](https://docs.rs/wincode) for more details.
+
+## Benchmarks
+
+Run benchmarks comparing `wincode` against `bincode`:
+
+```bash
+cargo bench --features derive
+```

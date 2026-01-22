@@ -1,6 +1,6 @@
 [package]
 name = "wincode"
-version = "0.1.2"
+version = "0.2.5"
 authors.workspace = true
 description = "Fast bincode de/serialization with placement initialization"
 repository.workspace = true
@@ -8,7 +8,7 @@ homepage.workspace = true
 license.workspace = true
 edition.workspace = true
 categories = ["encoding", "network-programming"]
-keywords = ["binary", "encode", "decode", "serialize", "deserialize", "bincode"]
+keywords = ["binary", "encode", "serialize", "deserialize", "bincode"]
 
 [lints]
 workspace = true
@@ -25,6 +25,7 @@ solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 
 [dependencies]
+paste = "1.0.15"
 solana-short-vec = { version = "3.0.0", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 wincode-derive = { path = "../wincode-derive", optional = true }
@@ -36,7 +37,13 @@ proptest-derive = "0.6.0"
 rand = { version = "0.8.5" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.0.0" }
+criterion = { version = "0.8.1", features = ["html_reports"] }
 
 [build-dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
+
+[[bench]]
+name = "benchmarks"
+harness = false
+required-features = ["std", "derive"]
