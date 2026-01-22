@@ -84,9 +84,10 @@ jobs:
           ref: ${{ needs.check.outputs.ref }}
 
       - run: |
-          tag="${{ needs.check.outputs.tag }}"
-          git tag -a "$tag" -m "Release $tag"
+          git tag -a "$TAG" -m "Release $TAG"
           git push --tags
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
 
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
