@@ -10,8 +10,8 @@ use {
         containers::SliceDropGuard,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            pointer_sized_decode_error, read_length_encoding_overflow, unaligned_pointer_read,
-            ReadResult, WriteResult,
+            invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
+            unaligned_pointer_read, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
@@ -22,6 +22,7 @@ use {
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
+        time::Duration,
     },
     paste::paste,
 };
@@ -1513,6 +1514,49 @@ where
         // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact_mut` ensures we read exactly `len * size` bytes.
         let slice = unsafe { zero_copy::cast_slice_to_slice_t_mut::<C, T::Dst>(bytes, len)? };
         dst.write(slice);
+        Ok(())
+    }
+}
+
+const DURATION_SIZE: usize = size_of::<u64>() + size_of::<u32>();
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
+    type Src = Duration;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: DURATION_SIZE,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(DURATION_SIZE)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <u64 as SchemaWrite<C>>::write(writer, &src.as_secs())?;
+        <u32 as SchemaWrite<C>>::write(writer, &src.subsec_nanos())?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
+    type Dst = Duration;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: DURATION_SIZE,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let secs = <u64 as SchemaRead<'de, C>>::get(reader)?;
+        let nanos = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        if secs.checked_add(u64::from(nanos) / 1_000_000_000).is_none() {
+            return Err(invalid_value("Duration overflow"));
+        }
+        dst.write(Duration::new(secs, nanos));
         Ok(())
     }
 }

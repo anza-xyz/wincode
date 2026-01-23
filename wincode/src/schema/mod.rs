@@ -2840,6 +2840,22 @@ mod tests {
     }
 
     #[test]
+    fn test_duration() {
+        use core::time::Duration;
+
+        proptest!(proptest_cfg(), |(val: Duration)| {
+            let bincode_serialized = bincode::serialize(&val).unwrap();
+            let schema_serialized = serialize(&val).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Duration = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Duration = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(val, bincode_deserialized);
+            prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
@@ -2867,6 +2883,21 @@ mod tests {
     }
 
     #[test]
+    fn test_duration_nanos_normalization() {
+        use core::time::Duration;
+
+        proptest!(proptest_cfg(), |(secs in 0u64..u64::MAX/2, nanos in 1_000_000_000u32..=u32::MAX)| {
+            let mut bytes: Vec<u8> = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+            crate::serialize_into(&mut bytes, &secs).unwrap();
+            crate::serialize_into(&mut bytes, &nanos).unwrap();
+
+            let result: Duration = deserialize(&bytes).unwrap();
+            let expected = Duration::new(secs, nanos);
+            prop_assert_eq!(result, expected);
+        });
+    }
+
+    #[test]
     fn test_custom_length_encoding_and_byte_order() {
         let c = Configuration::default()
             .with_length_encoding::<FixIntLen<u32>>()
@@ -2879,6 +2910,18 @@ mod tests {
             prop_assert_eq!(len, u32::from_be_bytes(serialized[0..4].try_into().unwrap()) as usize);
             prop_assert_eq!(value, deserialized);
         });
+    }
+
+    #[test]
+    fn test_duration_overflow() {
+        use core::time::Duration;
+
+        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+        crate::serialize_into(&mut bytes, &u64::MAX).unwrap();
+        crate::serialize_into(&mut bytes, &1_000_000_000u32).unwrap();
+
+        let result: error::ReadResult<Duration> = deserialize(&bytes);
+        assert!(result.is_err());
     }
 
     #[test]
