@@ -108,7 +108,9 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
       - name: Package crate
-        run: cargo package -p ruleset-playground-derive
+        run: cargo package -p ${CRATE_NAME}
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
 
       - name: Generate SLSA provenance
         uses: actions/attest-build-provenance@v3
