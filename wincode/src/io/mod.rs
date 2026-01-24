@@ -340,3 +340,7 @@ mod slice;
 #[cfg(feature = "alloc")]
 mod vec;
 pub use {cursor::Cursor, slice::*};
+#[cfg(feature = "std")]
+mod std_io;
+#[cfg(feature = "std")]
+pub use std_io::*;
