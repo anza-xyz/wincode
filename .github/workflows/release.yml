@@ -121,7 +121,7 @@ jobs:
 
       - name: Create Github Release
         run: |
-          gh release create "${TAG}" --title "${TAG}" --generate-notes --draft
+          gh release create "${TAG}" --title "${TAG}" --generate-notes
         env:
           TAG: ${{ needs.check.outputs.tag }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
