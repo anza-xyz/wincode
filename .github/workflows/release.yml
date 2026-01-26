@@ -51,6 +51,15 @@ jobs:
             echo "Tag exists: $tag" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+      - name: Cargo publish dry run
+        run: |
+          cargo publish -p ${CRATE_NAME} --dry-run
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+
+      - name: Summary
+        run: |
           echo "Tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
           echo "Ref: $REF" >> "$GITHUB_STEP_SUMMARY"
         env:
