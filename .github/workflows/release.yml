@@ -93,6 +93,16 @@ jobs:
         env:
           TAG: ${{ needs.check.outputs.tag }}
 
+      - name: Package crate
+        run: cargo package -p ${CRATE_NAME}
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+
+      - name: Generate SLSA provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: target/package/*.crate
+
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
@@ -106,13 +116,3 @@ jobs:
         env:
           TAG: ${{ needs.check.outputs.tag }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-
-      - name: Package crate
-        run: cargo package -p ${CRATE_NAME}
-        env:
-          CRATE_NAME: ${{ inputs.crate }}
-
-      - name: Generate SLSA provenance
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: target/package/*.crate
