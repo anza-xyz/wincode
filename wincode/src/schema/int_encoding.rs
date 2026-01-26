@@ -140,8 +140,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_u16`] function
-    /// and read by the [`decode_u16`] function for this particular u16 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_u16`] function
+    /// and read by the [`Self::decode_u16`] function for this particular u16 instance.
     fn size_of_u16(val: u16) -> usize;
 
     /// Decode a `u16` value from the reader.
@@ -154,8 +154,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_u32`] function
-    /// and read by the [`decode_u32`] function for this particular u32 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_u32`] function
+    /// and read by the [`Self::decode_u32`] function for this particular u32 instance.
     fn size_of_u32(val: u32) -> usize;
 
     /// Decode a `u32` value from the reader.
@@ -168,8 +168,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_u64`] function
-    /// and read by the [`decode_u64`] function for this particular u64 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_u64`] function
+    /// and read by the [`Self::decode_u64`] function for this particular u64 instance.
     fn size_of_u64(val: u64) -> usize;
 
     /// Decode a `u64` value from the reader.
@@ -182,8 +182,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_u128`] function
-    /// and read by the [`decode_u128`] function for this particular u128 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_u128`] function
+    /// and read by the [`Self::decode_u128`] function for this particular u128 instance.
     fn size_of_u128(val: u128) -> usize;
 
     /// Decode a `u128` value from the reader.
@@ -196,8 +196,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_i16`] function
-    /// and read by the [`decode_i16`] function for this particular i16 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_i16`] function
+    /// and read by the [`Self::decode_i16`] function for this particular i16 instance.
     fn size_of_i16(val: i16) -> usize;
 
     /// Decode a `i16` value from the reader.
@@ -210,8 +210,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_i32`] function
-    /// and read by the [`decode_i32`] function for this particular i32 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_i32`] function
+    /// and read by the [`Self::decode_i32`] function for this particular i32 instance.
     fn size_of_i32(val: i32) -> usize;
 
     /// Decode a `i32` value from the reader.
@@ -224,8 +224,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_i64`] function
-    /// and read by the [`decode_i64`] function for this particular i64 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_i64`] function
+    /// and read by the [`Self::decode_i64`] function for this particular i64 instance.
     fn size_of_i64(val: i64) -> usize;
 
     /// Decode a `i64` value from the reader.
@@ -238,8 +238,8 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     ///
     /// # SAFETY
     ///
-    /// Must return the exact number of bytes written by the [`encode_i128`] function
-    /// and read by the [`decode_i128`] function for this particular i128 instance.
+    /// Must return the exact number of bytes written by the [`Self::encode_i128`] function
+    /// and read by the [`Self::decode_i128`] function for this particular i128 instance.
     fn size_of_i128(val: i128) -> usize;
 
     /// Decode a `i128` value from the reader.
