@@ -63,7 +63,11 @@ impl PreallocationLimitOverride {
 /// It is possible for sequences to have different length encoding schemes.
 /// This trait abstracts over that possibility, allowing users to specify
 /// the length encoding scheme for a sequence.
-pub trait SeqLen<C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the method `write_bytes_needed`.
+pub unsafe trait SeqLen<C: ConfigCore> {
     /// [`SeqLen`] level override of configured preallocation size limit, in bytes.
     ///
     /// Allows specializing specific uses of a given [`SeqLen`] implementation
@@ -101,6 +105,11 @@ pub trait SeqLen<C: ConfigCore> {
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
     fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
@@ -141,7 +150,7 @@ pub struct UseIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SI
     PhantomData<T>,
 );
 
-impl<const PREALLOCATION_SIZE_LIMIT: usize, T, C: ConfigCore> SeqLen<C>
+unsafe impl<const PREALLOCATION_SIZE_LIMIT: usize, T, C: ConfigCore> SeqLen<C>
     for UseIntLen<T, PREALLOCATION_SIZE_LIMIT>
 where
     T: SchemaWrite<C> + for<'de> SchemaRead<'de, C>,
@@ -214,7 +223,7 @@ pub struct FixIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SI
 
 macro_rules! impl_fix_int {
     ($type:ty) => {
-        impl<const PREALLOCATION_SIZE_LIMIT: usize, C: ConfigCore> SeqLen<C>
+        unsafe impl<const PREALLOCATION_SIZE_LIMIT: usize, C: ConfigCore> SeqLen<C>
             for FixIntLen<$type, PREALLOCATION_SIZE_LIMIT>
         {
             const PREALLOCATION_SIZE_LIMIT_OVERRIDE: PreallocationLimitOverride =
@@ -491,7 +500,7 @@ pub mod short_vec {
         Ok(len)
     }
 
-    impl<C: ConfigCore> SeqLen<C> for ShortU16 {
+    unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {
         #[inline(always)]
         fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
             Ok(decode_short_u16_from_reader(reader)? as usize)
