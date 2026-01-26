@@ -51,6 +51,7 @@ use {
 };
 
 pub mod containers;
+mod external;
 mod impls;
 pub mod int_encoding;
 

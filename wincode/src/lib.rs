@@ -304,6 +304,17 @@
 //!
 //! See those trait definitions for more details.
 //!
+//! # Crate Features
+//!
+//! |Feature|Default|Description
+//! |---|---|---|
+//! |`std`|enabled|Enables `std` support.|
+//! |`alloc`|enabled automatically when `std` is enabled|Enables `alloc` support.|
+//! |`solana-short-vec`|disabled|Enables `solana-short-vec` support.|
+//! |`derive`|disabled|Enables the derive macros for [`SchemaRead`] and [`SchemaWrite`].|
+//! |`uuid`|disabled|Enables support for the `uuid` crate.|
+//! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
+//!
 //! # Derive attributes
 //!
 //! ## Top level
