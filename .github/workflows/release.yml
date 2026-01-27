@@ -60,7 +60,7 @@ jobs:
 
       - name: Cargo publish dry run
         run: |
-          cargo publish -p ${CRATE_NAME} --dry-run
+          cargo publish -p "${CRATE_NAME}" --dry-run
         env:
           CRATE_NAME: ${{ inputs.crate }}
 
