@@ -48,11 +48,14 @@ jobs:
 
       - name: Check tag does not exist
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag already exists: $tag. Please bump the version first (or delete the existing tag) and retry."
-            echo "Tag exists: $tag" >> "$GITHUB_STEP_SUMMARY"
+          echo "checking: refs/tags/${TAG}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${TAG}. Please bump the version first (or delete the existing tag) and retry."
+            echo "Tag exists: ${TAG}" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
 
       - name: Cargo publish dry run
         run: |
@@ -99,7 +102,7 @@ jobs:
           ref: ${{ needs.check.outputs.ref }}
 
       - run: |
-          git tag -a "$TAG" -m "Release $TAG"
+          git tag -a "${TAG}" -m "Release ${TAG}"
           git push --tags
         env:
           TAG: ${{ needs.check.outputs.tag }}
