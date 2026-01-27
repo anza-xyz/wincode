@@ -33,7 +33,7 @@ jobs:
           crate="${{ inputs.crate }}"
 
           version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "'"${CRATE_NAME}"'") | .version')"
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
+          if [ -z "${version}" ] || [ "${version}" = "null" ]; then
             echo "Could not resolve version for crate: ${CRATE_NAME}"
             exit 1
           fi
@@ -41,8 +41,8 @@ jobs:
           tag="${CRATE_NAME}@v${version}"
           ref="$(git rev-parse HEAD)"
 
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
         env:
           CRATE_NAME: ${{ inputs.crate }}
 
@@ -51,7 +51,7 @@ jobs:
           echo "checking: refs/tags/${TAG}"
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag already exists: ${TAG}. Please bump the version first (or delete the existing tag) and retry."
-            echo "Tag exists: ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Tag exists: ${TAG}" >> "${GITHUB_STEP_SUMMARY}"
             exit 1
           fi
         env:
@@ -65,8 +65,8 @@ jobs:
 
       - name: Summary
         run: |
-          echo "Tag: $TAG" >> "$GITHUB_STEP_SUMMARY"
-          echo "Ref: $REF" >> "$GITHUB_STEP_SUMMARY"
+          echo "Tag: ${TAG}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Ref: ${REF}" >> "${GITHUB_STEP_SUMMARY}"
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           REF: ${{ steps.meta.outputs.ref }}
