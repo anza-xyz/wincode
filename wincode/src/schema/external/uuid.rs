@@ -9,7 +9,7 @@ use {
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    core::mem::MaybeUninit,
+    core::mem::{transmute, MaybeUninit},
     uuid::Uuid,
 };
 
@@ -34,7 +34,10 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Uuid {
         let bytes = *reader.fill_array::<{ size_of::<Uuid>() }>()?;
         // SAFETY: `fill_array` guarantees we get exactly `size_of::<Uuid>()` bytes.
         unsafe { reader.consume_unchecked(size_of::<Uuid>()) };
-        dst.write(Uuid::from_bytes(bytes));
+        // SAFETY: `Uuid` is a `#[repr(transparent)]` newtype over `uuid::Bytes` (`[u8; 16]`).
+        let dst =
+            unsafe { transmute::<&mut MaybeUninit<Uuid>, &mut MaybeUninit<uuid::Bytes>>(dst) };
+        dst.write(bytes);
         Ok(())
     }
 }
