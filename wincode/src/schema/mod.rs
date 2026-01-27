@@ -2888,8 +2888,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn test_system_time_overflow_errors() {
-        use std::time::SystemTime;
-        use crate::serialize_into;
+        use {crate::serialize_into, std::time::SystemTime};
 
         let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
         serialize_into(&mut bytes, &u64::MAX).unwrap();

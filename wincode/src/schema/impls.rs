@@ -1599,8 +1599,9 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SystemTime {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let duration = <Duration as SchemaRead<'de, C>>::get(reader)?;
-        let system_time =
-            UNIX_EPOCH.checked_add(duration).ok_or_else(|| invalid_value("SystemTime overflow"))?;
+        let system_time = UNIX_EPOCH
+            .checked_add(duration)
+            .ok_or_else(|| invalid_value("SystemTime overflow"))?;
         dst.write(system_time);
         Ok(())
     }
