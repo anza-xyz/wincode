@@ -32,17 +32,19 @@ jobs:
         run: |
           crate="${{ inputs.crate }}"
 
-          version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "'"$crate"'") | .version')"
+          version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "'"${CRATE_NAME}"'") | .version')"
           if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "Could not resolve version for crate: $crate"
+            echo "Could not resolve version for crate: ${CRATE_NAME}"
             exit 1
           fi
 
-          tag="${crate}@v${version}"
+          tag="${CRATE_NAME}@v${version}"
           ref="$(git rev-parse HEAD)"
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
 
       - name: Check tag does not exist
         run: |
@@ -115,8 +117,9 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
-      - run: cargo publish -p "${{ inputs.crate }}"
+      - run: cargo publish -p "${CRATE_NAME}"
         env:
+          CRATE_NAME: ${{ inputs.crate }}
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
       - name: Create Github Release
