@@ -1581,8 +1581,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
         let duration = src
             .duration_since(UNIX_EPOCH)
             .map_err(|_| crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH"))?;
-        <u64 as SchemaWrite<C>>::write(writer, &duration.as_secs())?;
-        <u32 as SchemaWrite<C>>::write(writer, &duration.subsec_nanos())?;
+        <Duration as SchemaWrite<C>>::write(writer, &duration)?;
         Ok(())
     }
 }
