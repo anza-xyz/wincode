@@ -32,7 +32,7 @@ use {
     crate::{
         containers::{self},
         error::WriteError,
-        schema::{size_of_elem_iter, write_elem_iter},
+        schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
     },
     alloc::{
         boxed::Box,
@@ -995,6 +995,7 @@ unsafe impl<C: Config> SchemaWrite<C> for String {
 
     #[inline]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::prealloc_check::<u8>(src.len())?;
         <str as SchemaWrite<C>>::write(writer, src)
     }
 }
@@ -1078,7 +1079,7 @@ macro_rules! impl_seq {
                 if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
-                    let needed = C::LengthEncoding::write_bytes_needed(len)? + (key_size + value_size) * len;
+                    let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key, $value)>(len)? + (key_size + value_size) * len;
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
                     // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
                     let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
@@ -1155,7 +1156,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_iter::<$key, C::LengthEncoding, C>(writer, src.iter())
+                write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
             }
         }
 

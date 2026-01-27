@@ -4,7 +4,7 @@ use {
         config::{ConfigCore, PREALLOCATION_SIZE_LIMIT_DISABLED},
         error::{
             pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
-            ReadResult, WriteResult,
+            PreallocationError, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian},
         io::{Reader, Writer},
@@ -75,6 +75,26 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     const PREALLOCATION_SIZE_LIMIT_OVERRIDE: PreallocationLimitOverride =
         PreallocationLimitOverride::UseConfig;
 
+    #[inline]
+    fn prealloc_check<T>(len: usize) -> Result<(), PreallocationError> {
+        fn check(len: usize, type_size: usize, limit: usize) -> Result<(), PreallocationError> {
+            let needed = len
+                .checked_mul(type_size)
+                .ok_or_else(|| preallocation_size_limit(usize::MAX, limit))?;
+            if needed > limit {
+                return Err(preallocation_size_limit(needed, limit));
+            }
+            Ok(())
+        }
+        // Everything here can be const-folded by the compiler.
+        if let Some(prealloc_limit) =
+            Self::PREALLOCATION_SIZE_LIMIT_OVERRIDE.to_opt_limit_with_config::<C>()
+        {
+            check(len, size_of::<T>(), prealloc_limit)?;
+        }
+        Ok(())
+    }
+
     /// Read the length of a sequence from the reader, where
     /// `T` is the type of the sequence elements. This can be used to
     /// enforce size constraints for preallocations.
@@ -84,16 +104,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     #[inline]
     fn read_prealloc_check<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
         let len = Self::read(reader)?;
-        if let Some(prealloc_limit) =
-            Self::PREALLOCATION_SIZE_LIMIT_OVERRIDE.to_opt_limit_with_config::<C>()
-        {
-            let needed = len
-                .checked_mul(size_of::<T>())
-                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
-            if needed > prealloc_limit {
-                return Err(preallocation_size_limit(needed, prealloc_limit));
-            }
-        }
+        Self::prealloc_check::<T>(len)?;
         Ok(len)
     }
     /// Read the length of a sequence, without doing any preallocation size checks.
@@ -102,6 +113,19 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
+    /// Calculate the number of bytes needed to write the given length.
+    ///
+    /// Return an error if the written size would be larger than the
+    /// corresponding allocation limit while reading.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
+    fn write_bytes_needed_prealloc_check<T>(len: usize) -> WriteResult<usize> {
+        Self::prealloc_check::<T>(len)?;
+        Self::write_bytes_needed(len)
+    }
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
@@ -143,7 +167,8 @@ pub unsafe trait SeqLen<C: ConfigCore> {
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
 ///
 /// let data_err = OverrideLen { bytes: vec![0; 9] };
-/// let serialized = wincode::serialize(&data_err).unwrap();
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
 /// ```
 pub struct UseIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
@@ -214,7 +239,8 @@ where
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
 ///
 /// let data_err = OverrideLen { bytes: vec![0; 9] };
-/// let serialized = wincode::serialize(&data_err).unwrap();
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
 /// ```
 pub struct FixIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
@@ -301,7 +327,8 @@ impl_fix_int!(i128);
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
 ///
 /// let data_err = OverrideLen { bytes: vec![0; 9] };
-/// let serialized = wincode::serialize(&data_err).unwrap();
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
 /// ```
 pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG> =

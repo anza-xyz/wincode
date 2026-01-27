@@ -325,6 +325,20 @@ where
 }
 
 #[inline(always)]
+fn write_elem_iter_prealloc_check<'a, T, Len, C>(
+    writer: &mut impl Writer,
+    src: impl ExactSizeIterator<Item = &'a T::Src>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C> + 'a,
+{
+    Len::prealloc_check::<T>(src.len())?;
+    write_elem_iter::<T, Len, C>(writer, src)
+}
+
+#[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
@@ -352,6 +366,21 @@ where
         return Ok(());
     }
     write_elem_iter::<T, Len, C>(writer, src.iter())
+}
+
+#[inline(always)]
+fn write_elem_slice_prealloc_check<T, Len, C>(
+    writer: &mut impl Writer,
+    src: &[T::Src],
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    Len::prealloc_check::<T>(src.len())?;
+    write_elem_slice::<T, Len, C>(writer, src)
 }
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
@@ -2817,7 +2846,7 @@ mod tests {
     fn test_custom_preallocation_size_limit() {
         let c = Configuration::default().with_preallocation_size_limit::<64>();
         proptest!(proptest_cfg(), |(value in proptest::collection::vec(any::<u8>(), 0..=128))| {
-            let wincode_serialized = config::serialize(&value, c).unwrap();
+            let wincode_serialized = crate::serialize(&value).unwrap();
             let wincode_deserialized: Result<Vec<u8>, _> = config::deserialize(&wincode_serialized, c);
             if value.len() <= 64 {
                 prop_assert_eq!(value, wincode_deserialized.unwrap());
