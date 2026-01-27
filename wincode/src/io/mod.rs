@@ -288,25 +288,29 @@ pub trait Writer {
     ///
     /// - Ensure that no write performed through the `Trusted` writer can
     ///   address memory outside of that `n_bytes` window.
-    /// - Ensure that, before the `Trusted` writer is finished or the parent
-    ///   writer is used again, **every byte** in that `n_bytes` window has
-    ///   been initialized at least once via the `Trusted` writer.
-    /// - Call [`Writer::finish`] on the `Trusted` writer when writing is complete and
-    ///   before the parent writer is used again.
+    /// - In case the caller does not return an error, ensure that, before the
+    ///   `Trusted` writer is finished or the parent writer is used again,
+    ///   **every byte** in that `n_bytes` window has been initialized at least
+    ///   once via the `Trusted` writer.
+    /// - In case the caller does not return an error, call [`Writer::finish`]
+    ///   on the `Trusted` writer when writing is complete and before the parent
+    ///   writer is used again.
     ///
     /// Concretely:
     /// - All writes performed via the `Trusted` writer (`write`, `write_t`,
     ///   `write_slice_t`, etc.) must stay within the `[0, n_bytes)` region of
     ///   the reserved space.
-    /// - It is permitted to overwrite the same bytes multiple times, but the
-    ///   union of all bytes written must cover the entire `[0, n_bytes)` window.
+    /// - It is permitted to overwrite the same bytes multiple times, but if the
+    ///   caller returns no error, the union of all bytes written must cover the
+    ///   entire `[0, n_bytes)` window.
     ///
     /// Violating this is undefined behavior, because:
     /// - `Trusted` writers are permitted to elide bounds checks within the
     ///   `n_bytes` window; writing past the window may write past the end of
     ///   the underlying destination.
-    /// - Failing to initialize all `n_bytes` may leave uninitialized memory in
-    ///   the destination that later safe code assumes to be fully initialized.
+    /// - Failing to initialize all `n_bytes` without returning an error may
+    ///   leave uninitialized memory in the destination that later safe code
+    ///   assumes to be fully initialized.
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>>;
 
     /// Write `T` as bytes into the source.
