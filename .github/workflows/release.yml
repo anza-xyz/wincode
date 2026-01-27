@@ -32,7 +32,6 @@ jobs:
       - name: Compute metadata
         id: meta
         run: |
-          crate="${{ inputs.crate }}"
 
           version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "'"${CRATE_NAME}"'") | .version')"
           if [ -z "${version}" ] || [ "${version}" = "null" ]; then
