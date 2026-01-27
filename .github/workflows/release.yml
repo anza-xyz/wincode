@@ -8,6 +8,7 @@ on:
         required: true
         type: choice
         options:
+          - ""
           - wincode
           - wincode-derive
       ref:
