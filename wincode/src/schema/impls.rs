@@ -3,6 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use {
     crate::{
@@ -1557,6 +1558,50 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
             return Err(invalid_value("Duration overflow"));
         }
         dst.write(Duration::new(secs, nanos));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
+    type Src = SystemTime;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: DURATION_SIZE,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(DURATION_SIZE)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let duration = src
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH"))?;
+        <u64 as SchemaWrite<C>>::write(writer, &duration.as_secs())?;
+        <u32 as SchemaWrite<C>>::write(writer, &duration.subsec_nanos())?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SystemTime {
+    type Dst = SystemTime;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: DURATION_SIZE,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let duration = <Duration as SchemaRead<'de, C>>::get(reader)?;
+        let system_time =
+            UNIX_EPOCH.checked_add(duration).ok_or_else(|| invalid_value("SystemTime overflow"))?;
+        dst.write(system_time);
         Ok(())
     }
 }

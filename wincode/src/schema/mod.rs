@@ -2857,6 +2857,49 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "std")]
+    fn test_system_time() {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        const MAX_SECS: u64 = i64::MAX as u64 - 1;
+
+        proptest!(proptest_cfg(), |(secs in 0u64..=MAX_SECS, nanos in 0u32..1_000_000_000u32)| {
+            let time = UNIX_EPOCH + Duration::new(secs, nanos);
+            let bincode_serialized = bincode::serialize(&time).unwrap();
+            let schema_serialized = serialize(&time).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SystemTime = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SystemTime = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(time, bincode_deserialized);
+            prop_assert_eq!(time, schema_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_system_time_before_epoch_errors() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let before_epoch = UNIX_EPOCH.checked_sub(Duration::from_secs(1)).unwrap();
+        assert!(serialize(&before_epoch).is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_system_time_overflow_errors() {
+        use std::time::SystemTime;
+        use crate::serialize_into;
+
+        let mut bytes = Vec::with_capacity(size_of::<u64>() + size_of::<u32>());
+        serialize_into(&mut bytes, &u64::MAX).unwrap();
+        serialize_into(&mut bytes, &0u32).unwrap();
+
+        let result: ReadResult<SystemTime> = deserialize(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
