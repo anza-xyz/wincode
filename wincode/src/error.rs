@@ -22,6 +22,8 @@ pub enum WriteError {
          bytes)"
     )]
     PreallocationSizeLimit { needed: usize, limit: usize },
+    #[error("Tag value would overflow tag encoding scheme: {0}")]
+    TagEncodingOverflow(&'static str),
     #[error("Custom error: {0}")]
     Custom(&'static str),
 }
@@ -53,12 +55,16 @@ pub enum ReadError {
     Custom(&'static str),
     #[error("Zero-copy read would be unaligned")]
     UnalignedPointerRead,
+    #[error("Tag value would overflow tag encoding scheme: {0}")]
+    TagEncodingOverflow(&'static str),
 }
 
 pub struct PreallocationError {
     needed: usize,
     limit: usize,
 }
+
+pub struct TagEncodingOverflow(pub &'static str);
 
 pub type Result<T> = core::result::Result<T, Error>;
 pub type WriteResult<T> = core::result::Result<T, WriteError>;
@@ -123,5 +129,22 @@ impl From<PreallocationError> for ReadError {
 impl From<PreallocationError> for WriteError {
     fn from(PreallocationError { needed, limit }: PreallocationError) -> WriteError {
         WriteError::PreallocationSizeLimit { needed, limit }
+    }
+}
+
+#[cold]
+pub const fn tag_encoding_overflow(encoding: &'static str) -> TagEncodingOverflow {
+    TagEncodingOverflow(encoding)
+}
+
+impl From<TagEncodingOverflow> for ReadError {
+    fn from(err: TagEncodingOverflow) -> Self {
+        ReadError::TagEncodingOverflow(err.0)
+    }
+}
+
+impl From<TagEncodingOverflow> for WriteError {
+    fn from(err: TagEncodingOverflow) -> Self {
+        WriteError::TagEncodingOverflow(err.0)
     }
 }

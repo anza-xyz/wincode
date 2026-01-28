@@ -350,7 +350,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
         let lifetimes = ty.lifetimes();
         // We must always extract the `Dst` from the type because `SchemaRead` implementations need
-        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self` 
+        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self`
         // (e.g., in the case of container types).
         let field_projection_type = if lifetimes.is_empty() {
             quote!(<#ty as SchemaRead<'_, WincodeConfig>>::Dst)
@@ -447,16 +447,16 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
 fn impl_enum(
     enum_ident: &Type,
     variants: &[Variant],
-    tag_encoding: Option<&Type>,
+    tag_encoding_override: Option<&Type>,
 ) -> (TokenStream, TokenStream) {
     if variants.is_empty() {
         return (quote! {Ok(())}, quote! {TypeMeta::Dynamic});
     }
 
-    let default_tag_encoding = default_tag_encoding();
-    let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
-
-    let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaRead, tag_encoding);
+    let type_meta_impl = variants.type_meta_impl(
+        TraitImpl::SchemaRead,
+        tag_encoding_override.unwrap_or(&default_tag_encoding()),
+    );
 
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
         let variant_ident = &variant.ident;
@@ -530,9 +530,19 @@ fn impl_enum(
         }
     });
 
+    let read_discriminant = if let Some(tag_encoding) = tag_encoding_override {
+        quote! {
+            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+        }
+    } else {
+        quote! {
+            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(reader)?)?
+        }
+    };
+
     (
         quote! {
-            let discriminant = <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+            let discriminant = #read_discriminant;
             match discriminant {
                 #(#read_impl)*
                 _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
@@ -692,7 +702,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}};
-            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, config::{Config, DefaultConfig, ZeroCopy}};
+            use #crate_name::{SchemaRead, ReadResult, tag_encoding::TagEncoding, TypeMeta, io::Reader, error, config::{Config, DefaultConfig, ZeroCopy}};
 
             #zero_copy_impl
 

@@ -54,6 +54,7 @@ pub mod containers;
 mod external;
 mod impls;
 pub mod int_encoding;
+pub mod tag_encoding;
 
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
@@ -121,6 +122,12 @@ pub unsafe trait SchemaWrite<C: ConfigCore> {
     ///   the in-memory representation of `Src`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
+    #[cfg(test)]
+    #[allow(unused_variables)]
+    fn type_meta(config: C) -> TypeMeta {
+        Self::TYPE_META
+    }
+
     /// Get the serialized size of `Self::Src`.
     ///
     /// # Safety
@@ -154,6 +161,12 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     ///   correspond exactly to the serialized form, and all byte sequences must
     ///   be valid in-memory representations of `Dst`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    #[cfg(test)]
+    #[allow(unused_variables)]
+    fn type_meta(config: C) -> TypeMeta {
+        Self::TYPE_META
+    }
 
     /// Read into `dst` from `reader`.
     ///
@@ -1700,6 +1713,113 @@ mod tests {
             let deserialized: Enum = deserialize(&serialized).unwrap();
             let bincode_deserialized: Enum = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn test_enum_config_discriminant_u8() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(
+            <Enum as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <Enum as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 1);
+            match e {
+                Enum::A => prop_assert_eq!(serialized[0], 0),
+                Enum::B => prop_assert_eq!(serialized[0], 1),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn test_enum_config_discriminant_override() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, tag_encoding = "u32")]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(
+            <Enum as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Static {
+                size: 4,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <Enum as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Static {
+                size: 4,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 4);
+            let discriminant = u32::from_le_bytes(serialized[0..4].try_into().unwrap());
+            match e {
+                Enum::A => prop_assert_eq!(discriminant, 0u32),
+                Enum::B => prop_assert_eq!(discriminant, 1u32),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn test_enum_config_discriminant_u8_custom_tag() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            #[wincode(tag = 2)]
+            A,
+            #[wincode(tag = 3)]
+            B,
+            #[wincode(tag = 5)]
+            C,
+        }
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 1);
+            match e {
+                Enum::A => prop_assert_eq!(serialized[0], 2),
+                Enum::B => prop_assert_eq!(serialized[0], 3),
+                Enum::C => prop_assert_eq!(serialized[0], 5),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
             prop_assert_eq!(deserialized, e);
         });
     }

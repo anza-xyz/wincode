@@ -18,6 +18,7 @@ use {
         io::{Reader, Writer},
         len::SeqLen,
         schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
+        tag_encoding::TagEncoding,
         TypeMeta,
     },
     core::{
@@ -698,25 +699,31 @@ where
 {
     type Dst = Result<T::Dst, E::Dst>;
 
-    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
-        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
-            if t_size == e_size =>
-        {
+    const TYPE_META: TypeMeta = match (
+        T::TYPE_META,
+        E::TYPE_META,
+        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+    ) {
+        (
+            TypeMeta::Static { size: t_size, .. },
+            TypeMeta::Static { size: e_size, .. },
             TypeMeta::Static {
-                size: size_of::<u32>() + t_size,
-                zero_copy: false,
-            }
-        }
+                size: disc_size, ..
+            },
+        ) if t_size == e_size => TypeMeta::Static {
+            size: disc_size + t_size,
+            zero_copy: false,
+        },
         _ => TypeMeta::Dynamic,
     };
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let variant = <u32 as SchemaRead<'de, C>>::get(reader)?;
-        match variant {
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
+        match disc {
             0 => dst.write(Result::Ok(T::get(reader)?)),
             1 => dst.write(Result::Err(E::get(reader)?)),
-            _ => return Err(invalid_tag_encoding(variant as usize)),
+            _ => return Err(invalid_tag_encoding(disc as usize)),
         };
 
         Ok(())
@@ -732,15 +739,21 @@ where
 {
     type Src = Result<T::Src, E::Src>;
 
-    const TYPE_META: TypeMeta = match (T::TYPE_META, E::TYPE_META) {
-        (TypeMeta::Static { size: t_size, .. }, TypeMeta::Static { size: e_size, .. })
-            if t_size == e_size =>
-        {
+    const TYPE_META: TypeMeta = match (
+        T::TYPE_META,
+        E::TYPE_META,
+        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+    ) {
+        (
+            TypeMeta::Static { size: t_size, .. },
+            TypeMeta::Static { size: e_size, .. },
             TypeMeta::Static {
-                size: size_of::<u32>() + t_size,
-                zero_copy: false,
-            }
-        }
+                size: disc_size, ..
+            },
+        ) if t_size == e_size => TypeMeta::Static {
+            size: disc_size + t_size,
+            zero_copy: false,
+        },
         _ => TypeMeta::Dynamic,
     };
 
@@ -749,8 +762,8 @@ where
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
             // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
-            Result::Ok(value) => Ok(size_of::<u32>() + T::size_of(value)?),
-            Result::Err(error) => Ok(size_of::<u32>() + E::size_of(error)?),
+            Result::Ok(value) => Ok(C::TagEncoding::size_of_from_u32(0)? + T::size_of(value)?),
+            Result::Err(error) => Ok(C::TagEncoding::size_of_from_u32(1)? + E::size_of(error)?),
         }
     }
 
@@ -758,11 +771,11 @@ where
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Result::Ok(value) => {
-                <u32 as SchemaWrite<C>>::write(writer, &0)?;
+                C::TagEncoding::write_from_u32(writer, 0)?;
                 T::write(writer, value)
             }
             Result::Err(error) => {
-                <u32 as SchemaWrite<C>>::write(writer, &1)?;
+                C::TagEncoding::write_from_u32(writer, 1)?;
                 E::write(writer, error)
             }
         }
