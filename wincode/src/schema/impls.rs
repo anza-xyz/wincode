@@ -1,9 +1,9 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
-    ops::{Bound, Range, RangeInclusive},
     collections::{HashMap, HashSet},
     hash::Hash,
+    ops::{Bound, Range, RangeInclusive},
     time::{SystemTime, UNIX_EPOCH},
 };
 use {
@@ -1761,40 +1761,35 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
     }
 }
 
-unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Bound<T> 
-    where 
-        T: SchemaWrite<C>, 
-        T::Src: Sized,
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Bound<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
 {
-
     type Src = Bound<T::Src>;
 
     const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size: t_size, .. } => {
-            TypeMeta::Static {
-                size: size_of::<u32>() + t_size,
-                zero_copy: false,
-            }
-        }
+        TypeMeta::Static { size: t_size, .. } => TypeMeta::Static {
+            size: size_of::<u32>() + t_size,
+            zero_copy: false,
+        },
         _ => TypeMeta::Dynamic,
     };
 
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-       match src {
+        match src {
             Bound::Unbounded => Ok(size_of::<u32>()),
             Bound::Included(value) => Ok(size_of::<u32>() + T::size_of(value)?),
             Bound::Excluded(value) => Ok(size_of::<u32>() + T::size_of(value)?),
-       }
+        }
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
-         match value {
-            Bound::Unbounded => {
-                <u32 as SchemaWrite<C>>::write(writer, &0)
-            },
+        match value {
+            Bound::Unbounded => <u32 as SchemaWrite<C>>::write(writer, &0),
             Bound::Included(value) => {
                 <u32 as SchemaWrite<C>>::write(writer, &1)?;
                 T::write(writer, value)
@@ -1807,8 +1802,8 @@ unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Bound<T>
     }
 }
 
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Bound<T> 
-where 
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Bound<T>
+where
     T: SchemaRead<'de, C>,
 {
     type Dst = Bound<T::Dst>;
@@ -1826,7 +1821,6 @@ where
         Ok(())
     }
 }
-
 
 unsafe impl<Idx, C: ConfigCore> SchemaWrite<C> for Range<Idx>
 where
@@ -1893,7 +1887,6 @@ where
         Ok(())
     }
 }
-
 
 unsafe impl<Idx, C: ConfigCore> SchemaWrite<C> for RangeInclusive<Idx>
 where

@@ -3526,7 +3526,7 @@ mod tests {
             prop_assert_eq!(wincode_deserialized.end, bincode_deserialized.end);
         });
     }
-    
+
     #[test]
     #[cfg(feature = "std")]
     fn test_range_inclusive_u64() {
@@ -3568,7 +3568,7 @@ mod tests {
             prop_assert_eq!(wincode_deserialized.end(), bincode_deserialized.end());
         });
     }
-    
+
     #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
