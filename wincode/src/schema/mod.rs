@@ -377,7 +377,7 @@ mod tests {
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
-            ops::{Deref, DerefMut},
+            ops::{Bound, Deref, DerefMut},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -2896,6 +2896,82 @@ mod tests {
 
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_included_u64() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Included(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_excluded_u64() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Excluded(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_included_string() {
+        proptest!(proptest_cfg(), |(value in any::<String>())| {
+            let bound = Bound::Included(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_excluded_string() {
+        proptest!(proptest_cfg(), |(value in any::<String>())| {
+            let bound = Bound::Excluded(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_included_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Included(value);
+            let wincode_serialized = serialize(&bound).unwrap();
+            let bincode_serialized = bincode::serialize(&bound).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Bound<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Bound<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&bound, &wincode_deserialized);
+            prop_assert_eq!(&wincode_deserialized, &bincode_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_bound_excluded_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Excluded(value);
+            let wincode_serialized = serialize(&bound).unwrap();
+            let bincode_serialized = bincode::serialize(&bound).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Bound<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Bound<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&bound, &wincode_deserialized);
+            prop_assert_eq!(&wincode_deserialized, &bincode_deserialized);
+        });
     }
 
     #[test]
