@@ -1681,17 +1681,19 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
     }
 }
 
+const IPADDR_V4_SIZE: usize = size_of::<u32>() + 4;
+const IPADDR_V6_SIZE: usize = size_of::<u32>() + 16;
+
 unsafe impl<C: ConfigCore> SchemaWrite<C> for IpAddr {
     type Src = IpAddr;
 
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         Ok(match src {
-            IpAddr::V4(_) => size_of::<u32>() + 4,
-            IpAddr::V6(_) => size_of::<u32>() + 16,
+            IpAddr::V4(_) => IPADDR_V4_SIZE,
+            IpAddr::V6(_) => IPADDR_V6_SIZE,
         })
     }
 
