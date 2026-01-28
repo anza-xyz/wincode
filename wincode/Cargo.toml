@@ -1,6 +1,6 @@
 [package]
 name = "wincode"
-version = "0.2.5"
+version = "0.2.6"
 authors.workspace = true
 description = "Fast bincode de/serialization with placement initialization"
 repository.workspace = true
