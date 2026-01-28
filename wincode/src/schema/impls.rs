@@ -1,6 +1,7 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
+    ops::Bound,
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
@@ -1757,5 +1758,71 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
             }
             _ => Err(invalid_tag_encoding(tag as usize)),
         }
+    }
+}
+
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Bound<T> 
+    where 
+        T: SchemaWrite<C>, 
+        T::Src: Sized,
+{
+
+    type Src = Bound<T::Src>;
+
+    const TYPE_META: TypeMeta = match T::TYPE_META {
+        TypeMeta::Static { size: t_size, .. } => {
+            TypeMeta::Static {
+                size: size_of::<u32>() + t_size,
+                zero_copy: false,
+            }
+        }
+        _ => TypeMeta::Dynamic,
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+       match src {
+            Bound::Unbounded => Ok(size_of::<u32>()),
+            Bound::Included(value) => Ok(size_of::<u32>() + T::size_of(value)?),
+            Bound::Excluded(value) => Ok(size_of::<u32>() + T::size_of(value)?),
+       }
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+         match value {
+            Bound::Unbounded => {
+                <u32 as SchemaWrite<C>>::write(writer, &0)
+            },
+            Bound::Included(value) => {
+                <u32 as SchemaWrite<C>>::write(writer, &1)?;
+                T::write(writer, value)
+            }
+            Bound::Excluded(value) => {
+                <u32 as SchemaWrite<C>>::write(writer, &2)?;
+                T::write(writer, value)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Bound<T> 
+where 
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Bound<T::Dst>;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let variant = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        match variant {
+            0 => dst.write(Bound::Unbounded),
+            1 => dst.write(Bound::Included(T::get(reader)?)),
+            2 => dst.write(Bound::Excluded(T::get(reader)?)),
+            _ => return Err(invalid_tag_encoding(variant as usize)),
+        };
+
+        Ok(())
     }
 }
