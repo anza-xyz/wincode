@@ -377,6 +377,7 @@ mod tests {
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
+            net::{IpAddr, Ipv4Addr, Ipv6Addr},
             ops::{Deref, DerefMut},
             rc::Rc,
             result::Result,
@@ -2853,6 +2854,51 @@ mod tests {
             let schema_deserialized: Duration = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ipv4_addr() {
+        proptest!(proptest_cfg(), |(addr: Ipv4Addr)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Ipv4Addr = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Ipv4Addr = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(addr, bincode_deserialized);
+            prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ipv6_addr() {
+        proptest!(proptest_cfg(), |(addr: Ipv6Addr)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Ipv6Addr = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Ipv6Addr = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(addr, bincode_deserialized);
+            prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_ip_addr() {
+        proptest!(proptest_cfg(), |(addr: IpAddr)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: IpAddr = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: IpAddr = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(addr, bincode_deserialized);
+            prop_assert_eq!(addr, schema_deserialized);
         });
     }
 

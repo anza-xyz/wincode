@@ -23,6 +23,7 @@ use {
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
         time::Duration,
     },
     paste::paste,
@@ -1603,5 +1604,132 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SystemTime {
             .ok_or_else(|| invalid_value("SystemTime overflow"))?;
         dst.write(system_time);
         Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv4Addr {
+    type Src = Ipv4Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 4,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(4)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        writer.write(&src.octets())?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv4Addr {
+    type Dst = Ipv4Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 4,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let bytes = *reader.fill_array::<4>()?;
+        unsafe { reader.consume_unchecked(4) };
+        dst.write(Ipv4Addr::from(bytes));
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv6Addr {
+    type Src = Ipv6Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 16,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(16)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        writer.write(&src.octets())?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
+    type Dst = Ipv6Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 16,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let bytes = *reader.fill_array::<16>()?;
+        unsafe { reader.consume_unchecked(16) };
+        dst.write(Ipv6Addr::from(bytes));
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for IpAddr {
+    type Src = IpAddr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(match src {
+            IpAddr::V4(_) => size_of::<u32>() + 4,
+            IpAddr::V6(_) => size_of::<u32>() + 16,
+        })
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match src {
+            IpAddr::V4(addr) => {
+                <u32 as SchemaWrite<C>>::write(writer, &0)?;
+                <Ipv4Addr as SchemaWrite<C>>::write(writer, addr)
+            }
+            IpAddr::V6(addr) => {
+                <u32 as SchemaWrite<C>>::write(writer, &1)?;
+                <Ipv6Addr as SchemaWrite<C>>::write(writer, addr)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for IpAddr {
+    type Dst = IpAddr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let tag = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        match tag {
+            0 => {
+                let addr = <Ipv4Addr as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(IpAddr::V4(addr));
+                Ok(())
+            }
+            1 => {
+                let addr = <Ipv6Addr as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(IpAddr::V6(addr));
+                Ok(())
+            }
+            _ => Err(invalid_tag_encoding(tag as usize)),
+        }
     }
 }
