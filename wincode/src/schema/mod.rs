@@ -428,7 +428,7 @@ mod tests {
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
-            ops::{Bound, Deref, DerefMut, Range},
+            ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -3526,7 +3526,49 @@ mod tests {
             prop_assert_eq!(wincode_deserialized.end, bincode_deserialized.end);
         });
     }
+    
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_inclusive_u64() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = RangeInclusive::new(start, end);
+            let serialized = serialize(&range).unwrap();
+            let deserialized: RangeInclusive<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(range.start(), deserialized.start());
+            prop_assert_eq!(range.end(), deserialized.end());
+        });
+    }
 
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_inclusive_string() {
+        proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
+            let range = RangeInclusive::new(start, end );
+            let serialized = serialize(&range).unwrap();
+            let deserialized: RangeInclusive<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&range.start(), &deserialized.start());
+            prop_assert_eq!(&range.end(), &deserialized.end());
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_inclusive_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = RangeInclusive::new(start, end );
+            let wincode_serialized = serialize(&range).unwrap();
+            let bincode_serialized = bincode::serialize(&range).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: RangeInclusive<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: RangeInclusive<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(range.start(), wincode_deserialized.start());
+            prop_assert_eq!(range.end(), wincode_deserialized.end());
+            prop_assert_eq!(wincode_deserialized.start(), bincode_deserialized.start());
+            prop_assert_eq!(wincode_deserialized.end(), bincode_deserialized.end());
+        });
+    }
+    
     #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
