@@ -428,7 +428,7 @@ mod tests {
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
-            ops::{Bound, Deref, DerefMut},
+            ops::{Bound, Deref, DerefMut, Range},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -3482,6 +3482,48 @@ mod tests {
             let bincode_deserialized: Bound<u64> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(&bound, &wincode_deserialized);
             prop_assert_eq!(&wincode_deserialized, &bincode_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_u64() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = Range { start, end };
+            let serialized = serialize(&range).unwrap();
+            let deserialized: Range<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(range.start, deserialized.start);
+            prop_assert_eq!(range.end, deserialized.end);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_string() {
+        proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
+            let range = Range { start, end };
+            let serialized = serialize(&range).unwrap();
+            let deserialized: Range<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&range.start, &deserialized.start);
+            prop_assert_eq!(&range.end, &deserialized.end);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_range_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = Range { start, end };
+            let wincode_serialized = serialize(&range).unwrap();
+            let bincode_serialized = bincode::serialize(&range).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Range<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Range<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(range.start, wincode_deserialized.start);
+            prop_assert_eq!(range.end, wincode_deserialized.end);
+            prop_assert_eq!(wincode_deserialized.start, bincode_deserialized.start);
+            prop_assert_eq!(wincode_deserialized.end, bincode_deserialized.end);
         });
     }
 

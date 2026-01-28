@@ -1,7 +1,7 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
-    ops::Bound,
+    ops::{Bound, Range},
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
@@ -1826,3 +1826,73 @@ where
         Ok(())
     }
 }
+
+
+unsafe impl<Idx, C: ConfigCore> SchemaWrite<C> for Range<Idx>
+where
+    Idx: SchemaWrite<C>,
+    Idx::Src: Sized,
+{
+    type Src = Range<Idx::Src>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(Idx::size_of(&src.start)? + Idx::size_of(&src.end)?)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(writer, &src.start)?;
+                Idx::write(writer, &src.end)?;
+                writer.finish()?;
+            }
+            TypeMeta::Dynamic => {
+                Idx::write(writer, &src.start)?;
+                Idx::write(writer, &src.end)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+unsafe impl<'de, Idx, C: ConfigCore> SchemaRead<'de, C> for Range<Idx>
+where
+    Idx: SchemaRead<'de, C>,
+{
+    type Dst = Range<Idx::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let start = Idx::get(reader)?;
+        let end = Idx::get(reader)?;
+        dst.write(Range { start, end });
+        Ok(())
+    }
+}
+
+
+
