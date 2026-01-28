@@ -4,6 +4,10 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
+    num::{
+        NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
+        NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+    }
 };
 use {
     crate::{
@@ -1745,3 +1749,67 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
         }
     }
 }
+
+macro_rules! impl_nonzero {
+    ($($nonzero_ty:ty => $primitive_ty:ty),* $(,)?) => {
+        $(
+            unsafe impl<C: ConfigCore> SchemaWrite<C> for $nonzero_ty {
+                type Src = $nonzero_ty;
+
+                const TYPE_META: TypeMeta = <$primitive_ty as SchemaWrite<C>>::TYPE_META;
+
+                #[inline(always)]
+                fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                    <$primitive_ty as SchemaWrite<C>>::size_of(&src.get())
+                }
+
+                #[inline(always)]
+                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                   <$primitive_ty as SchemaWrite<C>>::write(writer, &src.get())
+                }
+            }
+
+            unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for $nonzero_ty {
+                type Dst = $nonzero_ty;
+
+                const TYPE_META: TypeMeta = const {
+                    match <$primitive_ty as SchemaRead<'de, C>>::TYPE_META {
+                        TypeMeta::Static { size, .. } => TypeMeta::Static {
+                            size,
+                            zero_copy: false,
+                        },
+                        TypeMeta::Dynamic => TypeMeta::Dynamic,
+                    }
+                };
+
+                #[inline(always)]
+                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                    let val = <$primitive_ty as SchemaRead<'de, C>>::get(reader)?;
+                    let nonzero = <$nonzero_ty>::new(val)
+                        .ok_or_else(|| invalid_value(concat!(
+                            "NonZero value cannot be zero for type ",
+                            stringify!($nonzero_ty)
+                        )))?;
+                    dst.write(nonzero);
+                    Ok(())
+                }
+            }
+        )*
+    };
+}
+
+// Implement for all NonZero integer types
+impl_nonzero!(
+    NonZeroU8 => u8,
+    NonZeroU16 => u16,
+    NonZeroU32 => u32,
+    NonZeroU64 => u64,
+    NonZeroU128 => u128,
+    NonZeroUsize => usize,
+    NonZeroI8 => i8,
+    NonZeroI16 => i16,
+    NonZeroI32 => i32,
+    NonZeroI64 => i64,
+    NonZeroI128 => i128,
+    NonZeroIsize => isize,
+);
