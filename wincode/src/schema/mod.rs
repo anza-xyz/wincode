@@ -424,6 +424,10 @@ mod tests {
             rc::Rc,
             result::Result,
             sync::Arc,
+            num::{
+                NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
+                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+            }
         },
     };
 
@@ -3119,6 +3123,55 @@ mod tests {
 
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
+    }
+    
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_all_nonzero_integers() {
+        proptest!(proptest_cfg(), |(
+            nz_u8 in (1u8..=u8::MAX).prop_map(|v| NonZeroU8::new(v).unwrap()),
+            nz_u16 in (1u16..=u16::MAX).prop_map(|v| NonZeroU16::new(v).unwrap()),
+            nz_u32 in (1u32..=u32::MAX).prop_map(|v| NonZeroU32::new(v).unwrap()),
+            nz_u64 in (1u64..=u64::MAX).prop_map(|v| NonZeroU64::new(v).unwrap()),
+            nz_u128 in (1u128..=u128::MAX).prop_map(|v| NonZeroU128::new(v).unwrap()),
+            nz_usize in (1usize..=usize::MAX).prop_map(|v| NonZeroUsize::new(v).unwrap()),
+            nz_i8 in (i8::MIN..=-1i8).prop_union(1i8..=i8::MAX).prop_map(|v| NonZeroI8::new(v).unwrap()),
+            nz_i16 in (i16::MIN..=-1i16).prop_union(1i16..=i16::MAX).prop_map(|v| NonZeroI16::new(v).unwrap()),
+            nz_i32 in (i32::MIN..=-1i32).prop_union(1i32..=i32::MAX).prop_map(|v| NonZeroI32::new(v).unwrap()),
+            nz_i64 in (i64::MIN..=-1i64).prop_union(1i64..=i64::MAX).prop_map(|v| NonZeroI64::new(v).unwrap()),
+            nz_i128 in (i128::MIN..=-1i128).prop_union(1i128..=i128::MAX).prop_map(|v| NonZeroI128::new(v).unwrap()),
+            nz_isize in (isize::MIN..=-1isize).prop_union(1isize..=isize::MAX).prop_map(|v| NonZeroIsize::new(v).unwrap()),
+        )| {
+            let value = (nz_u8, nz_u16, nz_u32, nz_u64, nz_u128, nz_usize, nz_i8, nz_i16, nz_i32, nz_i64, nz_i128, nz_isize);
+            
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            let schema_serialized = serialize(&value).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            
+            type NonZeroTuple = (NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, 
+                                NonZeroUsize, NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize);
+            let bincode_deserialized: NonZeroTuple = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: NonZeroTuple = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(value, bincode_deserialized);
+            prop_assert_eq!(value, schema_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_nonzero_option() {
+        proptest!(proptest_cfg(), |(value: Option<NonZeroU32>)| {
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            let schema_serialized = serialize(&value).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            
+            let bincode_deserialized: Option<NonZeroU32> = 
+                bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Option<NonZeroU32> = 
+                deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(value, bincode_deserialized);
+            prop_assert_eq!(value, schema_deserialized);
+        });
     }
 
     #[test]

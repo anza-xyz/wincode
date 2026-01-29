@@ -1798,7 +1798,6 @@ macro_rules! impl_nonzero {
     };
 }
 
-// Implement for all NonZero integer types
 impl_nonzero!(
     NonZeroU8 => u8,
     NonZeroU16 => u16,
