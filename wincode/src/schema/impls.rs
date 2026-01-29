@@ -1,6 +1,7 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
@@ -1757,5 +1758,58 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
             }
             _ => Err(invalid_tag_encoding(tag as usize)),
         }
+    }
+}
+
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T> 
+where 
+      T: SchemaWrite<C> + Copy,
+      T::Src: Copy,
+{ 
+    type Src = Cell<T::Src>;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<T>(),
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(T::size_of(&src.get())?)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+        let val = &value.get();
+        T::write(writer, val)?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
+where 
+      T: SchemaRead<'de, C> + Copy,
+      T::Dst: Copy,
+{
+    type Dst = Cell<T::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline(always)]
+    fn read(
+        reader: &mut impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let value = T::get(reader)?;
+        dst.write(Cell::new(value));
+        Ok(())
     }
 }
