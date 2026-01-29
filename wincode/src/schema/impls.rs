@@ -1,7 +1,7 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
-    cell::{Cell},
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
@@ -1810,6 +1810,62 @@ where
     ) -> ReadResult<()> {
         let value = T::get(reader)?;
         dst.write(Cell::new(value));
+        Ok(())
+    }
+}
+
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for RefCell<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    type Src = RefCell<T::Src>;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: size_of::<T>(),
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let borrowed = src
+            .try_borrow()
+            .map_err(|_| crate::error::WriteError::Custom("RefCell already borrowed mutably"))?;
+        T::size_of(&*borrowed)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let borrowed = src
+            .try_borrow()
+            .map_err(|_| crate::error::WriteError::Custom("RefCell already borrowed mutably"))?;
+        T::write(writer, &*borrowed)
+    }
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for RefCell<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = RefCell<T::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn read(
+        reader: &mut impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let val = T::get(reader)?;
+        dst.write(RefCell::new(val));
         Ok(())
     }
 }
