@@ -3981,7 +3981,7 @@ mod tests {
             prop_assert_eq!(bincode_deserialized, schema_deserialized);
         });
     }
-    
+
     #[test]
     #[cfg(feature = "std")]
     fn test_cell_arrays_bincode_equivalence() {
@@ -3997,7 +3997,7 @@ mod tests {
             prop_assert_eq!(schema_deserialized, bincode_deserialized);
         });
     }
-
+    
     #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
