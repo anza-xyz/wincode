@@ -4,7 +4,7 @@ use {
         FromDeriveInput, FromField, FromMeta, FromVariant, Result,
     },
     proc_macro2::{Span, TokenStream},
-    quote::quote,
+    quote::{quote, ToTokens as _},
     std::{
         borrow::Cow,
         collections::VecDeque,
@@ -59,6 +59,15 @@ pub enum SkipMode {
     Default,
     /// Use the provided expression as value to initialize the field.
     DefaultVal(Expr),
+}
+
+impl SkipMode {
+    pub(crate) fn default_val_token_stream(&self) -> TokenStream {
+        match self {
+            Self::Default => quote! { Default::default() },
+            Self::DefaultVal(val) => val.to_token_stream(),
+        }
+    }
 }
 
 pub(crate) trait TypeExt {

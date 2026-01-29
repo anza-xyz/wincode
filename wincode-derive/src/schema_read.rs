@@ -4,7 +4,7 @@ use {
         common::{
             default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
             get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
-            SkipMode, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+            StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
         },
     },
     darling::{
@@ -56,11 +56,10 @@ fn impl_struct(
                 quote! { *init_count += 1; }
             };
             if let Some(mode) = &field.skip {
-                match mode {
-                    SkipMode::Default => {
-                        quote! { unsafe { (*dst_ptr).#ident = Default::default() }; }
-                    }
-                    SkipMode::DefaultVal(val) => quote! { unsafe { (*dst_ptr).#ident = #val }; },
+                let val = mode.default_val_token_stream();
+                quote! {
+                    unsafe { (&raw mut (*dst_ptr).#ident).write(#val); }
+                    #init_count
                 }
             } else {
                 quote! {
@@ -488,10 +487,8 @@ fn impl_enum(
                         // could be used to facilitate direct reads. The user would have to guarantee layout on
                         // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
                         let read = if let Some(mode) = &field.skip {
-                            match mode {
-                                SkipMode::Default => quote! { let #ident = Default::default(); },
-                                SkipMode::DefaultVal(val) => quote! { let #ident = #val; },
-                            }
+                            let val = mode.default_val_token_stream();
+                            quote! { let #ident = #val; }
                         } else {
                             quote! {
                                 let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
