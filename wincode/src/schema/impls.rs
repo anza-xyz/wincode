@@ -5,7 +5,7 @@ use alloc::borrow::ToOwned;
 use alloc::sync::Arc;
 #[cfg(feature = "std")]
 use std::{
-    cell::Cell,
+    cell::{Cell},
     collections::{HashMap, HashSet},
     hash::{BuildHasher, Hash},
     time::{SystemTime, UNIX_EPOCH},
