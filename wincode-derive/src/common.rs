@@ -659,7 +659,7 @@ pub(crate) fn extract_repr(input: &DeriveInput, trait_impl: TraitImpl) -> Result
 
 /// Visitor to recursively collect the generic arguments of a type.
 struct GenericStack<'ast>(VecDeque<&'ast Type>);
-impl<'ast> GenericStack<'ast> {
+impl GenericStack<'_> {
     fn new() -> Self {
         Self(VecDeque::new())
     }
@@ -701,7 +701,7 @@ impl<'ast> From<GenericStack<'ast>> for InferGeneric<'ast> {
     }
 }
 
-impl<'ast> VisitMut for InferGeneric<'ast> {
+impl VisitMut for InferGeneric<'_> {
     fn visit_generic_argument_mut(&mut self, ga: &mut GenericArgument) {
         if let GenericArgument::Type(Type::Infer(_)) = ga {
             let ty = self

@@ -105,7 +105,7 @@ macro_rules! impl_fix_int {
 ///
 /// This trait provides encoding, decoding, and sizing for all integer types.
 ///
-/// # SAFETY
+/// # Safety
 ///
 /// Implementors must adhere to the Safety section of the associated constants
 /// `STATIC` and `ZERO_COPY`.
