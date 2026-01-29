@@ -6,7 +6,7 @@ use {
         io::Writer,
         SchemaRead, SchemaWrite, WriteResult,
     },
-    std::any::type_name,
+    core::any::type_name,
 };
 
 /// Tag encoding trait.
