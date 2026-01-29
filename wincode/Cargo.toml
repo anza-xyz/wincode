@@ -7,6 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 categories = ["encoding", "network-programming"]
 keywords = ["binary", "encode", "serialize", "deserialize", "bincode"]
 
@@ -40,7 +41,7 @@ proptest-derive = "0.6.0"
 rand = { version = "0.8.5" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.0.0" }
-criterion = { version = "0.8.1", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 uuid = { version = "1.20.0", features = ["serde"] }
 
 [build-dependencies]
