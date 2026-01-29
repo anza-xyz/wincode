@@ -1761,16 +1761,22 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
     }
 }
 
-unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Bound<T>
+unsafe impl<C: Config, T> SchemaWrite<C> for Bound<T>
 where
     T: SchemaWrite<C>,
     T::Src: Sized,
 {
     type Src = Bound<T::Src>;
 
-    const TYPE_META: TypeMeta = match T::TYPE_META {
-        TypeMeta::Static { size: t_size, .. } => TypeMeta::Static {
-            size: size_of::<u32>() + t_size,
+    const TYPE_META: TypeMeta = match (
+        T::TYPE_META, 
+        <C::TagEncoding as SchemaWrite<C>>::TYPE_META
+    ) {
+        (
+            TypeMeta::Static { size: t_size, ..},
+            TypeMeta::Static { size: disc_size, .. }
+        ) => TypeMeta::Static {
+            size: disc_size + t_size,
             zero_copy: false,
         },
         _ => TypeMeta::Dynamic,
@@ -1780,49 +1786,65 @@ where
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Bound::Unbounded => Ok(size_of::<u32>()),
-            Bound::Included(value) => Ok(size_of::<u32>() + T::size_of(value)?),
-            Bound::Excluded(value) => Ok(size_of::<u32>() + T::size_of(value)?),
+            Bound::Unbounded => Ok(C::TagEncoding::size_of_from_u32(0)?),
+            Bound::Included(value) => Ok(C::TagEncoding::size_of_from_u32(1)? + T::size_of(value)?),
+            Bound::Excluded(value) => Ok(C::TagEncoding::size_of_from_u32(2)? + T::size_of(value)?),
         }
     }
 
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
-            Bound::Unbounded => <u32 as SchemaWrite<C>>::write(writer, &0),
+            Bound::Unbounded => Ok(C::TagEncoding::write_from_u32(writer, 0)?),
             Bound::Included(value) => {
-                <u32 as SchemaWrite<C>>::write(writer, &1)?;
+                C::TagEncoding::write_from_u32(writer, 1)?;
                 T::write(writer, value)
             }
             Bound::Excluded(value) => {
-                <u32 as SchemaWrite<C>>::write(writer, &2)?;
+                C::TagEncoding::write_from_u32(writer, 2)?;
                 T::write(writer, value)
             }
         }
     }
 }
 
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Bound<T>
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Bound<T>
 where
     T: SchemaRead<'de, C>,
 {
     type Dst = Bound<T::Dst>;
 
+     const TYPE_META: TypeMeta = match (
+        T::TYPE_META,
+        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+    ) {
+        (
+            TypeMeta::Static { size: t_size, .. },
+            TypeMeta::Static {
+                size: disc_size, ..
+            },
+        ) => TypeMeta::Static {
+            size: disc_size + t_size,
+            zero_copy: false,
+        },
+        _ => TypeMeta::Dynamic,
+    };
+
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let variant = <u32 as SchemaRead<'de, C>>::get(reader)?;
-        match variant {
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
+        match disc {
             0 => dst.write(Bound::Unbounded),
             1 => dst.write(Bound::Included(T::get(reader)?)),
             2 => dst.write(Bound::Excluded(T::get(reader)?)),
-            _ => return Err(invalid_tag_encoding(variant as usize)),
+            _ => return Err(invalid_tag_encoding(disc as usize)),
         };
 
         Ok(())
     }
 }
 
-unsafe impl<Idx, C: ConfigCore> SchemaWrite<C> for Range<Idx>
+unsafe impl<Idx, C: Config> SchemaWrite<C> for Range<Idx>
 where
     Idx: SchemaWrite<C>,
     Idx::Src: Sized,
