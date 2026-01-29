@@ -3410,6 +3410,62 @@ mod tests {
     }
 
     #[test]
+     #[cfg(feature = "std")]
+    fn test_cell_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value: (u32, f32, i64, f64, bool, u8))| {
+            let cell = (
+                Cell::new(value.0),
+                Cell::new(value.1),
+                Cell::new(value.2),
+                Cell::new(value.3),
+                Cell::new(value.4),
+                Cell::new(value.5),
+            );
+            let bincode_serialized = bincode::serialize(&cell).unwrap();
+            let schema_serialized = serialize(&cell).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            
+            type CellTuple = (Cell<u32>, Cell<f32>, Cell<i64>, Cell<f64>, Cell<bool>, Cell<u8>);
+            let bincode_deserialized: CellTuple = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: CellTuple = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(schema_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_cell_char_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(val: char)| {
+            let cell = Cell::new(val);
+            let bincode_serialized = bincode::serialize(&cell).unwrap();
+            let schema_serialized = serialize(&cell).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            prop_assert_eq!(<char as SchemaWrite<DefaultConfig>>::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
+    
+            let bincode_deserialized: Cell<char> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Cell<char> = deserialize(&schema_serialized).unwrap();
+    
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
+        });
+    }
+    
+    #[test]
+    #[cfg(feature = "std")]
+    fn test_cell_arrays_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value: [u32; 4])| {
+            let cell_value = Cell::new(value);
+            
+            let bincode_serialized = bincode::serialize(&cell_value).unwrap();
+            let schema_serialized = serialize(&cell_value).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            
+            let bincode_deserialized: Cell<[u32; 4]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Cell<[u32; 4]> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(schema_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()

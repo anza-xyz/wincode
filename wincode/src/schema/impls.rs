@@ -1,7 +1,7 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
-    cell::Cell,
+    cell::{Cell},
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
