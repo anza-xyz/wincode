@@ -381,8 +381,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             }
 
             /// Write a value to the maybe uninitialized field.
+            // This method can be marked `const` in the future when MSRV is >= 1.85.
             #[inline]
-            #vis const fn #write_uninit_field_ident(&mut self, val: #field_projection_type) -> &mut Self {
+            #vis fn #write_uninit_field_ident(&mut self, val: #field_projection_type) -> &mut Self {
                 self.#uninit_mut_ident().write(val);
                 #set_index_bit
                 self
