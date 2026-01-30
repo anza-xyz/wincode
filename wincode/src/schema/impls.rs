@@ -3,7 +3,6 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
-    ops::{Bound, Range, RangeInclusive},
     time::{SystemTime, UNIX_EPOCH},
 };
 use {
@@ -23,6 +22,7 @@ use {
         TypeMeta,
     },
     core::{
+        ops::{Bound, Range, RangeInclusive},
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -1768,25 +1768,13 @@ where
 {
     type Src = Bound<T::Src>;
 
-    const TYPE_META: TypeMeta = match (
-        T::TYPE_META, 
-        <C::TagEncoding as SchemaWrite<C>>::TYPE_META
-    ) {
-        (
-            TypeMeta::Static { size: t_size, ..},
-            TypeMeta::Static { size: disc_size, .. }
-        ) => TypeMeta::Static {
-            size: disc_size + t_size,
-            zero_copy: false,
-        },
-        _ => TypeMeta::Dynamic,
-    };
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match src {
-            Bound::Unbounded => Ok(C::TagEncoding::size_of_from_u32(0)?),
+            Bound::Unbounded => C::TagEncoding::size_of_from_u32(0),
             Bound::Included(value) => Ok(C::TagEncoding::size_of_from_u32(1)? + T::size_of(value)?),
             Bound::Excluded(value) => Ok(C::TagEncoding::size_of_from_u32(2)? + T::size_of(value)?),
         }
@@ -1795,7 +1783,7 @@ where
     #[inline]
     fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
-            Bound::Unbounded => Ok(C::TagEncoding::write_from_u32(writer, 0)?),
+            Bound::Unbounded => C::TagEncoding::write_from_u32(writer, 0),
             Bound::Included(value) => {
                 C::TagEncoding::write_from_u32(writer, 1)?;
                 T::write(writer, value)
@@ -1814,21 +1802,7 @@ where
 {
     type Dst = Bound<T::Dst>;
 
-     const TYPE_META: TypeMeta = match (
-        T::TYPE_META,
-        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
-    ) {
-        (
-            TypeMeta::Static { size: t_size, .. },
-            TypeMeta::Static {
-                size: disc_size, ..
-            },
-        ) => TypeMeta::Static {
-            size: disc_size + t_size,
-            zero_copy: false,
-        },
-        _ => TypeMeta::Dynamic,
-    };
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -1871,6 +1845,8 @@ where
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx)`.
+                // reading `Idx` will consume `size` bytes, fully consuming the trusted window.
                 let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                 Idx::write(writer, &src.start)?;
                 Idx::write(writer, &src.end)?;
@@ -1940,6 +1916,8 @@ where
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx)`.
+                // reading `Idx` will consume `size` bytes, fully consuming the trusted window.
                 let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                 Idx::write(writer, src.start())?;
                 Idx::write(writer, src.end())?;

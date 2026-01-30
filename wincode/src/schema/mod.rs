@@ -3410,7 +3410,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_included_u64() {
         proptest!(proptest_cfg(), |(value in any::<u64>())| {
             let bound = Bound::Included(value);
@@ -3421,7 +3420,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_excluded_u64() {
         proptest!(proptest_cfg(), |(value in any::<u64>())| {
             let bound = Bound::Excluded(value);
@@ -3432,7 +3430,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_included_string() {
         proptest!(proptest_cfg(), |(value in any::<String>())| {
             let bound = Bound::Included(value);
@@ -3443,7 +3440,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_excluded_string() {
         proptest!(proptest_cfg(), |(value in any::<String>())| {
             let bound = Bound::Excluded(value);
@@ -3454,7 +3450,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_included_bincode_equivalence() {
         proptest!(proptest_cfg(), |(value in any::<u64>())| {
             let bound = Bound::Included(value);
@@ -3470,7 +3465,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_bound_excluded_bincode_equivalence() {
         proptest!(proptest_cfg(), |(value in any::<u64>())| {
             let bound = Bound::Excluded(value);
@@ -3486,7 +3480,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_u64() {
         proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
             let range = Range { start, end };
@@ -3498,7 +3491,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_string() {
         proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
             let range = Range { start, end };
@@ -3510,7 +3502,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_bincode_equivalence() {
         proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
             let range = Range { start, end };
@@ -3528,7 +3519,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_inclusive_u64() {
         proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
             let range = RangeInclusive::new(start, end);
@@ -3540,7 +3530,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_inclusive_string() {
         proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
             let range = RangeInclusive::new(start, end );
@@ -3552,7 +3541,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_range_inclusive_bincode_equivalence() {
         proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
             let range = RangeInclusive::new(start, end );
