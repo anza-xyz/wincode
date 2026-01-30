@@ -2076,9 +2076,14 @@ where
 { 
     type Src = Cell<T::Src>;
 
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: false,
+     const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
     };
 
     #[inline]
@@ -2129,9 +2134,14 @@ where
 {
     type Src = RefCell<T::Src>;
 
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: false,
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
     };
 
     #[inline]
