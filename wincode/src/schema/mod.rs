@@ -3533,16 +3533,18 @@ mod tests {
     fn test_refcell_complex_types() {
         use std::{borrow::Borrow, collections::HashMap};
 
+        type ComplexType = RefCell<HashMap<Vec<u8>, HashMap<Vec<u8>, (u32, u32, u32)>>>;
+
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize, Clone,
         )]
         #[wincode(internal)]
         struct Struct {
-            data: RefCell<HashMap<Vec<u8>, HashMap<Vec<u8>, (u32, u32, u32)>>>,
+            data: ComplexType,
         }
 
-        proptest!(proptest_cfg(), |(data: HashMap<Vec<u8>, HashMap<Vec<u8>, (u32, u32, u32)>>)| {
-            let cache = Struct { data: RefCell::new(data.clone()) };
+        proptest!(proptest_cfg(), |(data: ComplexType)| {
+            let cache = Struct { data };
 
             let bincode_serialized = bincode::serialize(&cache).unwrap();
             let serialized = serialize(&cache).unwrap();
@@ -3554,7 +3556,7 @@ mod tests {
             let deser = deserialized.borrow();
             let bincode = bincode_deserialized.borrow();
 
-            prop_assert_eq!(&*deser, &*bincode);
+            prop_assert_eq!(deser, bincode);
         });
     }
 

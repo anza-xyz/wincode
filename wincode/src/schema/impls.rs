@@ -1780,7 +1780,7 @@ where
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        Ok(T::size_of(&src.get())?)
+        T::size_of(&src.get())
     }
 
     #[inline]
