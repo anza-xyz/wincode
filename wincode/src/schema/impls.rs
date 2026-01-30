@@ -1,7 +1,6 @@
 //! Blanket implementations for std types.
 #[cfg(feature = "std")]
 use std::{
-    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     hash::Hash,
     time::{SystemTime, UNIX_EPOCH},
@@ -23,6 +22,7 @@ use {
         TypeMeta,
     },
     core::{
+        cell::{Cell, RefCell},
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -1763,7 +1763,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
 
 unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T> 
 where 
-      T: SchemaWrite<C> + Copy,
+      T: SchemaWrite<C>,
       T::Src: Copy,
 { 
     type Src = Cell<T::Src>;
@@ -1793,8 +1793,7 @@ where
 
 unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
 where 
-      T: SchemaRead<'de, C> + Copy,
-      T::Dst: Copy,
+      T: SchemaRead<'de, C>
 {
     type Dst = Cell<T::Dst>;
 
@@ -1822,7 +1821,6 @@ where
 unsafe impl<T, C: ConfigCore> SchemaWrite<C> for RefCell<T>
 where
     T: SchemaWrite<C>,
-    T::Src: Sized,
 {
     type Src = RefCell<T::Src>;
 
