@@ -25,10 +25,13 @@ fn impl_struct(
     repr: &StructRepr,
 ) -> (TokenStream, TokenStream) {
     if fields.is_empty() {
-        return (quote! {}, quote! { TypeMeta::Static {
+        return (
+            quote! {},
+            quote! { TypeMeta::Static {
                 size: 0,
                 zero_copy: true,
-            }});
+            }},
+        );
     }
 
     let num_fields = fields.len();
