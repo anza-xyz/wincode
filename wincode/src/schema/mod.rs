@@ -3126,7 +3126,6 @@ mod tests {
     }
     
     #[test]
-    #[cfg(feature = "std")]
     fn test_all_nonzero_integers() {
         proptest!(proptest_cfg(), |(
             nz_u8 in (1u8..=u8::MAX).prop_map(|v| NonZeroU8::new(v).unwrap()),
@@ -3158,7 +3157,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_nonzero_option() {
         proptest!(proptest_cfg(), |(value: Option<NonZeroU32>)| {
             let bincode_serialized = bincode::serialize(&value).unwrap();
