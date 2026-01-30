@@ -162,6 +162,10 @@
 //!   default configuration, provided your [`SchemaWrite`] and [`SchemaRead`] schemas and
 //!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
+//! - Unlike `bincode`, this crate will fail to serialize or deserialize large
+//!   dynamic data structures by default, but this can be configured. This is
+//!   done for security and performance, as it allows to preallocate these data
+//!   structures safely.
 //!
 //! # Zero-copy deserialization
 //!

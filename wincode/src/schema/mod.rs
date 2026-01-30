@@ -54,6 +54,7 @@ pub mod containers;
 mod external;
 mod impls;
 pub mod int_encoding;
+pub mod tag_encoding;
 
 /// Indicates what kind of assumptions can be made when encoding or decoding a type.
 ///
@@ -121,6 +122,12 @@ pub unsafe trait SchemaWrite<C: ConfigCore> {
     ///   the in-memory representation of `Src`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
+    #[cfg(test)]
+    #[allow(unused_variables)]
+    fn type_meta(config: C) -> TypeMeta {
+        Self::TYPE_META
+    }
+
     /// Get the serialized size of `Self::Src`.
     ///
     /// # Safety
@@ -154,6 +161,12 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     ///   correspond exactly to the serialized form, and all byte sequences must
     ///   be valid in-memory representations of `Dst`.
     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    #[cfg(test)]
+    #[allow(unused_variables)]
+    fn type_meta(config: C) -> TypeMeta {
+        Self::TYPE_META
+    }
 
     /// Read into `dst` from `reader`.
     ///
@@ -325,6 +338,20 @@ where
 }
 
 #[inline(always)]
+fn write_elem_iter_prealloc_check<'a, T, Len, C>(
+    writer: &mut impl Writer,
+    src: impl ExactSizeIterator<Item = &'a T::Src>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C> + 'a,
+{
+    Len::prealloc_check::<T>(src.len())?;
+    write_elem_iter::<T, Len, C>(writer, src)
+}
+
+#[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
@@ -352,6 +379,21 @@ where
         return Ok(());
     }
     write_elem_iter::<T, Len, C>(writer, src.iter())
+}
+
+#[inline(always)]
+fn write_elem_slice_prealloc_check<T, Len, C>(
+    writer: &mut impl Writer,
+    src: &[T::Src],
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    Len::prealloc_check::<T>(src.len())?;
+    write_elem_slice::<T, Len, C>(writer, src)
 }
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
@@ -1677,6 +1719,113 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_config_discriminant_u8() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(
+            <Enum as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <Enum as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 1);
+            match e {
+                Enum::A => prop_assert_eq!(serialized[0], 0),
+                Enum::B => prop_assert_eq!(serialized[0], 1),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn test_enum_config_discriminant_override() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal, tag_encoding = "u32")]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(
+            <Enum as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Static {
+                size: 4,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <Enum as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Static {
+                size: 4,
+                zero_copy: false
+            }
+        );
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 4);
+            let discriminant = u32::from_le_bytes(serialized[0..4].try_into().unwrap());
+            match e {
+                Enum::A => prop_assert_eq!(discriminant, 0u32),
+                Enum::B => prop_assert_eq!(discriminant, 1u32),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
+    fn test_enum_config_discriminant_u8_custom_tag() {
+        let config = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Enum {
+            #[wincode(tag = 2)]
+            A,
+            #[wincode(tag = 3)]
+            B,
+            #[wincode(tag = 5)]
+            C,
+        }
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = config::serialize(&e, config).unwrap();
+            prop_assert_eq!(serialized.len(), 1);
+            match e {
+                Enum::A => prop_assert_eq!(serialized[0], 2),
+                Enum::B => prop_assert_eq!(serialized[0], 3),
+                Enum::C => prop_assert_eq!(serialized[0], 5),
+            }
+            let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
     fn test_phantom_data() {
         let val = PhantomData::<StructStatic>;
         let serialized = serialize(&val).unwrap();
@@ -2818,7 +2967,7 @@ mod tests {
     fn test_custom_preallocation_size_limit() {
         let c = Configuration::default().with_preallocation_size_limit::<64>();
         proptest!(proptest_cfg(), |(value in proptest::collection::vec(any::<u8>(), 0..=128))| {
-            let wincode_serialized = config::serialize(&value, c).unwrap();
+            let wincode_serialized = crate::serialize(&value).unwrap();
             let wincode_deserialized: Result<Vec<u8>, _> = config::deserialize(&wincode_serialized, c);
             if value.len() <= 64 {
                 prop_assert_eq!(value, wincode_deserialized.unwrap());

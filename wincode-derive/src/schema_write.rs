@@ -74,15 +74,15 @@ fn impl_struct(
 fn impl_enum(
     enum_ident: &Type,
     variants: &[Variant],
-    tag_encoding: Option<&Type>,
+    tag_encoding_override: Option<&Type>,
 ) -> (TokenStream, TokenStream, TokenStream) {
     if variants.is_empty() {
         return (quote! {Ok(0)}, quote! {Ok(())}, quote! {TypeMeta::Dynamic});
     }
-    let default_tag_encoding = default_tag_encoding();
-    let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
     let mut size_of_impl = Vec::with_capacity(variants.len());
     let mut write_impl = Vec::with_capacity(variants.len());
+    let default_tag_encoding = default_tag_encoding();
+    let tag_encoding = tag_encoding_override.unwrap_or(&default_tag_encoding);
 
     let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaWrite, tag_encoding);
 
@@ -91,11 +91,26 @@ fn impl_enum(
         let fields = &variant.fields;
         let discriminant = variant.discriminant(i);
         // Bincode always encodes the discriminant using the index of the field order.
-        let size_of_discriminant = quote! {
-            <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
-        };
-        let write_discriminant = quote! {
-            <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer, &#discriminant)?;
+        let (size_of_discriminant, write_discriminant) = if let Some(tag_encoding) =
+            tag_encoding_override
+        {
+            (
+                quote! {
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
+                },
+                quote! {
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer, &#discriminant)?
+                },
+            )
+        } else {
+            (
+                quote! {
+                    WincodeConfig::TagEncoding::size_of_from_u32(#discriminant)?
+                },
+                quote! {
+                    WincodeConfig::TagEncoding::write_from_u32(writer, #discriminant)?
+                },
+            )
         };
 
         let (size, write) = match fields.style {
@@ -252,7 +267,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config};
+            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config, tag_encoding::TagEncoding};
             unsafe impl #impl_generics #crate_name::SchemaWrite<WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 

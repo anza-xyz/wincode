@@ -383,7 +383,7 @@ impl VariantsExt for &[Variant] {
                 Style::Unit => {
                     // For unit enums, the `TypeMeta` is just the `TypeMeta` of the discriminant.
                     //
-                    // We always override the zero-copy flag to `false`, due to discriminants having potentially 
+                    // We always override the zero-copy flag to `false`, due to discriminants having potentially
                     // invalid bit patterns.
                     quote! {
                         let #ident = match #tag_expr {
@@ -594,7 +594,7 @@ impl FromMeta for AssertZeroCopyConfig {
 /// for friendlier naming.
 #[inline]
 pub(crate) fn default_tag_encoding() -> Type {
-    parse_quote!(u32)
+    parse_quote!(WincodeConfig::TagEncoding)
 }
 
 /// Metadata about the `#[repr]` attribute on a struct.

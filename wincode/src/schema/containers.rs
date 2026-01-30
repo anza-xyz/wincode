@@ -70,7 +70,9 @@ use {
 use {
     crate::{
         len::SeqLen,
-        schema::{size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice},
+        schema::{
+            size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice_prealloc_check,
+        },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
     core::mem::{self, ManuallyDrop},
@@ -310,7 +312,7 @@ where
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len, C>(writer, src)
+        write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
     }
 }
 
@@ -424,7 +426,7 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_slice::<T, Len, C>(writer, src)
+                write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
             }
         }
 
@@ -597,7 +599,7 @@ where
         } = T::TYPE_META
         {
             #[allow(clippy::arithmetic_side_effects)]
-            let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
+            let needed = Len::write_bytes_needed_prealloc_check::<T>(src.len())? + src.len() * size;
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
@@ -660,7 +662,7 @@ where
 
     #[inline(always)]
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        write_elem_slice::<T, Len, C>(writer, src.as_slice())
+        write_elem_slice_prealloc_check::<T, Len, C>(writer, src.as_slice())
     }
 }
 
