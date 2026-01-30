@@ -411,16 +411,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
-name = "page_size"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30d5b2194ed13191c1999ae0704b7839fb18384fa22e49b57eeaa97d79ce40da"
-dependencies = [
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "pastey"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -931,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "bincode",
  "criterion",
@@ -945,14 +935,12 @@ dependencies = [
  "solana-short-vec",
  "thiserror",
  "uuid",
- "wincode-derive 0.3.0",
+ "wincode-derive 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "wincode-derive"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "085dd70a51c997a9f6a213a2be6ff5c0b6a3f7df2e2bae777c7147f4c20ce009"
+version = "0.3.1"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -963,6 +951,8 @@ dependencies = [
 [[package]]
 name = "wincode-derive"
 version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89833c7743abd1a831b7eb0fdfd7210bd8bedc297435e9426aad9b63d7c7f77"
 dependencies = [
  "darling",
  "proc-macro2",
