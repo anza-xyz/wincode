@@ -22,10 +22,10 @@ use {
         TypeMeta,
     },
     core::{
-        ops::{Bound, Range, RangeInclusive},
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        ops::{Bound, Range, RangeInclusive},
         time::Duration,
     },
     pastey::paste,
