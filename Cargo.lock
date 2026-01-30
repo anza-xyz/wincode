@@ -978,12 +978,24 @@ dependencies = [
  "solana-short-vec",
  "thiserror",
  "uuid",
- "wincode-derive",
+ "wincode-derive 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
 name = "wincode-derive"
 version = "0.3.0"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "wincode-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "085dd70a51c997a9f6a213a2be6ff5c0b6a3f7df2e2bae777c7147f4c20ce009"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -999,7 +1011,7 @@ dependencies = [
  "libfuzzer-sys",
  "serde",
  "wincode",
- "wincode-derive",
+ "wincode-derive 0.3.0",
 ]
 
 [[package]]
