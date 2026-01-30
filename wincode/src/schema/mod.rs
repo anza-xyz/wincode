@@ -4010,7 +4010,6 @@ mod tests {
     }
     
     #[test]
-    #[cfg(feature = "std")]
     fn test_refcell_basic() {
         proptest!(proptest_cfg(), |(value: (u32, f32, i64, f64, bool, u8))| {
             let value = (
@@ -4043,7 +4042,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_refcell_nested() {
         use std::cell::RefCell;
         use std::collections::HashMap;
@@ -4067,7 +4065,6 @@ mod tests {
     }
 
    #[test]
-   #[cfg(feature = "std")]
     fn test_refcell_complex_types() {
         use std::collections::HashMap;
         use std::borrow::Borrow;
@@ -4104,7 +4101,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_refcell_type_meta_dynamic() {
         assert!(matches!(
             <RefCell<String> as SchemaRead<DefaultConfig>>::TYPE_META,
@@ -4127,7 +4123,6 @@ mod tests {
     }
 
     #[test]    
-    #[cfg(feature = "std")]
     fn test_refcell_borrow_error() {
         let refcell = RefCell::new(42u32);
         

@@ -5,7 +5,6 @@ use alloc::borrow::ToOwned;
 use alloc::sync::Arc;
 #[cfg(feature = "std")]
 use std::{
-    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     hash::{BuildHasher, Hash},
     time::{SystemTime, UNIX_EPOCH},
@@ -27,6 +26,7 @@ use {
         tag_encoding::TagEncoding,
     },
     core::{
+        cell::{Cell, RefCell},
         marker::PhantomData,
         mem::{MaybeUninit, transmute},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -2071,7 +2071,7 @@ where
 
 unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T> 
 where 
-      T: SchemaWrite<C> + Copy,
+      T: SchemaWrite<C>,
       T::Src: Copy,
 { 
     type Src = Cell<T::Src>;
@@ -2101,8 +2101,7 @@ where
 
 unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
 where 
-      T: SchemaRead<'de, C> + Copy,
-      T::Dst: Copy,
+      T: SchemaRead<'de, C>
 {
     type Dst = Cell<T::Dst>;
 
@@ -2130,7 +2129,6 @@ where
 unsafe impl<T, C: ConfigCore> SchemaWrite<C> for RefCell<T>
 where
     T: SchemaWrite<C>,
-    T::Src: Sized,
 {
     type Src = RefCell<T::Src>;
 
