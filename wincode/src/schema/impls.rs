@@ -25,7 +25,7 @@ use {
         num::{
             NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
             NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
-        }
+        },
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
