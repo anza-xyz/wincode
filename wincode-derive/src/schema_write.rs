@@ -21,7 +21,12 @@ fn impl_struct(
     repr: &StructRepr,
 ) -> (TokenStream, TokenStream, TokenStream) {
     if fields.is_empty() {
-        return (quote! {Ok(0)}, quote! {Ok(())}, quote! {None});
+        return (quote! {Ok(0)}, quote! {Ok(())}, quote! {
+            TypeMeta::Static {
+                size: 0,
+                zero_copy: true,
+            }
+        });
     }
 
     let target = fields.iter().map(|field| field.target_resolved());

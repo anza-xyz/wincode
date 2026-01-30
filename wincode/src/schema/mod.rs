@@ -2653,6 +2653,28 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_struct() {
+        #[derive(Debug, SchemaWrite, SchemaRead, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+        #[wincode(internal)]
+        struct EmptyStruct {}
+        
+        let empty = EmptyStruct::default();
+        
+        let bincode_serialized = bincode::serialize(&empty).unwrap();
+        let schema_serialized = serialize(&empty).unwrap();
+        
+        // Empty structs should serialize to zero bytes
+        assert_eq!(bincode_serialized, schema_serialized);
+        assert_eq!(bincode_serialized.len(), 0);
+        
+        let bincode_deserialized: EmptyStruct = bincode::deserialize(&bincode_serialized).unwrap();
+        let schema_deserialized: EmptyStruct = deserialize(&schema_serialized).unwrap();
+        
+        assert_eq!(empty, bincode_deserialized);
+        assert_eq!(empty, schema_deserialized);
+    }
+    
+    #[test]
     fn test_pod_zero_copy() {
         #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy)]
         #[repr(transparent)]
