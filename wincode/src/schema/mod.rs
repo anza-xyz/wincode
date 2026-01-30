@@ -420,14 +420,14 @@ mod tests {
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
+            num::{
+                NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize,
+                NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
+            },
             ops::{Deref, DerefMut},
             rc::Rc,
             result::Result,
             sync::Arc,
-            num::{
-                NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
-                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
-            }
         },
     };
 
@@ -3124,7 +3124,7 @@ mod tests {
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_all_nonzero_integers() {
         proptest!(proptest_cfg(), |(
@@ -3142,12 +3142,12 @@ mod tests {
             nz_isize in (isize::MIN..=-1isize).prop_union(1isize..=isize::MAX).prop_map(|v| NonZeroIsize::new(v).unwrap()),
         )| {
             let value = (nz_u8, nz_u16, nz_u32, nz_u64, nz_u128, nz_usize, nz_i8, nz_i16, nz_i32, nz_i64, nz_i128, nz_isize);
-            
+
             let bincode_serialized = bincode::serialize(&value).unwrap();
             let schema_serialized = serialize(&value).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            
-            type NonZeroTuple = (NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, 
+
+            type NonZeroTuple = (NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128,
                                 NonZeroUsize, NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize);
             let bincode_deserialized: NonZeroTuple = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: NonZeroTuple = deserialize(&schema_serialized).unwrap();
@@ -3162,10 +3162,10 @@ mod tests {
             let bincode_serialized = bincode::serialize(&value).unwrap();
             let schema_serialized = serialize(&value).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            
-            let bincode_deserialized: Option<NonZeroU32> = 
+
+            let bincode_deserialized: Option<NonZeroU32> =
                 bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: Option<NonZeroU32> = 
+            let schema_deserialized: Option<NonZeroU32> =
                 deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(value, bincode_deserialized);
             prop_assert_eq!(value, schema_deserialized);
