@@ -27,7 +27,7 @@ uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
 
 [dependencies]
-paste = "1.0.15"
+pastey = "0.2.1"
 solana-short-vec = { version = "3.0.0", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 wincode-derive = { version = "0.3.0", optional = true }

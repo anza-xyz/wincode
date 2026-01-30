@@ -27,7 +27,7 @@ use {
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         time::Duration,
     },
-    paste::paste,
+    pastey::paste,
 };
 #[cfg(feature = "alloc")]
 use {

@@ -9,7 +9,7 @@ use {
         io::{read_size_limit, Reader, Writer},
         ReadResult, WriteResult,
     },
-    paste::paste,
+    pastey::paste,
 };
 
 /// Byte order trait.
