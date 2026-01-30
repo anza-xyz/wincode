@@ -523,7 +523,7 @@ mod tests {
         std::{
             alloc::Layout,
             borrow::Cow,
-            cell::{Cell,RefCell},
+            cell::{Cell, RefCell},
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
@@ -3941,7 +3941,7 @@ mod tests {
             prop_assert_eq!(deserialized, bincode_deserialized);
         });
     }
-    
+
     #[test]
     #[cfg(feature = "std")]
     fn test_cell_basic() {
@@ -3975,7 +3975,6 @@ mod tests {
         });
     }
 
-    
     #[test]
     #[cfg(feature = "std")]
     fn test_cell_char_bincode_equivalence() {
@@ -3985,10 +3984,10 @@ mod tests {
             let schema_serialized = serialize(&cell).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
             prop_assert_eq!(<char as SchemaWrite<DefaultConfig>>::size_of(&val).unwrap(), bincode::serialized_size(&val).unwrap() as usize);
-    
+
             let bincode_deserialized: Cell<char> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: Cell<char> = deserialize(&schema_serialized).unwrap();
-    
+
             prop_assert_eq!(bincode_deserialized, schema_deserialized);
         });
     }
@@ -3998,17 +3997,17 @@ mod tests {
     fn test_cell_arrays_bincode_equivalence() {
         proptest!(proptest_cfg(), |(value: [u32; 4])| {
             let cell_value = Cell::new(value);
-            
+
             let bincode_serialized = bincode::serialize(&cell_value).unwrap();
             let schema_serialized = serialize(&cell_value).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
-            
+
             let bincode_deserialized: Cell<[u32; 4]> = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: Cell<[u32; 4]> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(schema_deserialized, bincode_deserialized);
         });
     }
-    
+
     #[test]
     fn test_refcell_basic() {
         proptest!(proptest_cfg(), |(value: (u32, f32, i64, f64, bool, u8))| {
@@ -4043,8 +4042,7 @@ mod tests {
 
     #[test]
     fn test_refcell_nested() {
-        use std::cell::RefCell;
-        use std::collections::HashMap;
+        use std::{cell::RefCell, collections::HashMap};
 
         type Nested = RefCell<HashMap<String, RefCell<u64>>>;
 
@@ -4064,32 +4062,25 @@ mod tests {
         });
     }
 
-   #[test]
+    #[test]
     fn test_refcell_complex_types() {
-        use std::collections::HashMap;
-        use std::borrow::Borrow;
+        use std::{borrow::Borrow, collections::HashMap};
 
         #[derive(
-            SchemaWrite,
-            SchemaRead,
-            Debug,
-            PartialEq,
-            serde::Serialize,
-            serde::Deserialize,
-            Clone,
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize, Clone,
         )]
         #[wincode(internal)]
         struct Struct {
             data: RefCell<HashMap<Vec<u8>, HashMap<Vec<u8>, (u32, u32, u32)>>>,
         }
-        
+
         proptest!(proptest_cfg(), |(data: HashMap<Vec<u8>, HashMap<Vec<u8>, (u32, u32, u32)>>)| {
             let cache = Struct { data: RefCell::new(data.clone()) };
-            
+
             let bincode_serialized = bincode::serialize(&cache).unwrap();
             let serialized = serialize(&cache).unwrap();
             prop_assert_eq!(&bincode_serialized, &serialized);
-            
+
             let bincode_deserialized: Struct = bincode::deserialize(&bincode_serialized).unwrap();
             let deserialized: Struct = deserialize(&serialized).unwrap();
 
@@ -4106,7 +4097,7 @@ mod tests {
             <RefCell<String> as SchemaRead<DefaultConfig>>::TYPE_META,
             TypeMeta::Dynamic
         ));
-         proptest!(proptest_cfg(), |(value: u64)| {
+        proptest!(proptest_cfg(), |(value: u64)| {
             let value = RefCell::new(value);
 
             let serialized = serialize(&value).unwrap();
@@ -4122,13 +4113,13 @@ mod tests {
         });
     }
 
-    #[test]    
+    #[test]
     fn test_refcell_borrow_error() {
         let refcell = RefCell::new(42u32);
-        
+
         // Borrow mutably to cause serialization to fail
         let _mut_borrow = refcell.borrow_mut();
-        
+
         let result = serialize(&refcell);
         assert!(result.is_err());
     }

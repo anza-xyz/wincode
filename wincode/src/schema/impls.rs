@@ -2069,14 +2069,14 @@ where
     }
 }
 
-unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T> 
-where 
-      T: SchemaWrite<C>,
-      T::Src: Copy,
-{ 
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Copy,
+{
     type Src = Cell<T::Src>;
 
-     const TYPE_META: TypeMeta = const {
+    const TYPE_META: TypeMeta = const {
         match T::TYPE_META {
             TypeMeta::Static { size, .. } => TypeMeta::Static {
                 size,
@@ -2100,8 +2100,8 @@ where
 }
 
 unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
-where 
-      T: SchemaRead<'de, C>
+where
+    T: SchemaRead<'de, C>,
 {
     type Dst = Cell<T::Dst>;
 
@@ -2116,10 +2116,7 @@ where
     };
 
     #[inline(always)]
-    fn read(
-        reader: &mut impl Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let value = T::get(reader)?;
         dst.write(Cell::new(value));
         Ok(())
@@ -2176,10 +2173,7 @@ where
     };
 
     #[inline]
-    fn read(
-        reader: &mut impl Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> ReadResult<()> {
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let val = T::get(reader)?;
         dst.write(RefCell::new(val));
         Ok(())
