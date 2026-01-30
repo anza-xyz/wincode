@@ -1652,6 +1652,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv4Addr {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let bytes = *reader.fill_array::<4>()?;
+        // SAFETY: `fill_array` guarantees 4 bytes are available
         unsafe { reader.consume_unchecked(4) };
         dst.write(Ipv4Addr::from(bytes));
         Ok(())
@@ -1689,25 +1690,22 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let bytes = *reader.fill_array::<16>()?;
+        // SAFETY: `fill_array` guarantees 16 bytes are available
         unsafe { reader.consume_unchecked(16) };
         dst.write(Ipv6Addr::from(bytes));
         Ok(())
     }
 }
 
-const IPADDR_V4_SIZE: usize = size_of::<u32>() + 4;
-const IPADDR_V6_SIZE: usize = size_of::<u32>() + 16;
-
-unsafe impl<C: ConfigCore> SchemaWrite<C> for IpAddr {
+unsafe impl<C: Config> SchemaWrite<C> for IpAddr {
     type Src = IpAddr;
 
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
-
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         Ok(match src {
-            IpAddr::V4(_) => IPADDR_V4_SIZE,
-            IpAddr::V6(_) => IPADDR_V6_SIZE,
+            IpAddr::V4(_) => C::TagEncoding::size_of_from_u32(0)? + 4,
+            IpAddr::V6(_) => C::TagEncoding::size_of_from_u32(1)? + 16,
         })
     }
 
@@ -1715,25 +1713,23 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for IpAddr {
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             IpAddr::V4(addr) => {
-                <u32 as SchemaWrite<C>>::write(writer, &0)?;
+                C::TagEncoding::write_from_u32(writer, 0)?;
                 <Ipv4Addr as SchemaWrite<C>>::write(writer, addr)
             }
             IpAddr::V6(addr) => {
-                <u32 as SchemaWrite<C>>::write(writer, &1)?;
+                C::TagEncoding::write_from_u32(writer, 1)?;
                 <Ipv6Addr as SchemaWrite<C>>::write(writer, addr)
             }
         }
     }
 }
 
-unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for IpAddr {
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
     type Dst = IpAddr;
-
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let tag = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
         match tag {
             0 => {
                 let addr = <Ipv4Addr as SchemaRead<'de, C>>::get(reader)?;

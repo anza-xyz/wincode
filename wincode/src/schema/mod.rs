@@ -3007,7 +3007,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_ipv4_addr() {
         proptest!(proptest_cfg(), |(addr: Ipv4Addr)| {
             let bincode_serialized = bincode::serialize(&addr).unwrap();
@@ -3022,7 +3021,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_ipv6_addr() {
         proptest!(proptest_cfg(), |(addr: Ipv6Addr)| {
             let bincode_serialized = bincode::serialize(&addr).unwrap();
@@ -3037,7 +3035,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "std")]
     fn test_ip_addr() {
         proptest!(proptest_cfg(), |(addr: IpAddr)| {
             let bincode_serialized = bincode::serialize(&addr).unwrap();
