@@ -13,7 +13,10 @@ use {
     },
     proc_macro2::TokenStream,
     quote::quote,
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
+    syn::{
+        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, PredicateType,
+        Token, Type, WherePredicate,
+    },
 };
 
 fn impl_struct(
@@ -229,8 +232,31 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
+fn append_where_clause(generics: &mut Generics) {
+    let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaWrite<WincodeConfig, Src = #ident>));
+
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: parse_quote!(#ident),
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+    if predicates.is_empty() {
+        return;
+    }
+
+    let where_clause = generics.make_where_clause();
+    where_clause.predicates.extend(predicates);
+}
+
 fn append_generics(generics: &Generics) -> Generics {
     let mut generics = generics.clone();
+    append_where_clause(&mut generics);
     append_config(&mut generics);
     generics
 }

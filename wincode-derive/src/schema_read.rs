@@ -15,7 +15,7 @@ use {
     quote::{format_ident, quote},
     syn::{
         parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, LitInt, Path,
-        PredicateType, Type, WhereClause, WherePredicate,
+        PredicateType, Token, Type, WhereClause, WherePredicate,
     },
 };
 
@@ -94,7 +94,7 @@ fn impl_struct(
     });
 
     let dst = get_src_dst_fully_qualified(args);
-    let (impl_generics, ty_generics, _) = args.generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
         let mut guard = DropGuard {
@@ -105,12 +105,12 @@ fn impl_struct(
     };
     (
         quote! {
-            struct DropGuard #impl_generics {
+            struct DropGuard #impl_generics #where_clause {
                 init_count: u8,
                 dst_ptr: *mut #dst,
             }
 
-            impl #impl_generics ::core::ops::Drop for DropGuard #ty_generics {
+            impl #impl_generics ::core::ops::Drop for DropGuard #ty_generics #where_clause {
                 #[cold]
                 fn drop(&mut self) {
                     let dst_ptr = self.dst_ptr;
@@ -590,9 +590,31 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
+fn append_where_clause(generics: &mut Generics) {
+    let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ident>));
+
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: parse_quote!(#ident),
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+    if predicates.is_empty() {
+        return;
+    }
+    let where_clause = generics.make_where_clause();
+    where_clause.predicates.extend(predicates);
+}
+
 fn append_generics(generics: &Generics) -> Generics {
     let mut generics = generics.clone();
     append_de_lifetime(&mut generics);
+    append_where_clause(&mut generics);
     append_config(&mut generics);
     generics
 }

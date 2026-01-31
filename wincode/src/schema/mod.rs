@@ -3319,4 +3319,166 @@ mod tests {
             prop_assert_eq!(value, deserialized);
         });
     }
+
+    #[test]
+    fn test_generic_struct() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            serde::Serialize,
+            serde::Deserialize,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        struct GenT<T> {
+            inner: T,
+        }
+
+        assert_eq!(
+            <GenT<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 8,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <GenT<String> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic,
+        );
+
+        proptest!(proptest_cfg(), |(value: GenT<u64>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: GenT<u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: GenT<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_generic_struct_two_params() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            serde::Serialize,
+            serde::Deserialize,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        struct GenT<T, U> {
+            t: T,
+            u: U,
+        }
+
+        assert_eq!(
+            <GenT<u64, u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 16,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <GenT<String, u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic,
+        );
+
+        proptest!(proptest_cfg(), |(value: GenT<u64, u64>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: GenT<u64, u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: GenT<u64, u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_generic_struct_repr_transparent() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            serde::Serialize,
+            serde::Deserialize,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct GenT<T> {
+            inner: T,
+        }
+
+        assert_eq!(
+            <GenT<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 8,
+                zero_copy: true
+            }
+        );
+
+        proptest!(proptest_cfg(), |(value: GenT<u64>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: GenT<u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: GenT<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_generic_enum() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            serde::Serialize,
+            serde::Deserialize,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        enum GenT<T> {
+            A(T),
+            B(u8),
+        }
+
+        assert_eq!(
+            <GenT<u8> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u32>() + 1,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <GenT<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic,
+        );
+
+        proptest!(proptest_cfg(), |(value: GenT<u64>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: GenT<u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: GenT<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
 }
