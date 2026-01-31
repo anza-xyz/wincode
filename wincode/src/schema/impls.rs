@@ -1799,7 +1799,7 @@ where
     T: SchemaRead<'de, C>,
 {
     type Dst = Bound<T::Dst>;
-    
+
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
