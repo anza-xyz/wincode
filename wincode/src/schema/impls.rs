@@ -1768,8 +1768,6 @@ where
 {
     type Src = Bound<T::Src>;
 
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
-
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -1801,9 +1799,7 @@ where
     T: SchemaRead<'de, C>,
 {
     type Dst = Bound<T::Dst>;
-
-    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
-
+    
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
@@ -1845,8 +1841,8 @@ where
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx)`.
-                // reading `Idx` will consume `size` bytes, fully consuming the trusted window.
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
                 let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                 Idx::write(writer, &src.start)?;
                 Idx::write(writer, &src.end)?;
@@ -1916,8 +1912,8 @@ where
     fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx)`.
-                // reading `Idx` will consume `size` bytes, fully consuming the trusted window.
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
                 let writer = &mut unsafe { writer.as_trusted_for(size) }?;
                 Idx::write(writer, src.start())?;
                 Idx::write(writer, src.end())?;
