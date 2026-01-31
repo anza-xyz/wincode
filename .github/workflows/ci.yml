@@ -24,13 +24,13 @@ jobs:
         run: cargo +nightly miri test --all-features --lib --bins --no-fail-fast --workspace --exclude wincode-fuzz
 
   lint-test:
-    name: clippy & tests (stable)
+    name: clippy & tests (MSRV)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: 1.84.1
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
