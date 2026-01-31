@@ -1,12 +1,13 @@
 [package]
 name = "wincode"
-version = "0.3.0"
+version = "0.3.1"
 authors.workspace = true
 description = "Fast bincode de/serialization with placement initialization"
 repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 categories = ["encoding", "network-programming"]
 keywords = ["binary", "encode", "serialize", "deserialize", "bincode"]
 
@@ -20,17 +21,17 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "warnings"]
 [features]
 default = ["std"]
 alloc = []
-std = ["alloc", "thiserror/std", "uuid?/std"]
+std = ["alloc", "thiserror/std"]
 solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
 
 [dependencies]
-paste = "1.0.15"
+pastey = "0.2.1"
 solana-short-vec = { version = "3.0.0", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
-wincode-derive = { version = "0.3.0", optional = true }
+wincode-derive = { version = "0.3.1", optional = true }
 uuid = { version = "1.20.0", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -40,7 +41,7 @@ proptest-derive = "0.6.0"
 rand = { version = "0.8.5" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.0.0" }
-criterion = { version = "0.8.1", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 uuid = { version = "1.20.0", features = ["serde"] }
 
 [build-dependencies]

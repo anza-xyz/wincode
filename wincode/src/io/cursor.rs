@@ -384,7 +384,7 @@ impl<'a> TrustedVecWriter<'a> {
 }
 
 #[cfg(feature = "alloc")]
-impl<'a> Writer for TrustedVecWriter<'a> {
+impl Writer for TrustedVecWriter<'_> {
     type Trusted<'b>
         = TrustedVecWriter<'b>
     where

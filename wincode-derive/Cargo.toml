@@ -1,12 +1,13 @@
 [package]
 name = "wincode-derive"
-version = "0.3.0"
+version = "0.3.1"
 authors.workspace = true
 description = "Derive macros for wincode"
 repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 proc-macro = true

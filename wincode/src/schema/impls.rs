@@ -24,9 +24,10 @@ use {
     core::{
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
         time::Duration,
     },
-    paste::paste,
+    pastey::paste,
 };
 #[cfg(feature = "alloc")]
 use {
@@ -1617,5 +1618,130 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SystemTime {
             .ok_or_else(|| invalid_value("SystemTime overflow"))?;
         dst.write(system_time);
         Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv4Addr {
+    type Src = Ipv4Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 4,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(4)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        writer.write(&src.octets())?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv4Addr {
+    type Dst = Ipv4Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 4,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let bytes = *reader.fill_array::<4>()?;
+        // SAFETY: `fill_array` guarantees 4 bytes are available
+        unsafe { reader.consume_unchecked(4) };
+        dst.write(Ipv4Addr::from(bytes));
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv6Addr {
+    type Src = Ipv6Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 16,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+        Ok(16)
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        writer.write(&src.octets())?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
+    type Dst = Ipv6Addr;
+
+    const TYPE_META: TypeMeta = TypeMeta::Static {
+        size: 16,
+        zero_copy: false,
+    };
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let bytes = *reader.fill_array::<16>()?;
+        // SAFETY: `fill_array` guarantees 16 bytes are available
+        unsafe { reader.consume_unchecked(16) };
+        dst.write(Ipv6Addr::from(bytes));
+        Ok(())
+    }
+}
+
+unsafe impl<C: Config> SchemaWrite<C> for IpAddr {
+    type Src = IpAddr;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(match src {
+            IpAddr::V4(_) => C::TagEncoding::size_of_from_u32(0)? + 4,
+            IpAddr::V6(_) => C::TagEncoding::size_of_from_u32(1)? + 16,
+        })
+    }
+
+    #[inline]
+    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match src {
+            IpAddr::V4(addr) => {
+                C::TagEncoding::write_from_u32(writer, 0)?;
+                <Ipv4Addr as SchemaWrite<C>>::write(writer, addr)
+            }
+            IpAddr::V6(addr) => {
+                C::TagEncoding::write_from_u32(writer, 1)?;
+                <Ipv6Addr as SchemaWrite<C>>::write(writer, addr)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
+    type Dst = IpAddr;
+
+    #[inline]
+    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
+        match tag {
+            0 => {
+                let addr = <Ipv4Addr as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(IpAddr::V4(addr));
+                Ok(())
+            }
+            1 => {
+                let addr = <Ipv6Addr as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(IpAddr::V6(addr));
+                Ok(())
+            }
+            _ => Err(invalid_tag_encoding(tag as usize)),
+        }
     }
 }
