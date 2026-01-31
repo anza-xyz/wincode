@@ -1,0 +1,30 @@
+# Configuration for cargo-deny
+# See https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+version = 2
+yanked = "warn"
+ignore = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "0BSD",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+]
+
+[sources]
+unknown-registry = "warn"
+unknown-git = "warn"

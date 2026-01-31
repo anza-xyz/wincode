@@ -44,6 +44,13 @@ jobs:
       - name: test uuid no serde compat
         run: cargo test uuid --features alloc,uuid --all-targets --no-fail-fast --workspace --exclude wincode-fuzz
 
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
   fuzz:
     name: fuzz smoke check (nightly)
     runs-on: ubuntu-latest
