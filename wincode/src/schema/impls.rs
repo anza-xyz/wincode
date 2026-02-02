@@ -1875,9 +1875,20 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let start = Idx::get(reader)?;
-        let end = Idx::get(reader)?;
-        dst.write(Range { start, end });
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => {
+                let reader = &mut unsafe { reader.as_trusted_for(idx_size + idx_size) }?;
+                let start = Idx::get(reader)?;
+                let end = Idx::get(reader)?;
+                dst.write(Range { start, end });
+            },
+            TypeMeta::Dynamic => {
+                let start = Idx::get(reader)?;
+                let end = Idx::get(reader)?;
+                dst.write(Range { start, end });
+            }
+        };
+
         Ok(())
     }
 }
