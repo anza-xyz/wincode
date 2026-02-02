@@ -67,7 +67,7 @@ jobs:
       - name: Summary
         run: |
           echo "Tag: ${TAG}" >> "${GITHUB_STEP_SUMMARY}"
-          echo "Ref: ${REF}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Ref: ${REF} (https://github.com/${{ github.repository }}/commit/${REF})" >> "${GITHUB_STEP_SUMMARY}"
         env:
           TAG: ${{ steps.meta.outputs.tag }}
           REF: ${{ steps.meta.outputs.ref }}
