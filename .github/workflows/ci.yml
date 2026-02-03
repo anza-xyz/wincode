@@ -61,4 +61,5 @@ jobs:
       - name: clippy (fuzz)
         run: cargo +nightly clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
       - uses: dtolnay/install@cargo-fuzz
-      - run: cargo +nightly fuzz run roundtrip --careful --no-trace-compares -- -max_len=$((5 << 20)) -max_total_time=60
+      # strip dead code to prevent https://github.com/rust-lang/rust/issues/137222 with older versions of cargo-fuzz
+      - run: cargo +nightly fuzz run roundtrip --careful --no-trace-compares --strip-dead-code true -- -max_len=$((5 << 20)) -max_total_time=60
