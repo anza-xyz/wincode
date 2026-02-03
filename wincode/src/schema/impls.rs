@@ -1875,9 +1875,11 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        match Idx::TYPE_META {
-            TypeMeta::Static { size: idx_size, .. } => {
-                let reader = &mut unsafe { reader.as_trusted_for(idx_size + idx_size) }?;
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let reader = &mut unsafe { reader.as_trusted_for(size) }?;
                 let start = Idx::get(reader)?;
                 let end = Idx::get(reader)?;
                 dst.write(Range { start, end });
@@ -1957,9 +1959,21 @@ where
 
     #[inline]
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let start = Idx::get(reader)?;
-        let end = Idx::get(reader)?;
-        dst.write(RangeInclusive::new(start, end));
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let reader = &mut unsafe { reader.as_trusted_for(size) }?;
+                let start = Idx::get(reader)?;
+                let end = Idx::get(reader)?;
+                dst.write(RangeInclusive::new(start, end ));
+            },
+            TypeMeta::Dynamic => {
+                let start = Idx::get(reader)?;
+                let end = Idx::get(reader)?;
+                dst.write(RangeInclusive::new(start, end ));
+            }
+        };
         Ok(())
     }
 }

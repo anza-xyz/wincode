@@ -3509,7 +3509,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&range).unwrap();
             prop_assert_eq!(&wincode_serialized, &bincode_serialized);
 
-            let wincode_deserialized: Range<u64> = deserialize(&wincode_serialized).unwrap();
+            let wincode_deserialized: Range<u64> = deserialize(&wincode_serialized).unwrap(); //happens here
             let bincode_deserialized: Range<u64> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(range.start, wincode_deserialized.start);
             prop_assert_eq!(range.end, wincode_deserialized.end);
