@@ -16,4 +16,4 @@ proc-macro = true
 darling = "0.21.3"
 proc-macro2.workspace = true
 quote.workspace = true
-syn = { version = "2.0.106", features = ["visit-mut", "visit"] }
+syn = { version = "2.0.114", features = ["visit-mut", "visit"] }
