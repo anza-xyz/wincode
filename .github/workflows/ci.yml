@@ -56,4 +56,4 @@ jobs:
         with:
           cache-on-failure: true
       - uses: dtolnay/install@cargo-fuzz
-      - run: cargo +nightly fuzz run roundtrip -- -max_total_time=60
+      - run: cargo +nightly fuzz run roundtrip --careful --no-trace-compares -- -max_len=$((5 << 20)) -max_total_time=60
