@@ -3441,6 +3441,35 @@ mod tests {
     }
 
     #[test]
+    fn test_generic_struct_with_existing_bound() {
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            serde::Serialize,
+            serde::Deserialize,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct GenT<T: Copy> {
+            inner: T,
+        }
+
+        proptest!(proptest_cfg(), |(value: GenT<u64>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: GenT<u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: GenT<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
     fn test_generic_enum() {
         #[derive(
             SchemaWrite,
