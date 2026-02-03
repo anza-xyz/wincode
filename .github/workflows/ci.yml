@@ -52,8 +52,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
+          components: rustfmt, clippy, rust-src
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: rustfmt (fuzz)
+        run: cargo +nightly fmt --manifest-path fuzz/Cargo.toml -- --check
+      - name: clippy (fuzz)
+        run: cargo +nightly clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
       - uses: dtolnay/install@cargo-fuzz
       - run: cargo +nightly fuzz run roundtrip --careful --no-trace-compares -- -max_len=$((5 << 20)) -max_total_time=60
