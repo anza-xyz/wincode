@@ -1,5 +1,9 @@
 use {
-    std::{fs, path::Path},
+    std::{
+        fs,
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        path::Path,
+    },
     wincode::config::{Configuration, DEFAULT_PREALLOCATION_SIZE_LIMIT},
     wincode_derive::{SchemaRead, SchemaWrite},
 };
@@ -94,6 +98,21 @@ fn main() {
         &corpus_dir,
         "seed-string-utf8",
         String::from("\u{1F600}\u{00E9}\u{4E16}\u{754C}")
+    );
+
+    seed!(&corpus_dir, "seed-ipv4-localhost", Ipv4Addr::LOCALHOST);
+    seed!(&corpus_dir, "seed-ipv4-broadcast", Ipv4Addr::BROADCAST);
+    seed!(&corpus_dir, "seed-ipv6-localhost", Ipv6Addr::LOCALHOST);
+    seed!(&corpus_dir, "seed-ipv6-unspecified", Ipv6Addr::UNSPECIFIED);
+    seed!(
+        &corpus_dir,
+        "seed-ipaddr-v4",
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    );
+    seed!(
+        &corpus_dir,
+        "seed-ipaddr-v6",
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
     );
 
     seed!(&corpus_dir, "seed-vec_u8-empty", Vec::<u8>::new());

@@ -2,6 +2,7 @@
 
 use {
     libfuzzer_sys::fuzz_target,
+    std::net::{IpAddr, Ipv4Addr, Ipv6Addr},
     wincode::config::{Configuration, DEFAULT_PREALLOCATION_SIZE_LIMIT},
     wincode_derive::{SchemaRead, SchemaWrite},
 };
@@ -262,6 +263,9 @@ fuzz_target!(|data: &[u8]| {
     test_all_configs!(data, [u32; 8]);
     test_all_configs!(data, (u64, bool));
     test_all_configs!(data, (u32, String, bool));
+    test_all_configs!(data, Ipv4Addr);
+    test_all_configs!(data, Ipv6Addr);
+    test_all_configs!(data, IpAddr);
 
     test_all_configs!(data, BasicTypes);
     test_all_configs!(data, VecTypes);
