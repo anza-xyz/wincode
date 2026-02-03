@@ -241,7 +241,7 @@
 //! let serialized = wincode::serialize(&byte_ref).unwrap();
 //! let deserialized: ByteRef<'_> = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(byte_ref, deserialized);
-//! # }  
+//! # }
 //! ```
 //!
 //! ### struct newtype
@@ -486,6 +486,14 @@
 //! |Attribute|Type|Default|Description
 //! |---|---|---|---|
 //! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
+//! |`skip`|`bool`\|`Expr`|`false`|Skips the field during serialization and deserialization (initializing with default value).|
+//!
+//! ### `skip`
+//!
+//! Allows omitting the field during serialization and deserialization. When type is initialized
+//! during deserialization, the field will be set to the default value. This is typically
+//! `Default::default()` (when using `#[wincode(skip)]` or `#[wincode(skip(default))]`), but can
+//! be overridden by specifying `#[wincode(skip(default_val = <value>))]`.
 //!
 //! ## Variant level (enum variants)
 //! |Attribute|Type|Default|Description
