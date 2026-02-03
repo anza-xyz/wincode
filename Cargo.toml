@@ -21,4 +21,4 @@ rust-version = "1.84.1"
 
 [workspace.dependencies]
 quote = "1.0.41"
-proc-macro2 = "1.0.101"
+proc-macro2 = "1.0.106"
