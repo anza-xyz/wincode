@@ -611,11 +611,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let field_suppress = suppress_unused_fields(&args);
     let struct_extensions = impl_struct_extensions(&args, &crate_name)?;
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
-    let has_skipped_struct_fields = if let Data::Struct(fields) = &args.data {
-        fields.iter().any(|field| field.skip.is_some())
-    } else {
-        false
-    };
 
     let (read_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
@@ -639,7 +634,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let zero_copy_impl = match &args.data {
         Data::Struct(fields)
             if repr.is_zero_copy_eligible()
-                && !has_skipped_struct_fields
                 // Generics will trigger "cannot use type generics in const context".
                 // Unfortunate, but generics in a zero-copy context are presumably a more niche use-case,
                 // so we'll deal with it for now.

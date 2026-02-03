@@ -1423,6 +1423,60 @@ mod tests {
             };
             prop_assert_eq!(reinitialized, test);
         });
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct TestZeroCopy {
+            a: StructZeroCopy,
+            #[wincode(skip)]
+            b: (),
+            c: [u8; 16],
+        }
+        assert_eq!(
+            <TestZeroCopy as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<StructZeroCopy>() + 16,
+                zero_copy: true,
+            }
+        );
+
+        proptest!(proptest_cfg(), |(test: TestZeroCopy)| {
+            let mut serialized = serialize(&test).unwrap();
+            let mut uninit_zeroed = MaybeUninit::<TestZeroCopy>::uninit();
+            TestZeroCopy::deserialize_into(serialized.as_mut(), &mut uninit_zeroed).unwrap();
+            let deserialized = unsafe { uninit_zeroed.assume_init() };
+            prop_assert_eq!(deserialized, test);
+        });
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct TestNonZeroCopy {
+            a: StructZeroCopy,
+            #[wincode(skip(default_val = [1u8; 16]))]
+            b: [u8; 16],
+        }
+        assert_eq!(
+            <TestNonZeroCopy as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<StructZeroCopy>(),
+                zero_copy: false,
+            }
+        );
+
+        proptest!(proptest_cfg(), |(test: TestNonZeroCopy)| {
+            let mut serialized = serialize(&test).unwrap();
+            let mut uninit_zeroed = MaybeUninit::<TestNonZeroCopy>::uninit();
+            TestNonZeroCopy::deserialize_into(serialized.as_mut(), &mut uninit_zeroed).unwrap();
+            let deserialized = unsafe { uninit_zeroed.assume_init() };
+            assert_eq!(deserialized.b, [1u8; 16]);
+            let reinitialized = TestNonZeroCopy {
+                b: test.b,
+                ..deserialized
+            };
+            prop_assert_eq!(reinitialized, test);
+        });
     }
 
     #[test]

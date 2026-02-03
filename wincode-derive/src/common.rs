@@ -255,8 +255,7 @@ impl FieldsExt for Fields<Field> {
         let zero_copy_idents = self
             .unskipped_anon_ident_iter(Some("zc_"))
             .collect::<Vec<_>>();
-        let has_skipped_fields = anon_idents.len() != self.len();
-        let is_zero_copy_eligible = !has_skipped_fields && repr.is_zero_copy_eligible();
+        let is_zero_copy_eligible = repr.is_zero_copy_eligible();
         // Extract sizes and zero-copy flags from the TYPE_META implementations of the fields of the struct.
         // We can use this in aggregate to determine the static size and zero-copy eligibility of the struct.
         //
