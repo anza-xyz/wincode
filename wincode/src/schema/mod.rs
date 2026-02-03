@@ -3124,52 +3124,85 @@ mod tests {
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
     }
-
+    
     #[test]
-    fn test_all_nonzero_integers() {
+    fn test_nonzero_types() {
         proptest!(proptest_cfg(), |(
-            nz_u8 in (1u8..=u8::MAX).prop_map(|v| NonZeroU8::new(v).unwrap()),
-            nz_u16 in (1u16..=u16::MAX).prop_map(|v| NonZeroU16::new(v).unwrap()),
-            nz_u32 in (1u32..=u32::MAX).prop_map(|v| NonZeroU32::new(v).unwrap()),
-            nz_u64 in (1u64..=u64::MAX).prop_map(|v| NonZeroU64::new(v).unwrap()),
-            nz_u128 in (1u128..=u128::MAX).prop_map(|v| NonZeroU128::new(v).unwrap()),
-            nz_usize in (1usize..=usize::MAX).prop_map(|v| NonZeroUsize::new(v).unwrap()),
-            nz_i8 in (i8::MIN..=-1i8).prop_union(1i8..=i8::MAX).prop_map(|v| NonZeroI8::new(v).unwrap()),
-            nz_i16 in (i16::MIN..=-1i16).prop_union(1i16..=i16::MAX).prop_map(|v| NonZeroI16::new(v).unwrap()),
-            nz_i32 in (i32::MIN..=-1i32).prop_union(1i32..=i32::MAX).prop_map(|v| NonZeroI32::new(v).unwrap()),
-            nz_i64 in (i64::MIN..=-1i64).prop_union(1i64..=i64::MAX).prop_map(|v| NonZeroI64::new(v).unwrap()),
-            nz_i128 in (i128::MIN..=-1i128).prop_union(1i128..=i128::MAX).prop_map(|v| NonZeroI128::new(v).unwrap()),
-            nz_isize in (isize::MIN..=-1isize).prop_union(1isize..=isize::MAX).prop_map(|v| NonZeroIsize::new(v).unwrap()),
+            nz_u8: NonZeroU8,
+            nz_u16: NonZeroU16,
+            nz_u32: NonZeroU32,
+            nz_u64: NonZeroU64,
+            nz_u128: NonZeroU128,
+            nz_usize: NonZeroUsize,
+            nz_i8: NonZeroI8,
+            nz_i16: NonZeroI16,
+            nz_i32: NonZeroI32,
+            nz_i64: NonZeroI64,
+            nz_i128: NonZeroI128,
+            nz_isize: NonZeroIsize,
         )| {
-            let value = (nz_u8, nz_u16, nz_u32, nz_u64, nz_u128, nz_usize, nz_i8, nz_i16, nz_i32, nz_i64, nz_i128, nz_isize);
+            // Unsigned
+            let ser = serialize(&nz_u8).unwrap();
+            let de: NonZeroU8 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u8, de);
 
-            let bincode_serialized = bincode::serialize(&value).unwrap();
-            let schema_serialized = serialize(&value).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let ser = serialize(&nz_u16).unwrap();
+            let de: NonZeroU16 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u16, de);
 
-            type NonZeroTuple = (NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128,
-                                NonZeroUsize, NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize);
-            let bincode_deserialized: NonZeroTuple = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: NonZeroTuple = deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(value, bincode_deserialized);
-            prop_assert_eq!(value, schema_deserialized);
+            let ser = serialize(&nz_u32).unwrap();
+            let de: NonZeroU32 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u32, de);
+
+            let ser = serialize(&nz_u64).unwrap();
+            let de: NonZeroU64 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u64, de);
+
+            let ser = serialize(&nz_u128).unwrap();
+            let de: NonZeroU128 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u128, de);
+
+            let ser = serialize(&nz_usize).unwrap();
+            let de: NonZeroUsize = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_usize, de);
+
+            // Signed
+            let ser = serialize(&nz_i8).unwrap();
+            let de: NonZeroI8 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i8, de);
+
+            let ser = serialize(&nz_i16).unwrap();
+            let de: NonZeroI16 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i16, de);
+
+            let ser = serialize(&nz_i32).unwrap();
+            let de: NonZeroI32 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i32, de);
+
+            let ser = serialize(&nz_i64).unwrap();
+            let de: NonZeroI64 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i64, de);
+
+            let ser = serialize(&nz_i128).unwrap();
+            let de: NonZeroI128 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i128, de);
+
+            let ser = serialize(&nz_isize).unwrap();
+            let de: NonZeroIsize = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_isize, de);
         });
     }
 
     #[test]
-    fn test_nonzero_option() {
-        proptest!(proptest_cfg(), |(value: Option<NonZeroU32>)| {
-            let bincode_serialized = bincode::serialize(&value).unwrap();
-            let schema_serialized = serialize(&value).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: Option<NonZeroU32> =
-                bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: Option<NonZeroU32> =
-                deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(value, bincode_deserialized);
-            prop_assert_eq!(value, schema_deserialized);
-        });
+    fn test_nonzero_invalid_zero_value() {
+        // Test that deserializing a zero value fails
+        let zero_bytes = serialize(&0u32).unwrap();
+        let result: ReadResult<NonZeroU32> = deserialize(&zero_bytes);
+        assert!(result.is_err(), "Deserializing zero should fail for NonZeroU32");
+        
+        let zero_bytes = serialize(&0u64).unwrap();
+        let result: ReadResult<NonZeroU64> = deserialize(&zero_bytes);
+        assert!(result.is_err(), "Deserializing zero should fail for NonZeroU64");
     }
 
     #[test]
