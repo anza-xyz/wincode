@@ -41,7 +41,7 @@ jobs:
         run: cd ./fuzz/corpus && zip -r roundtrip.zip roundtrip
 
       - name: Upload corpus to FuzzCorp
-        uses: asymmetric-research/fuzz-upload-action@34cae36b2ac3df66a149b581482202538541d9f1
+        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b
         with:
           upload_type: asset
           upload_path: ./fuzz/corpus/roundtrip.zip
@@ -54,7 +54,7 @@ jobs:
           FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
 
       - name: Upload bundle to FuzzCorp
-        uses: asymmetric-research/fuzz-upload-action@34cae36b2ac3df66a149b581482202538541d9f1
+        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b
         with:
           upload_type: bundle
           upload_path: ./fuzz/target/bundle
