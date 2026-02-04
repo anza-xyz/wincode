@@ -3558,6 +3558,45 @@ mod tests {
     }
 
     #[test]
+    fn test_range_vec_u64() {
+        proptest!(proptest_cfg(), |(ranges: Vec<Range<u64>>)| {
+            let serialized = serialize(&ranges).unwrap();
+            let bincode_serialized = bincode::serialize(&ranges).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            
+            let deserialized: Vec<Range<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<Range<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_range_inclusive_vec_u64() {
+        proptest!(proptest_cfg(), |(ranges: Vec<RangeInclusive<u64>>)| {
+            let serialized = serialize(&ranges).unwrap();
+            let bincode_serialized = bincode::serialize(&ranges).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            
+            let deserialized: Vec<RangeInclusive<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<RangeInclusive<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_vec_u64() {
+        proptest!(proptest_cfg(), |(bounds: Vec<Bound<u64>>)| {
+            let serialized = serialize(&bounds).unwrap();
+            let bincode_serialized = bincode::serialize(&bounds).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            
+            let deserialized: Vec<Bound<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<Bound<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
