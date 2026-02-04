@@ -30,9 +30,11 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Uuid {
     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // serde serializes byte slices as a length-prefixed array.
         #[cfg(feature = "uuid-serde-compat")]
-        let len = C::LengthEncoding::read(reader)?;
-        if len != size_of::<Uuid>() {
-            return Err(crate::error::invalid_value("Uuid: invalid length prefix"));
+        {
+            let len = C::LengthEncoding::read(reader)?;
+            if len != size_of::<Uuid>() {
+                return Err(crate::error::invalid_value("Uuid: invalid length prefix"));
+            }
         }
         let bytes = *reader.fill_array::<{ size_of::<Uuid>() }>()?;
         // SAFETY: `fill_array` guarantees we get exactly `size_of::<Uuid>()` bytes.
