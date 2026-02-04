@@ -1863,7 +1863,10 @@ mod tests {
             <Duration as SchemaWrite<_>>::type_meta(config),
             TypeMeta::Dynamic
         );
-        assert_eq!(<Duration as SchemaRead<'_, _>>::type_meta(config), TypeMeta::Dynamic);
+        assert_eq!(
+            <Duration as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
