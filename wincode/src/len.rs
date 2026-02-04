@@ -352,9 +352,7 @@ pub mod short_vec {
         #[inline]
         fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let len = decode_short_u16_from_reader(reader)?;
-            // SAFETY: `dst` is a valid pointer to a `MaybeUninit<ShortU16>`.
-            let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast::<MaybeUninit<u16>>() };
-            slot.write(len);
+            dst.write(ShortU16(len));
             Ok(())
         }
     }
