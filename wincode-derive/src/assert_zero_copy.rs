@@ -59,6 +59,12 @@ pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<T
                 assert_schema_read_impl::<#ident>()
             };
 
+            // Assert the struct itself implements `ZeroCopy`.
+            const _assert_struct_zerocopy_impl: fn() = || {
+                fn assert_struct_zerocopy_impl<T: ZeroCopy<#config_path>>() {}
+                assert_struct_zerocopy_impl::<#ident>()
+            };
+
             // Assert all fields implement `ZeroCopy`.
             const _assert_field_zerocopy_impl: fn() = || {
                 fn assert_field_zerocopy_impl<T: ZeroCopy<#config_path>>() {}
