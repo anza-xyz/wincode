@@ -3124,7 +3124,7 @@ mod tests {
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
     }
-    
+
     #[test]
     fn test_nonzero_types() {
         proptest!(proptest_cfg(), |(
@@ -3198,11 +3198,17 @@ mod tests {
         // Test that deserializing a zero value fails
         let zero_bytes = serialize(&0u32).unwrap();
         let result: ReadResult<NonZeroU32> = deserialize(&zero_bytes);
-        assert!(result.is_err(), "Deserializing zero should fail for NonZeroU32");
-        
+        assert!(
+            result.is_err(),
+            "Deserializing zero should fail for NonZeroU32"
+        );
+
         let zero_bytes = serialize(&0u64).unwrap();
         let result: ReadResult<NonZeroU64> = deserialize(&zero_bytes);
-        assert!(result.is_err(), "Deserializing zero should fail for NonZeroU64");
+        assert!(
+            result.is_err(),
+            "Deserializing zero should fail for NonZeroU64"
+        );
     }
 
     #[test]
