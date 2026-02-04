@@ -6,7 +6,7 @@ set -e
 COMMIT=$(git rev-parse --short=10 HEAD)
 
 # Get the repository URL
-REPO_URL=$(git remote get-url origin 2>/dev/null || echo "https://github.com/anza/wincode")
+REPO_URL=$(git remote get-url origin 2>/dev/null || echo "https://github.com/anza-xyz/wincode")
 
 # Get the list of fuzz targets
 FUZZ_TARGETS=$(cargo fuzz list 2>/dev/null)
