@@ -1534,29 +1534,33 @@ where
     }
 }
 
-const DURATION_SIZE_FIXINT: usize = size_of::<u64>() + size_of::<u32>();
-
 unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
     type Src = Duration;
 
-    const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
-        TypeMeta::Static {
-            size: DURATION_SIZE_FIXINT,
-            zero_copy: false,
+    const TYPE_META: TypeMeta = match (
+        <u64 as SchemaWrite<C>>::TYPE_META,
+        <u32 as SchemaWrite<C>>::TYPE_META,
+    ) {
+        // both static
+        (TypeMeta::Static { size: u64_size, .. }, TypeMeta::Static { size: u32_size, .. }) => {
+            TypeMeta::Static {
+                size: u64_size + u32_size,
+                zero_copy: false,
+            }
         }
-    } else {
-        TypeMeta::Dynamic
+        _ => TypeMeta::Dynamic,
     };
 
     #[inline]
     #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        if C::IntEncoding::STATIC {
-            Ok(DURATION_SIZE_FIXINT)
-        } else {
-            let secs = <u64 as SchemaWrite<C>>::size_of(&src.as_secs())?;
-            let nanos = <u32 as SchemaWrite<C>>::size_of(&src.subsec_nanos())?;
-            Ok(secs + nanos)
+        match <Self as SchemaWrite<C>>::TYPE_META {
+            TypeMeta::Static { size, .. } => Ok(size),
+            TypeMeta::Dynamic => {
+                let secs = <u64 as SchemaWrite<C>>::size_of(&src.as_secs())?;
+                let nanos = <u32 as SchemaWrite<C>>::size_of(&src.subsec_nanos())?;
+                Ok(secs + nanos)
+            }
         }
     }
 
@@ -1593,13 +1597,14 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        if C::IntEncoding::STATIC {
-            Ok(DURATION_SIZE_FIXINT)
-        } else {
-            let duration = src
-                .duration_since(UNIX_EPOCH)
-                .map_err(|_| crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH"))?;
-            <Duration as SchemaWrite<C>>::size_of(&duration)
+        match <Self as SchemaWrite<C>>::TYPE_META {
+            TypeMeta::Static { size, .. } => Ok(size),
+            TypeMeta::Dynamic => {
+                let duration = src.duration_since(UNIX_EPOCH).map_err(|_| {
+                    crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH")
+                })?;
+                <Duration as SchemaWrite<C>>::size_of(&duration)
+            }
         }
     }
 
