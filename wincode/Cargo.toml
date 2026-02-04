@@ -26,6 +26,7 @@ solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
+indexmap = ["dep:indexmap"]
 
 [dependencies]
 pastey = "0.2.1"
@@ -33,6 +34,7 @@ solana-short-vec = { version = "3.0.0", optional = true }
 thiserror = { version = "2.0.16", default-features = false }
 wincode-derive = { version = "0.3.1", path = "../wincode-derive", optional = true }
 uuid = { version = "1.20.0", optional = true, default-features = false }
+indexmap = { version = "2.13.0", features = ["arbitrary", "serde" ], optional = true }
 
 [dev-dependencies]
 bincode = { version = "1.3.3" }
