@@ -2,7 +2,12 @@
 
 use {
     libfuzzer_sys::fuzz_target,
-    std::net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    std::{
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, LinkedList, VecDeque},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        time::{Duration, SystemTime},
+    },
+    uuid::Uuid,
     wincode::config::{Configuration, DEFAULT_PREALLOCATION_SIZE_LIMIT},
     wincode_derive::{SchemaRead, SchemaWrite},
 };
@@ -89,9 +94,69 @@ macro_rules! assert_config_roundtrip {
             }
         }
     };
+    (unordered, $label:expr, $wincode_result:expr, $bincode_result:expr, $reser_w:expr) => {
+        match ($wincode_result, $bincode_result) {
+            (Ok(wv), Ok(bv)) => {
+                assert_eq!(wv, bv, "Deserialization mismatch for {}", $label);
+                let ws = ($reser_w)(&wv);
+                // Unordered collections may serialize to different byte sequences
+                assert!(
+                    ws.len() <= DEFAULT_PREALLOCATION_SIZE_LIMIT,
+                    "Serialized size {} exceeds DEFAULT_PREALLOCATION_SIZE_LIMIT ({}) for {}",
+                    ws.len(),
+                    DEFAULT_PREALLOCATION_SIZE_LIMIT,
+                    $label
+                );
+            }
+            (Err(_), Err(_)) => {}
+            (Ok(_), Err(e)) => {
+                panic!("wincode accepted but bincode rejected for {}: {e:?}", $label);
+            }
+            (Err(e), Ok(_)) => {
+                panic!("bincode accepted but wincode rejected for {}: {e}", $label);
+            }
+        }
+    };
 }
 
 macro_rules! test_config {
+    ($bytes:expr, $type:ty, unordered, $wc:expr, v1($opts:expr)) => {{
+        use bincode_1::Options;
+        let config = $wc;
+        let opts = $opts;
+        let wr: Result<$type, _> = wincode::config::deserialize($bytes, config);
+        if is_preallocation_error(&wr) {
+            let limited = opts.with_limit(DEFAULT_PREALLOCATION_SIZE_LIMIT as u64);
+            let br: Result<$type, _> = limited.deserialize_from($bytes);
+            assert!(br.is_err(),
+                "bincode v1 accepted but wincode rejected due to preallocation limit for {}",
+                stringify!($type));
+        } else {
+            let br: Result<$type, _> = opts.deserialize($bytes);
+            assert_config_roundtrip!(unordered, stringify!($type), wr, br,
+                |v: &$type| wincode::config::serialize(v, config).unwrap()
+            );
+        }
+    }};
+    ($bytes:expr, $type:ty, unordered, $wc:expr, v2($bc2:expr)) => {{
+        let config = $wc;
+        let bc2 = $bc2;
+        let wr: Result<$type, _> = wincode::config::deserialize($bytes, config);
+        if is_preallocation_error(&wr) {
+            let limited = bc2.with_limit::<{ DEFAULT_PREALLOCATION_SIZE_LIMIT }>();
+            let br: Result<$type, _> =
+                bincode_2::serde::borrow_decode_from_slice($bytes, limited).map(|(v, _)| v);
+            assert!(br.is_err(),
+                "bincode v2 accepted but wincode rejected due to preallocation limit for {}",
+                stringify!($type));
+        } else {
+            let br: Result<$type, _> =
+                bincode_2::serde::borrow_decode_from_slice($bytes, bc2).map(|(v, _)| v);
+            assert_config_roundtrip!(unordered, stringify!($type), wr, br,
+                |v: &$type| wincode::config::serialize(v, config).unwrap()
+            );
+        }
+    }};
     ($bytes:expr, $type:ty, $cmp:ident, $wc:expr, v1($opts:expr)) => {{
         use bincode_1::Options;
         let config = $wc;
@@ -236,6 +301,57 @@ macro_rules! test_all_configs_float {
     };
 }
 
+macro_rules! test_all_configs_unordered {
+    ($data:expr, $type:ty) => {
+        test_config!(
+            $data,
+            $type,
+            unordered,
+            Configuration::default()
+                .with_little_endian()
+                .with_fixint_encoding(),
+            v1(bincode_1::DefaultOptions::new()
+                .with_little_endian()
+                .with_fixint_encoding()
+                .allow_trailing_bytes())
+        );
+        test_config!(
+            $data,
+            $type,
+            unordered,
+            Configuration::default()
+                .with_big_endian()
+                .with_fixint_encoding(),
+            v1(bincode_1::DefaultOptions::new()
+                .with_big_endian()
+                .with_fixint_encoding()
+                .allow_trailing_bytes())
+        );
+        test_config!(
+            $data,
+            $type,
+            unordered,
+            Configuration::default()
+                .with_little_endian()
+                .with_varint_encoding(),
+            v2(bincode_2::config::standard()
+                .with_little_endian()
+                .with_variable_int_encoding())
+        );
+        test_config!(
+            $data,
+            $type,
+            unordered,
+            Configuration::default()
+                .with_big_endian()
+                .with_varint_encoding(),
+            v2(bincode_2::config::standard()
+                .with_big_endian()
+                .with_variable_int_encoding())
+        );
+    };
+}
+
 // Varint encoding differs between bincode 1.x and bincode 2.x, and wincode targets compatibility with bincode 2.x.
 // Wincode does not support `reject_trailing_bytes` configurations, so we allow trailing bytes in every configuration.
 fuzz_target!(|data: &[u8]| {
@@ -266,6 +382,19 @@ fuzz_target!(|data: &[u8]| {
     test_all_configs!(data, Ipv4Addr);
     test_all_configs!(data, Ipv6Addr);
     test_all_configs!(data, IpAddr);
+    test_all_configs!(data, Duration);
+    test_all_configs!(data, SystemTime);
+    test_all_configs!(data, Uuid);
+    test_all_configs!(data, char);
+    test_all_configs!(data, Box<u32>);
+    test_all_configs!(data, Box<[u8]>);
+    test_all_configs!(data, VecDeque<u32>);
+    test_all_configs!(data, LinkedList<u32>);
+    test_all_configs!(data, BTreeSet<u32>);
+    test_all_configs!(data, BTreeMap<u32, u32>);
+    test_all_configs!(data, Result<u32, String>);
+    test_all_configs_unordered!(data, HashMap<u32, u32>);
+    test_all_configs_unordered!(data, HashSet<u32>);
 
     test_all_configs!(data, BasicTypes);
     test_all_configs!(data, VecTypes);

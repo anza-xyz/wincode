@@ -1,9 +1,12 @@
 use {
     std::{
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, LinkedList, VecDeque},
         fs,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         path::Path,
+        time::{Duration, UNIX_EPOCH},
     },
+    uuid::Uuid,
     wincode::config::{Configuration, DEFAULT_PREALLOCATION_SIZE_LIMIT},
     wincode_derive::{SchemaRead, SchemaWrite},
 };
@@ -113,6 +116,106 @@ fn main() {
         &corpus_dir,
         "seed-ipaddr-v6",
         IpAddr::V6(Ipv6Addr::LOCALHOST)
+    );
+    seed!(&corpus_dir, "seed-duration-zero", Duration::ZERO);
+    seed!(&corpus_dir, "seed-duration-max", Duration::MAX);
+    seed!(&corpus_dir, "seed-duration-1s", Duration::from_secs(1));
+    seed!(&corpus_dir, "seed-systemtime-epoch", UNIX_EPOCH);
+    seed!(
+        &corpus_dir,
+        "seed-systemtime-now",
+        UNIX_EPOCH + Duration::from_secs(1_700_000_000)
+    );
+
+    seed!(&corpus_dir, "seed-uuid-nil", Uuid::nil());
+    seed!(&corpus_dir, "seed-uuid-max", Uuid::max());
+    seed!(
+        &corpus_dir,
+        "seed-uuid-v4",
+        Uuid::from_bytes([
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
+        ])
+    );
+
+    seed!(&corpus_dir, "seed-char-ascii", 'A');
+    seed!(&corpus_dir, "seed-char-emoji", '\u{1F600}');
+    seed!(&corpus_dir, "seed-char-null", '\0');
+
+    seed!(&corpus_dir, "seed-box_u32", Box::new(42u32));
+    seed!(
+        &corpus_dir,
+        "seed-box_slice_u8",
+        vec![1u8, 2, 3].into_boxed_slice()
+    );
+
+    seed!(
+        &corpus_dir,
+        "seed-vecdeque_u32-empty",
+        VecDeque::<u32>::new()
+    );
+    seed!(
+        &corpus_dir,
+        "seed-vecdeque_u32-small",
+        VecDeque::from([1u32, 2, 3])
+    );
+
+    seed!(
+        &corpus_dir,
+        "seed-linkedlist_u32-empty",
+        LinkedList::<u32>::new()
+    );
+    seed!(
+        &corpus_dir,
+        "seed-linkedlist_u32-small",
+        LinkedList::from([1u32, 2, 3])
+    );
+
+    seed!(
+        &corpus_dir,
+        "seed-btreeset_u32-empty",
+        BTreeSet::<u32>::new()
+    );
+    seed!(
+        &corpus_dir,
+        "seed-btreeset_u32-small",
+        BTreeSet::from([1u32, 2, 3])
+    );
+
+    seed!(
+        &corpus_dir,
+        "seed-btreemap_u32-empty",
+        BTreeMap::<u32, u32>::new()
+    );
+    seed!(
+        &corpus_dir,
+        "seed-btreemap_u32-small",
+        BTreeMap::from([(1u32, 10u32), (2, 20)])
+    );
+
+    seed!(&corpus_dir, "seed-result_ok", Ok::<u32, String>(42));
+    seed!(
+        &corpus_dir,
+        "seed-result_err",
+        Err::<u32, String>(String::from("error"))
+    );
+
+    seed!(
+        &corpus_dir,
+        "seed-hashmap_u32-empty",
+        HashMap::<u32, u32>::new()
+    );
+    seed!(
+        &corpus_dir,
+        "seed-hashmap_u32-small",
+        HashMap::from([(1u32, 10u32), (2, 20)])
+    );
+
+    seed!(&corpus_dir, "seed-hashset_u32-empty", HashSet::<u32>::new());
+    seed!(
+        &corpus_dir,
+        "seed-hashset_u32-small",
+        HashSet::from([1u32, 2, 3])
     );
 
     seed!(&corpus_dir, "seed-vec_u8-empty", Vec::<u8>::new());
