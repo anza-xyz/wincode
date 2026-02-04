@@ -424,6 +424,7 @@ mod tests {
             rc::Rc,
             result::Result,
             sync::Arc,
+            time::{Duration, SystemTime, UNIX_EPOCH},
         },
     };
 
@@ -1852,6 +1853,113 @@ mod tests {
         );
         assert!(deserialize::<()>(&serialized).is_ok());
         assert!(bincode::deserialize::<()>(&bincode_serialized).is_ok());
+    }
+
+    #[test]
+    fn test_duration_varint_type_meta_dynamic() {
+        let config = Configuration::default().with_varint_encoding();
+
+        assert_eq!(
+            <Duration as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+        assert_eq!(<Duration as SchemaRead<'_, _>>::type_meta(config), TypeMeta::Dynamic);
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct WithDuration {
+            a: u8,
+            d: Duration,
+            b: u8,
+        }
+
+        assert_eq!(
+            <WithDuration as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <WithDuration as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+
+        let val = WithDuration {
+            a: 1,
+            d: Duration::new(0, 0),
+            b: 2,
+        };
+
+        // u64(0) + u32(0) use varint -> 1 byte each.
+        assert_eq!(config::serialized_size(&val.d, config).unwrap(), 2);
+
+        // Buffer is intentionally < fixed-width size (1 + 12 + 1 = 14). Old (incorrect) TYPE_META
+        // would try to reserve 14 bytes via a trusted window and fail with WriteSizeLimit.
+        let mut buf = [0xAAu8; 13];
+        let written = {
+            let buf_len = buf.len();
+            let mut writer: &mut [u8] = &mut buf;
+            config::serialize_into(&mut writer, &val, config).unwrap();
+            buf_len - writer.len()
+        };
+        assert_eq!(written, 4);
+        assert_eq!(&buf[..written], &[1, 0, 0, 2]);
+        assert!(buf[written..].iter().all(|&b| b == 0xAA));
+
+        let roundtrip: WithDuration = config::deserialize(&buf[..written], config).unwrap();
+        assert_eq!(roundtrip, val);
+    }
+
+    #[test]
+    fn test_system_time_varint_type_meta_dynamic() {
+        let config = Configuration::default().with_varint_encoding();
+
+        assert_eq!(
+            <SystemTime as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <SystemTime as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct WithSystemTime {
+            a: u8,
+            t: SystemTime,
+            b: u8,
+        }
+
+        assert_eq!(
+            <WithSystemTime as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <WithSystemTime as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Dynamic
+        );
+
+        let val = WithSystemTime {
+            a: 1,
+            t: UNIX_EPOCH,
+            b: 2,
+        };
+
+        // SystemTime encodes as Duration since UNIX_EPOCH.
+        assert_eq!(config::serialized_size(&val.t, config).unwrap(), 2);
+
+        let mut buf = [0xAAu8; 13];
+        let written = {
+            let buf_len = buf.len();
+            let mut writer: &mut [u8] = &mut buf;
+            config::serialize_into(&mut writer, &val, config).unwrap();
+            buf_len - writer.len()
+        };
+        assert_eq!(written, 4);
+        assert_eq!(&buf[..written], &[1, 0, 0, 2]);
+        assert!(buf[written..].iter().all(|&b| b == 0xAA));
+
+        let roundtrip: WithSystemTime = config::deserialize(&buf[..written], config).unwrap();
+        assert_eq!(roundtrip, val);
     }
 
     #[test]
