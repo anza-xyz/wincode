@@ -40,9 +40,9 @@ jobs:
       - name: clippy (alloc)
         run: cargo clippy --all-targets --features alloc -- -D warnings
       - name: tests
-        run: cargo test --all-features --all-targets --no-fail-fast --workspace --exclude wincode-fuzz
+        run: cargo test --all-features --all-targets --no-fail-fast --workspace
       - name: test uuid no serde compat
-        run: cargo test uuid --features alloc,uuid --all-targets --no-fail-fast --workspace --exclude wincode-fuzz
+        run: cargo test uuid --features alloc,uuid --all-targets --no-fail-fast --workspace
 
   fuzz:
     name: fuzz smoke check (nightly)

@@ -1,0 +1,66 @@
+name: Dispatch continuous fuzzing
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Skip if recent push
+        if: github.event_name == 'schedule'
+        run: |
+          last_commit=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          diff=$(( now - last_commit ))
+          if [ "$diff" -lt 86400 ]; then
+            echo "Last commit was less than 24h ago, skipping scheduled run"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: dtolnay/install@cargo-fuzz
+      - run: cargo +nightly fuzz build --no-trace-compares
+
+      - name: Prepare bundle
+        run: ./fuzz/build-fuzz-bundle.sh
+
+      - name: Zip corpus
+        run: cd ./fuzz/corpus && zip -r roundtrip.zip roundtrip
+
+      - name: Upload corpus to FuzzCorp
+        uses: asymmetric-research/fuzz-upload-action@34cae36b2ac3df66a149b581482202538541d9f1
+        with:
+          upload_type: asset
+          upload_path: ./fuzz/corpus/roundtrip.zip
+          upload_args: --seed-corpus-group roundtrip
+        env:
+          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
+          FUZZ_ORGANIZATION: ${{ secrets.FUZZ_ORGANIZATION }}
+          FUZZ_PROJECT: ${{ secrets.FUZZ_PROJECT }}
+          FUZZ_USER: ${{ secrets.FUZZ_USER }}
+          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
+
+      - name: Upload bundle to FuzzCorp
+        uses: asymmetric-research/fuzz-upload-action@34cae36b2ac3df66a149b581482202538541d9f1
+        with:
+          upload_type: bundle
+          upload_path: ./fuzz/target/bundle
+        env:
+          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
+          FUZZ_ORGANIZATION: ${{ secrets.FUZZ_ORGANIZATION }}
+          FUZZ_PROJECT: ${{ secrets.FUZZ_PROJECT }}
+          FUZZ_USER: ${{ secrets.FUZZ_USER }}
+          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
