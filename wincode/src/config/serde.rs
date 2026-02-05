@@ -49,19 +49,19 @@ pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
     /// Deserialize the input bytes into a new `Self::Dst`.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn deserialize(mut src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
-        Self::get(&mut src)
+    fn deserialize(src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
+        Self::get(src)
     }
 
     /// Deserialize the input bytes into `dst`.
     #[inline]
     #[expect(unused_variables)]
     fn deserialize_into(
-        mut src: &'de [u8],
+        src: &'de [u8],
         dst: &mut MaybeUninit<Self::Dst>,
         config: C,
     ) -> ReadResult<()> {
-        Self::read(&mut src, dst)
+        Self::read(src, dst)
     }
 }
 
@@ -154,11 +154,11 @@ where
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
 #[inline(always)]
 #[expect(unused_variables)]
-pub fn deserialize_mut<'de, T, C: Config>(mut src: &'de mut [u8], config: C) -> ReadResult<T>
+pub fn deserialize_mut<'de, T, C: Config>(src: &'de mut [u8], config: C) -> ReadResult<T>
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    T::get(&mut src)
+    T::get(src)
 }
 
 /// Like [`crate::deserialize_from`], but allows the caller to provide a custom configuration.
@@ -186,20 +186,20 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     /// Like [`crate::ZeroCopy::from_bytes`], but allows the caller to provide a custom configuration.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn from_bytes<'de>(mut bytes: &'de [u8], config: C) -> ReadResult<&'de Self>
+    fn from_bytes<'de>(bytes: &'de [u8], config: C) -> ReadResult<&'de Self>
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de, C>>::get(&mut bytes)
+        <&Self as SchemaRead<'de, C>>::get(bytes)
     }
 
     /// Like [`crate::ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8], config: C) -> ReadResult<&'de mut Self>
+    fn from_bytes_mut<'de>(bytes: &'de mut [u8], config: C) -> ReadResult<&'de mut Self>
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de, C>>::get(&mut bytes)
+        <&mut Self as SchemaRead<'de, C>>::get(bytes)
     }
 }

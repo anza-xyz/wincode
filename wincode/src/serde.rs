@@ -40,14 +40,14 @@ use {
 pub trait Deserialize<'de>: SchemaRead<'de, DefaultConfig> {
     /// Deserialize the input `src` bytes into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(mut src: &'de [u8]) -> ReadResult<Self::Dst> {
-        Self::get(&mut src)
+    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
+        Self::get(src)
     }
 
     /// Deserialize the input `src` bytes into `dst`.
     #[inline]
-    fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        Self::read(&mut src, dst)
+    fn deserialize_into(src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        Self::read(src, dst)
     }
 }
 
@@ -215,11 +215,11 @@ where
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize_mut<'de, T>(mut src: &'de mut [u8]) -> ReadResult<T>
+pub fn deserialize_mut<'de, T>(src: &'de mut [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
-    <T as SchemaRead<'de, DefaultConfig>>::get(&mut src)
+    <T as SchemaRead<'de, DefaultConfig>>::get(src)
 }
 
 /// Deserialize a type from the given bytes into the given target.
