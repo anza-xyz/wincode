@@ -112,7 +112,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     /// Note this may still return typical read errors and there is no unsafety implied.
     fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
+    fn write(writer: impl Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Return an error if the written size would be larger than the
@@ -195,7 +195,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+    fn write(writer: impl Writer, len: usize) -> WriteResult<()> {
         let Ok(len) = T::Src::try_from(len) else {
             return Err(write_length_encoding_overflow(type_name::<T::Src>()));
         };
@@ -272,7 +272,7 @@ macro_rules! impl_fix_int {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+            fn write(mut writer: impl Writer, len: usize) -> WriteResult<()> {
                 let Ok(len) = <$type>::try_from(len) else {
                     return Err(write_length_encoding_overflow(type_name::<$type>()));
                 };
@@ -366,7 +366,7 @@ pub mod short_vec {
             Ok(short_u16_bytes_needed(src.0))
         }
 
-        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             let val = src.0;
             let needed = short_u16_bytes_needed(val);
             let mut buf = [MaybeUninit::<u8>::uninit(); 3];
@@ -534,7 +534,7 @@ pub mod short_vec {
         }
 
         #[inline(always)]
-        fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+        fn write(writer: impl Writer, len: usize) -> WriteResult<()> {
             if len > u16::MAX as usize {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }

@@ -145,7 +145,7 @@ pub unsafe trait SchemaWrite<C: ConfigCore> {
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
 
     /// Write `Self::Src` to `writer`.
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
@@ -315,7 +315,7 @@ where
 
 #[inline(always)]
 fn write_elem_iter<'a, T, Len, C>(
-    writer: &mut impl Writer,
+    mut writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -338,16 +338,16 @@ where
         return Ok(());
     }
 
-    Len::write(writer, src.len())?;
+    Len::write(&mut writer, src.len())?;
     for item in src {
-        T::write(writer, item)?;
+        T::write(&mut writer, item)?;
     }
     Ok(())
 }
 
 #[inline(always)]
 fn write_elem_iter_prealloc_check<'a, T, Len, C>(
-    writer: &mut impl Writer,
+    writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -363,7 +363,7 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn write_elem_slice<T, Len, C>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
+fn write_elem_slice<T, Len, C>(mut writer: impl Writer, src: &[T::Src]) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
@@ -379,8 +379,8 @@ where
         // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
         // `Len::write` and `writer.write(src)` will write `needed` bytes,
         // fully initializing the trusted window.
-        let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(writer, src.len())?;
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+        Len::write(&mut writer, src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
         writer.finish()?;
@@ -391,7 +391,7 @@ where
 
 #[inline(always)]
 fn write_elem_slice_prealloc_check<T, Len, C>(
-    writer: &mut impl Writer,
+    writer: impl Writer,
     src: &[T::Src],
 ) -> WriteResult<()>
 where
@@ -713,7 +713,7 @@ mod tests {
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
@@ -755,7 +755,7 @@ mod tests {
             Ok(1)
         }
 
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)
         }
     }
@@ -799,7 +799,7 @@ mod tests {
             }
         }
 
-        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => {
                     <DropCounted as SchemaWrite<C>>::write(writer, v)

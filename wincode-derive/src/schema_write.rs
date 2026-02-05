@@ -43,7 +43,7 @@ fn impl_struct(
         .filter_map(|(field, ident)| {
             if field.skip.is_none() {
                 let target = field.target_resolved();
-                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer, &src.#ident)?; };
+                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, &src.#ident)?; };
                 size_count_idents.push(ident);
                 Some(write)
             } else {
@@ -72,7 +72,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `write` on each field will write exactly `size` bytes,
                     // fully initializing the trusted window.
-                    let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                    let mut writer = unsafe { writer.as_trusted_for(size) }?;
                     #(#writes)*
                     writer.finish()?;
                 }
@@ -114,7 +114,7 @@ fn impl_enum(
                     <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
                 },
                 quote! {
-                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer, &#discriminant)?
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(&mut writer, &#discriminant)?
                 },
             )
         } else {
@@ -123,7 +123,7 @@ fn impl_enum(
                     WincodeConfig::TagEncoding::size_of_from_u32(#discriminant)?
                 },
                 quote! {
-                    WincodeConfig::TagEncoding::write_from_u32(writer, #discriminant)?
+                    WincodeConfig::TagEncoding::write_from_u32(&mut writer, #discriminant)?
                 },
             )
         };
@@ -139,7 +139,7 @@ fn impl_enum(
                         if field.skip.is_none() {
                             let target = field.target_resolved();
                             let write = quote! {
-                                <#target as SchemaWrite<WincodeConfig>>::write(writer, #ident)?;
+                                <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, #ident)?;
                             };
                             pattern_fragments.push(quote! { #ident });
                             size_count_idents.push(ident);
@@ -198,7 +198,7 @@ fn impl_enum(
                                 // which is the serialized size of the variant.
                                 // Writing the discriminant and then calling `write` on each field will write
                                 // exactly `summed_sizes` bytes, fully initializing the trusted window.
-                                let writer = &mut unsafe { writer.as_trusted_for(summed_sizes) }?;
+                                let mut writer = unsafe { writer.as_trusted_for(summed_sizes) }?;
                                 #write_discriminant;
                                 #(#write)*
                                 writer.finish()?;
@@ -329,7 +329,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 }
 
                 #[inline]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                     #write_impl
                 }
             }

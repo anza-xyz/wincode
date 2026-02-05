@@ -74,7 +74,7 @@ macro_rules! impl_int_config_dependent {
                     }
 
                     #[inline(always)]
-                    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                         C::IntEncoding::[<encode_ $type>](*src, writer)
                     }
                 }
@@ -139,7 +139,7 @@ macro_rules! impl_float {
                 }
 
                 #[inline(always)]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                     let bytes = match C::ByteOrder::ENDIAN {
                         Endian::Big => src.to_be_bytes(),
                         Endian::Little => src.to_le_bytes(),
@@ -200,7 +200,7 @@ macro_rules! impl_pointer_width {
                 }
 
                 #[inline(always)]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                     <$target as SchemaWrite<C>>::write(writer, &(*src as $target))
                 }
             }
@@ -252,7 +252,7 @@ macro_rules! impl_byte {
                 }
 
                 #[inline(always)]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                     writer.write(&[*src as u8])?;
                     Ok(())
                 }
@@ -298,7 +298,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for bool {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         unsafe { Ok(writer.write_t(&(*src as u8))?) }
     }
 }
@@ -339,7 +339,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for char {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         let mut buf = [0; 4];
         let str = src.encode_utf8(&mut buf);
         writer.write(str.as_bytes())?;
@@ -395,7 +395,7 @@ unsafe impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
     }
 
     #[inline]
-    fn write(_writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+    fn write(_writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -428,7 +428,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for () {
     }
 
     #[inline]
-    fn write(_writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+    fn write(_writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
         Ok(())
     }
 }
@@ -461,7 +461,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Vec<T, C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -493,7 +493,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::VecDeque<T, C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -524,7 +524,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         write_elem_slice::<T, C::LengthEncoding, C>(writer, value)
     }
 }
@@ -618,7 +618,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static {
                 zero_copy: true, ..
@@ -632,15 +632,15 @@ where
             } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
                 // `N` writes of `T` will write `size` bytes, fully initializing the trusted window.
-                let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                let mut writer = unsafe { writer.as_trusted_for(size) }?;
                 for item in value {
-                    T::write(writer, item)?;
+                    T::write(&mut writer, item)?;
                 }
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
                 for item in value {
-                    T::write(writer, item)?;
+                    T::write(&mut writer, item)?;
                 }
             }
         }
@@ -686,10 +686,10 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Option::Some(value) => {
-                <u8 as SchemaWrite<C>>::write(writer, &1)?;
+                <u8 as SchemaWrite<C>>::write(&mut writer, &1)?;
                 T::write(writer, value)
             }
             Option::None => <u8 as SchemaWrite<C>>::write(writer, &0),
@@ -773,14 +773,14 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Result::Ok(value) => {
-                C::TagEncoding::write_from_u32(writer, 0)?;
+                C::TagEncoding::write_from_u32(&mut writer, 0)?;
                 T::write(writer, value)
             }
             Result::Err(error) => {
-                C::TagEncoding::write_from_u32(writer, 1)?;
+                C::TagEncoding::write_from_u32(&mut writer, 1)?;
                 E::write(writer, error)
             }
         }
@@ -802,7 +802,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         T::write(writer, *value)
     }
 }
@@ -832,7 +832,7 @@ macro_rules! impl_heap_container {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+            fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
                 T::write(writer, value)
             }
         }
@@ -899,7 +899,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Box<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -918,7 +918,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Rc<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -937,7 +937,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         <containers::Arc<[T], C::LengthEncoding>>::write(writer, value)
     }
 }
@@ -992,8 +992,8 @@ unsafe impl<C: Config> SchemaWrite<C> for str {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        C::LengthEncoding::write(writer, src.len())?;
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::write(&mut writer, src.len())?;
         writer.write(src.as_bytes())?;
         Ok(())
     }
@@ -1009,7 +1009,7 @@ unsafe impl<C: Config> SchemaWrite<C> for String {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         C::LengthEncoding::prealloc_check::<u8>(src.len())?;
         <str as SchemaWrite<C>>::write(writer, src)
     }
@@ -1090,26 +1090,26 @@ macro_rules! impl_seq {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                 if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
                     let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key, $value)>(len)? + (key_size + value_size) * len;
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
                     // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
-                    let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
-                    C::LengthEncoding::write(writer, len)?;
+                    let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+                    C::LengthEncoding::write(&mut writer, len)?;
                     for (k, v) in src.iter() {
-                        $key::write(writer, k)?;
-                        $value::write(writer, v)?;
+                        $key::write(&mut writer, k)?;
+                        $value::write(&mut writer, v)?;
                     }
                     writer.finish()?;
                     return Ok(());
                 }
-                C::LengthEncoding::write(writer, src.len())?;
+                C::LengthEncoding::write(&mut writer, src.len())?;
                 for (k, v) in src.iter() {
-                    $key::write(writer, k)?;
-                    $value::write(writer, v)?;
+                    $key::write(&mut writer, k)?;
+                    $value::write(&mut writer, v)?;
                 }
                 Ok(())
             }
@@ -1170,7 +1170,7 @@ macro_rules! impl_seq {
             }
 
             #[inline]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                 write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
             }
         }
@@ -1235,7 +1235,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         <containers::BinaryHeap<T, C::LengthEncoding>>::write(writer, src)
     }
 }
@@ -1566,8 +1566,8 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        <u64 as SchemaWrite<C>>::write(writer, &src.as_secs())?;
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <u64 as SchemaWrite<C>>::write(&mut writer, &src.as_secs())?;
         <u32 as SchemaWrite<C>>::write(writer, &src.subsec_nanos())?;
         Ok(())
     }
@@ -1610,7 +1610,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         let duration = src
             .duration_since(UNIX_EPOCH)
             .map_err(|_| crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH"))?;
@@ -1650,7 +1650,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv4Addr {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         writer.write(&src.octets())?;
         Ok(())
     }
@@ -1688,7 +1688,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv6Addr {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         writer.write(&src.octets())?;
         Ok(())
     }
@@ -1725,14 +1725,14 @@ unsafe impl<C: Config> SchemaWrite<C> for IpAddr {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             IpAddr::V4(addr) => {
-                C::TagEncoding::write_from_u32(writer, 0)?;
+                C::TagEncoding::write_from_u32(&mut writer, 0)?;
                 <Ipv4Addr as SchemaWrite<C>>::write(writer, addr)
             }
             IpAddr::V6(addr) => {
-                C::TagEncoding::write_from_u32(writer, 1)?;
+                C::TagEncoding::write_from_u32(&mut writer, 1)?;
                 <Ipv6Addr as SchemaWrite<C>>::write(writer, addr)
             }
         }

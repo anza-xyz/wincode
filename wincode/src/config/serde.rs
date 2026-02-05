@@ -28,8 +28,8 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
     /// Serialize a serializable type into the given [`Writer`].
     #[inline]
     #[expect(unused_variables)]
-    fn serialize_into(dst: &mut impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
-        Self::write(dst, src)?;
+    fn serialize_into(mut dst: impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
+        Self::write(&mut dst, src)?;
         dst.finish()?;
         Ok(())
     }
@@ -112,7 +112,7 @@ where
 
 /// Like [`crate::serialize_into`], but allows the caller to provide a custom configuration.
 #[inline]
-pub fn serialize_into<T, C: Config>(dst: &mut impl Writer, src: &T, config: C) -> WriteResult<()>
+pub fn serialize_into<T, C: Config>(dst: impl Writer, src: &T, config: C) -> WriteResult<()>
 where
     T: SchemaWrite<C, Src = T> + ?Sized,
 {

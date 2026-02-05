@@ -35,7 +35,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         let write_impl = params
             .iter()
             .zip(&idxs)
-            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::write(writer, &value.#i)?; ))
+            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::write(&mut writer, &value.#i)?; ))
             .collect::<Vec<_>>();
 
         let read_impl = params
@@ -125,7 +125,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 }
 
                 #[inline]
-                fn write(writer: &mut impl crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
+                fn write(mut writer: impl crate::io::Writer, value: &Self::Src) -> crate::WriteResult<()>
                 {
                     use crate::io::Writer;
                     if let TypeMeta::Static { size, .. } = Self::TYPE_META {
@@ -133,7 +133,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                         // of the serialized sizes of the members.
                         // Calling `write` on each field will write exactly `size` bytes,
                         // fully initializing the trusted window.
-                        let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                        let mut writer = unsafe { writer.as_trusted_for(size) }?;
                         #(#write_impl)*
                         writer.finish()?;
                     } else {

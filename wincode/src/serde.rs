@@ -111,7 +111,7 @@ pub trait Serialize: SchemaWrite<DefaultConfig> {
 
     /// Serialize a serializable type into the given byte buffer.
     #[inline]
-    fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn serialize_into(dst: impl Writer, src: &Self::Src) -> WriteResult<()> {
         <Self as config::Serialize<DefaultConfig>>::serialize_into(
             dst,
             src,
@@ -267,7 +267,7 @@ where
 ///
 /// Like [`serialize`], but allows the caller to provide their own writer.
 #[inline]
-pub fn serialize_into<T>(dst: &mut impl Writer, src: &T) -> WriteResult<()>
+pub fn serialize_into<T>(dst: impl Writer, src: &T) -> WriteResult<()>
 where
     T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {

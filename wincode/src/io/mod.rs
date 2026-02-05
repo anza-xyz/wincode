@@ -402,6 +402,33 @@ pub trait Writer {
     }
 }
 
+impl<W: Writer> Writer for &mut W {
+    type Trusted<'a>
+        = W::Trusted<'a>
+    where
+        Self: 'a;
+
+    fn finish(&mut self) -> WriteResult<()> {
+        (*self).finish()
+    }
+
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        (*self).write(src)
+    }
+
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        (*self).write_t(src)
+    }
+
+    unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
+        (*self).write_slice_t(src)
+    }
+}
+
 mod cursor;
 mod slice;
 #[cfg(feature = "alloc")]

@@ -230,7 +230,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(writer.write_t(src)?) }
     }
@@ -272,7 +272,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         T::write(writer, src)
     }
 }
@@ -311,7 +311,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
     }
 }
@@ -425,7 +425,7 @@ macro_rules! impl_heap_slice {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                 write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
             }
         }
@@ -592,7 +592,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         if let TypeMeta::Static {
             size,
             zero_copy: true,
@@ -603,9 +603,9 @@ where
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
-            let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
+            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
 
-            Len::write(writer, src.len())?;
+            Len::write(&mut writer, src.len())?;
             let (front, back) = src.as_slices();
             // SAFETY:
             // - `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -661,7 +661,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice_prealloc_check::<T, Len, C>(writer, src.as_slice())
     }
 }

@@ -76,9 +76,9 @@ unsafe impl<C: Config> SchemaWrite<C> for Uuid {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         #[cfg(feature = "uuid-serde-compat")]
-        C::LengthEncoding::write(writer, size_of::<Uuid>())?;
+        C::LengthEncoding::write(&mut writer, size_of::<Uuid>())?;
         writer.write(src.as_bytes())?;
         Ok(())
     }

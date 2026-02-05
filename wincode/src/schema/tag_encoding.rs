@@ -116,7 +116,7 @@ pub trait TagEncoding<C: ConfigCore>:
     /// The `u32` will be converted to the encoding target before calling
     /// [`SchemaWrite::write`] on the target implementation.
     #[inline(always)]
-    fn write_from_u32(writer: &mut impl Writer, value: u32) -> WriteResult<()> {
+    fn write_from_u32(writer: impl Writer, value: u32) -> WriteResult<()> {
         Self::write(writer, &Self::try_from_u32(value)?)
     }
 }
