@@ -45,10 +45,8 @@ pub(crate) struct Field {
     /// Opt out of writing or reading this field.
     ///
     /// The field will be initialized using one of the available modes:
-    /// ```
-    /// #[wincode(skip)] or #[wincode(skip(default))] // using Default::default()
-    /// #[wincode(skip(default_val = val))] // using provided value (typically constant expression)
-    /// ```
+    /// * `SkipMode::Default` - using `Default::default()`
+    /// * `SkipMode::DefaultVal(expr)` - using value provided by (typically constant) `expr`
     pub(crate) skip: Option<SkipMode>,
 }
 
