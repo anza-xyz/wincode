@@ -4,7 +4,7 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
-//! # use rand::prelude::*;
+//! # use rand::random;
 //! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
