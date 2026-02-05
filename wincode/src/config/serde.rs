@@ -72,7 +72,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, C>>::Dst> {
         Self::get(src)
     }
@@ -80,7 +80,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     /// Deserialize from the given [`Reader`] into `dst`.
     #[inline]
     fn deserialize_from_into<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, C>>::Dst>,
     ) -> ReadResult<()> {
         Self::read(src, dst)
@@ -164,7 +164,7 @@ where
 /// Like [`crate::deserialize_from`], but allows the caller to provide a custom configuration.
 #[inline(always)]
 #[expect(unused_variables)]
-pub fn deserialize_from<'de, T, C: Config>(src: &mut impl Reader<'de>, config: C) -> ReadResult<T>
+pub fn deserialize_from<'de, T, C: Config>(src: impl Reader<'de>, config: C) -> ReadResult<T>
 where
     T: SchemaReadOwned<C, Dst = T>,
 {

@@ -219,6 +219,69 @@ pub trait Reader<'a> {
     }
 }
 
+impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
+    type Trusted<'b>
+        = R::Trusted<'b>
+    where
+        Self: 'b,
+        R: 'b;
+
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_buf(n_bytes)
+    }
+
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_exact(n_bytes)
+    }
+
+    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        (*self).fill_array()
+    }
+
+    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        (*self).borrow_exact(len)
+    }
+
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        (*self).borrow_exact_mut(len)
+    }
+
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        (*self).consume_unchecked(amt)
+    }
+
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        (*self).consume(amt)
+    }
+
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    fn peek(&mut self) -> ReadResult<&u8> {
+        (*self).peek()
+    }
+
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        (*self).copy_into_slice(dst)
+    }
+
+    fn copy_into_array<const N: usize>(
+        &mut self,
+        dst: &mut MaybeUninit<[u8; N]>,
+    ) -> ReadResult<()> {
+        (*self).copy_into_array(dst)
+    }
+
+    unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
+        (*self).copy_into_t(dst)
+    }
+
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        (*self).copy_into_slice_t(dst)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum WriteError {
     #[error("Attempting to write {0} bytes")]

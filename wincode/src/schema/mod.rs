@@ -185,11 +185,11 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     ///
     /// It is permissible to not initialize `dst` if `dst` is an inhabited
     /// zero-sized type.
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut impl Reader<'de>) -> ReadResult<Self::Dst> {
+    fn get(reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
@@ -232,11 +232,11 @@ pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// # }
     /// ```
     #[inline(always)]
-    fn from_bytes<'de>(mut bytes: &'de [u8]) -> ReadResult<&'de Self>
+    fn from_bytes<'de>(bytes: &'de [u8]) -> ReadResult<&'de Self>
     where
         Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
+        <&Self as SchemaRead<'de, DefaultConfig>>::get(bytes)
     }
 
     /// Get a mutable reference to a type from the given bytes.
@@ -266,11 +266,11 @@ pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// # }
     /// ```
     #[inline(always)]
-    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
+    fn from_bytes_mut<'de>(bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
     where
         Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
+        <&mut Self as SchemaRead<'de, DefaultConfig>>::get(bytes)
     }
 }
 
@@ -727,7 +727,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             // This will increment the counter.
             dst.write(DropCounted::new());
@@ -768,10 +768,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(
-            reader: &mut impl Reader<'de>,
-            _dst: &mut MaybeUninit<Self::Dst>,
-        ) -> ReadResult<()> {
+        fn read(mut reader: impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             Err(error::ReadError::PointerSizedReadError)
         }
@@ -822,7 +819,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = <u8 as SchemaRead<'de, C>>::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {
@@ -1102,9 +1099,9 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
-                builder.read_a(reader)?.read_b(reader)?;
+                builder.read_a(&mut reader)?.read_b(&mut reader)?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
             });
@@ -1151,14 +1148,14 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(reader)?;
-                        inner_builder.read_b(reader)?;
-                        inner_builder.read_c(reader)?;
+                        inner_builder.read_a(&mut reader)?;
+                        inner_builder.read_b(&mut reader)?;
+                        inner_builder.read_c(&mut reader)?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
@@ -1191,20 +1188,20 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(reader)?;
-                        inner_builder.read_b(reader)?;
-                        inner_builder.read_c(reader)?;
+                        inner_builder.read_a(&mut reader)?;
+                        inner_builder.read_b(&mut reader)?;
+                        inner_builder.read_c(&mut reader)?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
                     })?;
                 }
-                outer_builder.read_b(reader)?;
+                outer_builder.read_b(&mut reader)?;
                 prop_assert!(outer_builder.is_init());
                 outer_builder.finish();
                 let init = unsafe { uninit.assume_init() };
@@ -1226,11 +1223,11 @@ mod tests {
         proptest!(proptest_cfg(), |(test: Test)| {
             let serialized = serialize(&test).unwrap();
             let mut uninit = MaybeUninit::<Test>::uninit();
-            let reader = &mut serialized.as_slice();
+            let mut reader = serialized.as_slice();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .read_a(reader)?
-                .read_b(reader)?
+                .read_a(&mut reader)?
+                .read_b(&mut reader)?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
             builder.finish();
@@ -1344,12 +1341,12 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_a(reader)?
-                    .read_b(reader)?
-                    .read_c(reader)?;
+                    .read_a(&mut reader)?
+                    .read_b(&mut reader)?
+                    .read_c(&mut reader)?;
                 prop_assert!(builder.is_init());
                 let init = unsafe { builder.into_assume_init_mut() };
                 prop_assert_eq!(&test, init);
@@ -1369,11 +1366,11 @@ mod tests {
             proptest!(proptest_cfg(), |(test: TestTuple)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<TestTuple>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_0(reader)?
-                    .read_1(reader)?;
+                    .read_0(&mut reader)?
+                    .read_1(&mut reader)?;
                 assert!(builder.is_init());
                 builder.finish();
 

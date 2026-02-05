@@ -102,7 +102,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
     #[inline]
-    fn read_prealloc_check<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+    fn read_prealloc_check<'de, T>(reader: impl Reader<'de>) -> ReadResult<usize> {
         let len = Self::read(reader)?;
         Self::prealloc_check::<T>(len)?;
         Ok(len)
@@ -110,7 +110,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
     /// Read the length of a sequence, without doing any preallocation size checks.
     ///
     /// Note this may still return typical read errors and there is no unsafety implied.
-    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
+    fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
     fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
     /// Calculate the number of bytes needed to write the given length.
@@ -186,7 +186,7 @@ where
         PreallocationLimitOverride::from_usize(PREALLOCATION_SIZE_LIMIT);
 
     #[inline(always)]
-    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+    fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize> {
         let len = T::get(reader)?;
         let Ok(len) = usize::try_from(len) else {
             return Err(pointer_sized_decode_error());
@@ -257,7 +257,7 @@ macro_rules! impl_fix_int {
 
             #[inline(always)]
             #[allow(irrefutable_let_patterns)]
-            fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+            fn read<'de>(mut reader: impl Reader<'de>) -> ReadResult<usize> {
                 let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
                 let len = match C::ByteOrder::ENDIAN {
                     Endian::Big => <$type>::from_be_bytes(*bytes),
@@ -350,7 +350,7 @@ pub mod short_vec {
         type Dst = Self;
 
         #[inline]
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let len = decode_short_u16_from_reader(reader)?;
             // SAFETY: `dst` is a valid pointer to a `MaybeUninit<ShortU16>`.
             let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast::<MaybeUninit<u16>>() };
@@ -519,7 +519,7 @@ pub mod short_vec {
     }
 
     #[inline]
-    fn decode_short_u16_from_reader<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u16> {
+    fn decode_short_u16_from_reader<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
         let (len, read) = decode_short_u16(reader.fill_buf(3)?)?;
         // SAFETY: `read` is the number of bytes visited by `decode_shortu16` to decode the length,
         // which implies the reader had at least `read` bytes available.
@@ -529,7 +529,7 @@ pub mod short_vec {
 
     unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {
         #[inline(always)]
-        fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize> {
             Ok(decode_short_u16_from_reader(reader)? as usize)
         }
 

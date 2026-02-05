@@ -58,7 +58,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, DefaultConfig>>::Dst> {
         Self::get(src)
     }
@@ -66,7 +66,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into `dst`.
     #[inline]
     fn deserialize_from_into<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, DefaultConfig>>::Dst>,
     ) -> ReadResult<()> {
         Self::read(src, dst)
@@ -230,7 +230,7 @@ where
 /// requires [`SchemaReadOwned`] instead of [`SchemaRead`]. If you are deserializing
 /// from raw bytes, always prefer [`deserialize`] for maximum flexibility.
 #[inline(always)]
-pub fn deserialize_from<'de, T>(src: &mut impl Reader<'de>) -> ReadResult<T>
+pub fn deserialize_from<'de, T>(src: impl Reader<'de>) -> ReadResult<T>
 where
     T: SchemaReadOwned<DefaultConfig, Dst = T>,
 {

@@ -50,7 +50,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 };
                 quote! {
                     <#ident as crate::SchemaRead<'de, Cfg>>::read(
-                        reader,
+                        &mut reader,
                         unsafe { &mut *(&raw mut (*dst_ptr).#index).cast() }
                     )?;
                     #init_count
@@ -154,7 +154,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 #[inline]
                 #[allow(clippy::arithmetic_side_effects, clippy::type_complexity)]
                 fn read(
-                    reader: &mut impl crate::io::Reader<'de>,
+                    mut reader: impl crate::io::Reader<'de>,
                     dst: &mut core::mem::MaybeUninit<Self::Dst>
                 ) -> crate::ReadResult<()>
                 {
@@ -184,7 +184,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                         // of the serialized sizes of the members.
                         // Calling `read` on each field will consume exactly `size` bytes,
                         // fully consuming the trusted window.
-                        let reader = &mut unsafe { reader.as_trusted_for(size) }?;
+                        let mut reader = unsafe { reader.as_trusted_for(size) }?;
                         #(#read_impl)*
                     } else {
                         #(#read_impl)*

@@ -27,7 +27,7 @@ use {
 /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for Foo {
 ///     type Dst = Self;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         let tag = C::TagEncoding::get(reader)?;
 ///         // Cannot match a generic type with an integer literal.
 ///         match tag {
@@ -64,7 +64,7 @@ use {
 /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for Foo {
 ///     type Dst = Self;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
 ///         // Now we can match on integer literals.
 ///         match tag {
