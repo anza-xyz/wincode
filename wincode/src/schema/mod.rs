@@ -3181,53 +3181,47 @@ mod tests {
     ///
     /// Implements [`Deref`] and [`DerefMut`] for `[u8]` such that it
     /// acts like a typical byte buffer, but aligned for `T`.
-    struct BufAligned<T> {
-        buf: Box<[T]>,
+    struct BufAligned {
+        buf: *mut u8,
+        layout: Layout,
     }
 
-    impl<T> Deref for BufAligned<T>
-    where
-        T: ZeroCopy,
-    {
+    impl Deref for BufAligned {
         type Target = [u8];
 
         fn deref(&self) -> &Self::Target {
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.buf.as_ptr() as *const u8,
-                    self.buf.len() * size_of::<T>(),
-                )
-            }
+            unsafe { core::slice::from_raw_parts(self.buf as *const u8, self.layout.size()) }
         }
     }
 
-    impl<T> DerefMut for BufAligned<T>
-    where
-        T: ZeroCopy,
-    {
+    impl DerefMut for BufAligned {
         fn deref_mut(&mut self) -> &mut Self::Target {
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.buf.as_mut_ptr() as *mut u8,
-                    self.buf.len() * size_of::<T>(),
-                )
-            }
+            unsafe { core::slice::from_raw_parts_mut(self.buf, self.layout.size()) }
+        }
+    }
+
+    impl Drop for BufAligned {
+        fn drop(&mut self) {
+            use alloc::alloc::dealloc;
+            unsafe { dealloc(self.buf, self.layout) }
         }
     }
 
     /// Serialize a single instance of type `T` into a buffer aligned for `T`.
-    fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned<T>>
+    fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned>
     where
-        T: SchemaWrite<DefaultConfig, Src = T> + ZeroCopy,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
-        assert_eq!(T::size_of(src)?, size_of::<T>());
-        let mut b: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(1);
-        let mut buf =
-            unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, size_of::<T>()) };
-        crate::serialize_into(&mut buf, src)?;
-        Ok(BufAligned {
-            buf: unsafe { b.assume_init() },
-        })
+        use alloc::alloc::alloc;
+        let size = T::size_of(src)?;
+        let layout = Layout::from_size_align(size, align_of::<T>()).unwrap();
+        let mem = unsafe { alloc(layout) };
+        if mem.is_null() {
+            return Err(crate::WriteError::Custom("could not allocate"));
+        }
+        let mut buf = BufAligned { buf: mem, layout };
+        crate::serialize_into(&mut buf.deref_mut(), src)?;
+        Ok(buf)
     }
 
     #[test]
