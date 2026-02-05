@@ -424,6 +424,7 @@ mod tests {
         core::{marker::PhantomData, ptr},
         proptest::prelude::*,
         std::{
+            alloc::Layout,
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
@@ -2938,6 +2939,49 @@ mod tests {
             assert_eq!(serialized_wrapper, serialized);
             let deserialized_wrapper = ZcWrapper::deserialize(&serialized_wrapper).unwrap();
             assert_eq!(data, *deserialized_wrapper.data);
+        });
+    }
+
+    #[test]
+    fn test_zero_copy_ref_with_integer_types() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct ZcRef<'a> {
+            x: &'a StructZeroCopy,
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<StructZeroCopy>())| {
+            let serialized = serialize_aligned(&data).unwrap();
+            let deserialized: ZcRef<'_> = deserialize(&serialized).unwrap();
+            assert_eq!(data, *deserialized.x);
+        });
+    }
+
+    #[test]
+    fn test_zero_copy_enum_with_integer_types() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[wincode(tag_encoding = "u128")]
+        enum Enum {
+            A,
+            B(StructZeroCopy),
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[wincode(tag_encoding = "u128")]
+        enum EnumRef<'a> {
+            A,
+            B(&'a StructZeroCopy),
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<Enum>())| {
+            let serialized = serialize_aligned(&data).unwrap();
+            let deserialized: EnumRef<'_> = deserialize(&serialized).unwrap();
+            match data {
+                Enum::A => prop_assert!(matches!(deserialized, EnumRef::A)),
+                Enum::B(x) => prop_assert!(matches!(deserialized, EnumRef::B(y) if &x == y)),
+            }
         });
     }
 
