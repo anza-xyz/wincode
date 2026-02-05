@@ -3265,7 +3265,7 @@ mod tests {
             return Err(crate::WriteError::Custom("could not allocate"));
         }
         let mut buf = BufAligned { buf: mem, layout };
-        crate::serialize_into(&mut buf.deref_mut(), src)?;
+        crate::serialize_into(buf.deref_mut(), src)?;
         Ok(buf)
     }
 
