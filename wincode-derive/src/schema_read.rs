@@ -609,7 +609,7 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
-fn append_where_clause(generics: &mut Generics) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
     for param in generics.type_params() {
         let ident = &param.ident;
@@ -623,6 +623,48 @@ fn append_where_clause(generics: &mut Generics) {
             bounds,
         }));
     }
+
+    /// Append an additional constraint to the where clause such that
+    /// `SchemaRead<'de, WincodeConfig>` is implemented for the given
+    /// field's type.
+    ///
+    /// This constraint is only necessary for fields whose types contain lifetimes.
+    /// In particular, for an arbitrary `T`, `SchemaRead<Config>` is _only_
+    /// implemented for `&T` where `T` is `ZeroCopy<Config>`. In other words, because
+    /// there is no blanket implementation for `SchemaRead<Config>` on `&T`, we must
+    /// add constraints to the where clause such that `&T` satisfies `SchemaRead<Config>`
+    /// or the derived implementation will not type-check.
+    fn constrain_reference_type(
+        field: &Field,
+        predicates: &mut Punctuated<WherePredicate, Token![,]>,
+    ) {
+        let ty = &field.ty.with_lifetime("de");
+        let target = field.target_resolved().with_lifetime("de");
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ty>));
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: target,
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+
+    match data {
+        Data::Struct(fields) => {
+            for field in fields.fields_with_lifetime_iter() {
+                constrain_reference_type(field, &mut predicates);
+            }
+        }
+        Data::Enum(variants) => {
+            for variant in variants {
+                for field in variant.fields.fields_with_lifetime_iter() {
+                    constrain_reference_type(field, &mut predicates);
+                }
+            }
+        }
+    }
+
     if predicates.is_empty() {
         return;
     }
@@ -630,10 +672,10 @@ fn append_where_clause(generics: &mut Generics) {
     where_clause.predicates.extend(predicates);
 }
 
-fn append_generics(generics: &Generics) -> Generics {
+fn append_generics(generics: &Generics, data: &Data<Variant, Field>) -> Generics {
     let mut generics = generics.clone();
     append_de_lifetime(&mut generics);
-    append_where_clause(&mut generics);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics);
     generics
 }
@@ -641,7 +683,7 @@ fn append_generics(generics: &Generics) -> Generics {
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let appended_generics = append_generics(&args.generics);
+    let appended_generics = append_generics(&args.generics, &args.data);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
