@@ -45,10 +45,8 @@ pub(crate) struct Field {
     /// Opt out of writing or reading this field.
     ///
     /// The field will be initialized using one of the available modes:
-    /// ```
-    /// #[wincode(skip)] or #[wincode(skip(default))] // using Default::default()
-    /// #[wincode(skip(default_val = val))] // using provided value (typically constant expression)
-    /// ```
+    /// * `SkipMode::Default` - using `Default::default()`
+    /// * `SkipMode::DefaultVal(expr)` - using value provided by (typically constant) `expr`
     pub(crate) skip: Option<SkipMode>,
 }
 
@@ -92,6 +90,9 @@ pub(crate) trait TypeExt {
 
     /// Gather all the lifetimes on this type.
     fn lifetimes(&self) -> Vec<&Lifetime>;
+
+    /// Return whether the type contains a lifetime parameter.
+    fn has_lifetime(&self) -> bool;
 }
 
 impl TypeExt for Type {
@@ -121,6 +122,12 @@ impl TypeExt for Type {
         let mut lifetimes = Vec::new();
         GatherLifetimes(&mut lifetimes).visit_type(self);
         lifetimes
+    }
+
+    fn has_lifetime(&self) -> bool {
+        let mut visitor = HasLifetime(false);
+        visitor.visit_type(self);
+        visitor.0
     }
 }
 
@@ -186,6 +193,10 @@ impl Field {
             index.to_string()
         }
     }
+
+    pub(crate) fn has_lifetime(&self) -> bool {
+        self.ty.has_lifetime()
+    }
 }
 
 pub(crate) trait FieldsExt {
@@ -228,6 +239,8 @@ pub(crate) trait FieldsExt {
     ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone;
     /// Get an iterator over the fields that do not have `skip` attribute.
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone;
+    /// Get an iterator over fields that contain a lifetime parameter.
+    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field>;
 }
 
 impl FieldsExt for Fields<Field> {
@@ -314,6 +327,10 @@ impl FieldsExt for Fields<Field> {
 
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone {
         self.iter().filter(|field| field.skip.is_none())
+    }
+
+    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field> {
+        self.iter().filter(|field| field.has_lifetime())
     }
 }
 
@@ -831,6 +848,14 @@ impl<'ast> Visit<'ast> for GatherLifetimes<'_, 'ast> {
     }
 }
 
+struct HasLifetime(bool);
+
+impl Visit<'_> for HasLifetime {
+    fn visit_lifetime(&mut self, _: &Lifetime) {
+        self.0 = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -918,5 +943,14 @@ mod tests {
         let ty: Type = parse_quote!(&'a Foo<'b, 'c>);
         let (a, b, c) = (parse_quote!('a), parse_quote!('b), parse_quote!('c));
         assert_eq!(ty.lifetimes(), vec![&a, &b, &c]);
+    }
+
+    #[test]
+    fn test_has_lifetime() {
+        let ty: Type = parse_quote!(&'a Foo);
+        assert!(ty.has_lifetime());
+
+        let ty: Type = parse_quote!(Foo<'b, 'c>);
+        assert!(ty.has_lifetime());
     }
 }

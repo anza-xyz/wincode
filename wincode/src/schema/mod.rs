@@ -4,7 +4,7 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
-//! # use rand::prelude::*;
+//! # use rand::random;
 //! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers::{self, Pod}};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
@@ -145,7 +145,7 @@ pub unsafe trait SchemaWrite<C: ConfigCore> {
     fn size_of(src: &Self::Src) -> WriteResult<usize>;
 
     /// Write `Self::Src` to `writer`.
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()>;
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()>;
 }
 
 /// Types that can be read (deserialized) from a [`Reader`].
@@ -185,11 +185,11 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     ///
     /// It is permissible to not initialize `dst` if `dst` is an inhabited
     /// zero-sized type.
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
-    fn get(reader: &mut impl Reader<'de>) -> ReadResult<Self::Dst> {
+    fn get(reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
@@ -232,11 +232,11 @@ pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// # }
     /// ```
     #[inline(always)]
-    fn from_bytes<'de>(mut bytes: &'de [u8]) -> ReadResult<&'de Self>
+    fn from_bytes<'de>(bytes: &'de [u8]) -> ReadResult<&'de Self>
     where
         Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
+        <&Self as SchemaRead<'de, DefaultConfig>>::get(bytes)
     }
 
     /// Get a mutable reference to a type from the given bytes.
@@ -266,11 +266,11 @@ pub unsafe trait ZeroCopy: config::ZeroCopy<DefaultConfig> {
     /// # }
     /// ```
     #[inline(always)]
-    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
+    fn from_bytes_mut<'de>(bytes: &'de mut [u8]) -> ReadResult<&'de mut Self>
     where
         Self: SchemaRead<'de, DefaultConfig, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de, DefaultConfig>>::get(&mut bytes)
+        <&mut Self as SchemaRead<'de, DefaultConfig>>::get(bytes)
     }
 }
 
@@ -315,7 +315,7 @@ where
 
 #[inline(always)]
 fn write_elem_iter<'a, T, Len, C>(
-    writer: &mut impl Writer,
+    mut writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -338,16 +338,16 @@ where
         return Ok(());
     }
 
-    Len::write(writer, src.len())?;
+    Len::write(&mut writer, src.len())?;
     for item in src {
-        T::write(writer, item)?;
+        T::write(&mut writer, item)?;
     }
     Ok(())
 }
 
 #[inline(always)]
 fn write_elem_iter_prealloc_check<'a, T, Len, C>(
-    writer: &mut impl Writer,
+    writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
 where
@@ -363,7 +363,7 @@ where
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`write_elem_iter`] specialized for slices, which can opt into
 /// an optimized implementation for bytes (`u8`s).
-fn write_elem_slice<T, Len, C>(writer: &mut impl Writer, src: &[T::Src]) -> WriteResult<()>
+fn write_elem_slice<T, Len, C>(mut writer: impl Writer, src: &[T::Src]) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
@@ -379,8 +379,8 @@ where
         // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
         // `Len::write` and `writer.write(src)` will write `needed` bytes,
         // fully initializing the trusted window.
-        let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(writer, src.len())?;
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+        Len::write(&mut writer, src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
         writer.finish()?;
@@ -391,7 +391,7 @@ where
 
 #[inline(always)]
 fn write_elem_slice_prealloc_check<T, Len, C>(
-    writer: &mut impl Writer,
+    writer: impl Writer,
     src: &[T::Src],
 ) -> WriteResult<()>
 where
@@ -424,10 +424,15 @@ mod tests {
         core::{marker::PhantomData, ptr},
         proptest::prelude::*,
         std::{
+            alloc::Layout,
             cell::Cell,
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
+            num::{
+                NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize,
+                NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
+            },
             ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
             result::Result,
@@ -708,7 +713,7 @@ mod tests {
         fn size_of(_src: &Self::Src) -> WriteResult<usize> {
             Ok(1)
         }
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)?;
             Ok(())
         }
@@ -722,7 +727,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             // This will increment the counter.
             dst.write(DropCounted::new());
@@ -750,7 +755,7 @@ mod tests {
             Ok(1)
         }
 
-        fn write(writer: &mut impl Writer, _src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, _src: &Self::Src) -> WriteResult<()> {
             <u8 as SchemaWrite<C>>::write(writer, &Self::TAG_BYTE)
         }
     }
@@ -763,10 +768,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(
-            reader: &mut impl Reader<'de>,
-            _dst: &mut MaybeUninit<Self::Dst>,
-        ) -> ReadResult<()> {
+        fn read(mut reader: impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             reader.consume(1)?;
             Err(error::ReadError::PointerSizedReadError)
         }
@@ -797,7 +799,7 @@ mod tests {
             }
         }
 
-        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             match src {
                 DropCountedMaybeError::DropCounted(v) => {
                     <DropCounted as SchemaWrite<C>>::write(writer, v)
@@ -817,7 +819,7 @@ mod tests {
             zero_copy: false,
         };
 
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let byte = <u8 as SchemaRead<'de, C>>::get(reader)?;
             match byte {
                 DropCounted::TAG_BYTE => {
@@ -1097,9 +1099,9 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
-                builder.read_a(reader)?.read_b(reader)?;
+                builder.read_a(&mut reader)?.read_b(&mut reader)?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
             });
@@ -1146,14 +1148,14 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut test = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(reader)?;
-                        inner_builder.read_b(reader)?;
-                        inner_builder.read_c(reader)?;
+                        inner_builder.read_a(&mut reader)?;
+                        inner_builder.read_b(&mut reader)?;
+                        inner_builder.read_c(&mut reader)?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
@@ -1186,20 +1188,20 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut outer_builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(reader)?;
-                        inner_builder.read_b(reader)?;
-                        inner_builder.read_c(reader)?;
+                        inner_builder.read_a(&mut reader)?;
+                        inner_builder.read_b(&mut reader)?;
+                        inner_builder.read_c(&mut reader)?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
                     })?;
                 }
-                outer_builder.read_b(reader)?;
+                outer_builder.read_b(&mut reader)?;
                 prop_assert!(outer_builder.is_init());
                 outer_builder.finish();
                 let init = unsafe { uninit.assume_init() };
@@ -1221,11 +1223,11 @@ mod tests {
         proptest!(proptest_cfg(), |(test: Test)| {
             let serialized = serialize(&test).unwrap();
             let mut uninit = MaybeUninit::<Test>::uninit();
-            let reader = &mut serialized.as_slice();
+            let mut reader = serialized.as_slice();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .read_a(reader)?
-                .read_b(reader)?
+                .read_a(&mut reader)?
+                .read_b(&mut reader)?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
             builder.finish();
@@ -1339,12 +1341,12 @@ mod tests {
             proptest!(proptest_cfg(), |(test: Test)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<Test>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_a(reader)?
-                    .read_b(reader)?
-                    .read_c(reader)?;
+                    .read_a(&mut reader)?
+                    .read_b(&mut reader)?
+                    .read_c(&mut reader)?;
                 prop_assert!(builder.is_init());
                 let init = unsafe { builder.into_assume_init_mut() };
                 prop_assert_eq!(&test, init);
@@ -1364,11 +1366,11 @@ mod tests {
             proptest!(proptest_cfg(), |(test: TestTuple)| {
                 let serialized = serialize(&test).unwrap();
                 let mut uninit = MaybeUninit::<TestTuple>::uninit();
-                let reader = &mut serialized.as_slice();
+                let mut reader = serialized.as_slice();
                 let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_0(reader)?
-                    .read_1(reader)?;
+                    .read_0(&mut reader)?
+                    .read_1(&mut reader)?;
                 assert!(builder.is_init());
                 builder.finish();
 
@@ -2942,6 +2944,49 @@ mod tests {
     }
 
     #[test]
+    fn test_zero_copy_ref_with_integer_types() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct ZcRef<'a> {
+            x: &'a StructZeroCopy,
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<StructZeroCopy>())| {
+            let serialized = serialize_aligned(&data).unwrap();
+            let deserialized: ZcRef<'_> = deserialize(&serialized).unwrap();
+            assert_eq!(data, *deserialized.x);
+        });
+    }
+
+    #[test]
+    fn test_zero_copy_enum_with_integer_types() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        #[wincode(tag_encoding = "u128")]
+        enum Enum {
+            A,
+            B(StructZeroCopy),
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[wincode(tag_encoding = "u128")]
+        enum EnumRef<'a> {
+            A,
+            B(&'a StructZeroCopy),
+        }
+
+        proptest!(proptest_cfg(), |(data in any::<Enum>())| {
+            let serialized = serialize_aligned(&data).unwrap();
+            let deserialized: EnumRef<'_> = deserialize(&serialized).unwrap();
+            match data {
+                Enum::A => prop_assert!(matches!(deserialized, EnumRef::A)),
+                Enum::B(x) => prop_assert!(matches!(deserialized, EnumRef::B(y) if &x == y)),
+            }
+        });
+    }
+
+    #[test]
     fn test_empty_struct() {
         #[derive(
             Debug,
@@ -3181,53 +3226,47 @@ mod tests {
     ///
     /// Implements [`Deref`] and [`DerefMut`] for `[u8]` such that it
     /// acts like a typical byte buffer, but aligned for `T`.
-    struct BufAligned<T> {
-        buf: Box<[T]>,
+    struct BufAligned {
+        buf: *mut u8,
+        layout: Layout,
     }
 
-    impl<T> Deref for BufAligned<T>
-    where
-        T: ZeroCopy,
-    {
+    impl Deref for BufAligned {
         type Target = [u8];
 
         fn deref(&self) -> &Self::Target {
-            unsafe {
-                core::slice::from_raw_parts(
-                    self.buf.as_ptr() as *const u8,
-                    self.buf.len() * size_of::<T>(),
-                )
-            }
+            unsafe { core::slice::from_raw_parts(self.buf as *const u8, self.layout.size()) }
         }
     }
 
-    impl<T> DerefMut for BufAligned<T>
-    where
-        T: ZeroCopy,
-    {
+    impl DerefMut for BufAligned {
         fn deref_mut(&mut self) -> &mut Self::Target {
-            unsafe {
-                core::slice::from_raw_parts_mut(
-                    self.buf.as_mut_ptr() as *mut u8,
-                    self.buf.len() * size_of::<T>(),
-                )
-            }
+            unsafe { core::slice::from_raw_parts_mut(self.buf, self.layout.size()) }
+        }
+    }
+
+    impl Drop for BufAligned {
+        fn drop(&mut self) {
+            use alloc::alloc::dealloc;
+            unsafe { dealloc(self.buf, self.layout) }
         }
     }
 
     /// Serialize a single instance of type `T` into a buffer aligned for `T`.
-    fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned<T>>
+    fn serialize_aligned<T>(src: &T) -> WriteResult<BufAligned>
     where
-        T: SchemaWrite<DefaultConfig, Src = T> + ZeroCopy,
+        T: SchemaWrite<DefaultConfig, Src = T>,
     {
-        assert_eq!(T::size_of(src)?, size_of::<T>());
-        let mut b: Box<[MaybeUninit<T>]> = Box::new_uninit_slice(1);
-        let mut buf =
-            unsafe { core::slice::from_raw_parts_mut(b.as_mut_ptr() as *mut u8, size_of::<T>()) };
-        crate::serialize_into(&mut buf, src)?;
-        Ok(BufAligned {
-            buf: unsafe { b.assume_init() },
-        })
+        use alloc::alloc::alloc;
+        let size = T::size_of(src)?;
+        let layout = Layout::from_size_align(size, align_of::<T>()).unwrap();
+        let mem = unsafe { alloc(layout) };
+        if mem.is_null() {
+            return Err(crate::WriteError::Custom("could not allocate"));
+        }
+        let mut buf = BufAligned { buf: mem, layout };
+        crate::serialize_into(buf.deref_mut(), src)?;
+        Ok(buf)
     }
 
     #[test]
@@ -3407,6 +3446,92 @@ mod tests {
 
         let result: ReadResult<SystemTime> = deserialize(&bytes);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_nonzero_types() {
+        proptest!(proptest_cfg(), |(
+            nz_u8: NonZeroU8,
+            nz_u16: NonZeroU16,
+            nz_u32: NonZeroU32,
+            nz_u64: NonZeroU64,
+            nz_u128: NonZeroU128,
+            nz_usize: NonZeroUsize,
+            nz_i8: NonZeroI8,
+            nz_i16: NonZeroI16,
+            nz_i32: NonZeroI32,
+            nz_i64: NonZeroI64,
+            nz_i128: NonZeroI128,
+            nz_isize: NonZeroIsize,
+        )| {
+            // Unsigned
+            let ser = serialize(&nz_u8).unwrap();
+            let de: NonZeroU8 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u8, de);
+
+            let ser = serialize(&nz_u16).unwrap();
+            let de: NonZeroU16 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u16, de);
+
+            let ser = serialize(&nz_u32).unwrap();
+            let de: NonZeroU32 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u32, de);
+
+            let ser = serialize(&nz_u64).unwrap();
+            let de: NonZeroU64 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u64, de);
+
+            let ser = serialize(&nz_u128).unwrap();
+            let de: NonZeroU128 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_u128, de);
+
+            let ser = serialize(&nz_usize).unwrap();
+            let de: NonZeroUsize = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_usize, de);
+
+            // Signed
+            let ser = serialize(&nz_i8).unwrap();
+            let de: NonZeroI8 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i8, de);
+
+            let ser = serialize(&nz_i16).unwrap();
+            let de: NonZeroI16 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i16, de);
+
+            let ser = serialize(&nz_i32).unwrap();
+            let de: NonZeroI32 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i32, de);
+
+            let ser = serialize(&nz_i64).unwrap();
+            let de: NonZeroI64 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i64, de);
+
+            let ser = serialize(&nz_i128).unwrap();
+            let de: NonZeroI128 = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_i128, de);
+
+            let ser = serialize(&nz_isize).unwrap();
+            let de: NonZeroIsize = deserialize(&ser).unwrap();
+            prop_assert_eq!(nz_isize, de);
+        });
+    }
+
+    #[test]
+    fn test_nonzero_invalid_zero_value() {
+        // Test that deserializing a zero value fails
+        let zero_bytes = serialize(&0u32).unwrap();
+        let result: ReadResult<NonZeroU32> = deserialize(&zero_bytes);
+        assert!(
+            result.is_err(),
+            "Deserializing zero should fail for NonZeroU32"
+        );
+
+        let zero_bytes = serialize(&0u64).unwrap();
+        let result: ReadResult<NonZeroU64> = deserialize(&zero_bytes);
+        assert!(
+            result.is_err(),
+            "Deserializing zero should fail for NonZeroU64"
+        );
     }
 
     #[test]

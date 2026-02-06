@@ -70,7 +70,7 @@ fn impl_struct(
             } else {
                 quote! {
                     <#target as SchemaRead<'de, WincodeConfig>>::read(
-                        reader,
+                        &mut reader,
                         unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
                     )?;
                     #init_count
@@ -143,7 +143,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `read` on each field will consume exactly `size` bytes,
                     // fully consuming the trusted window.
-                    let reader = &mut unsafe { reader.as_trusted_for(size) }?;
+                    let mut reader = unsafe { reader.as_trusted_for(size) }?;
                     #init_guard
                     #(#read_impl)*
                     mem::forget(guard);
@@ -190,7 +190,7 @@ fn impl_struct(
 /// unsafe impl<'de> SchemaRead<'de> for Message {
 ///     type Dst = Message;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         // Some more complicated logic not capturable by the macro...
 ///         let mut body = MaybeUninit::<Body>::uninit();
 ///         // Project a mutable MaybeUninit<Header> from the MaybeUninit<Body>.
@@ -405,7 +405,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
 
             /// Read a value from the reader into the maybe uninitialized field.
             #[inline]
-            #vis fn #read_field_ident <'de>(&mut self, reader: &mut impl Reader<'de>) -> ReadResult<&mut Self> {
+            #vis fn #read_field_ident <'de>(&mut self, reader: impl Reader<'de>) -> ReadResult<&mut Self> {
                 // SAFETY:
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
                 // - We return the field as `&mut MaybeUninit<#target>`, so
@@ -498,7 +498,7 @@ fn impl_enum(
                             quote! { let #ident = #val; }
                         } else {
                             quote! {
-                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
                             }
                         };
                         construct_idents.push(ident);
@@ -531,7 +531,7 @@ fn impl_enum(
                             // which is the serialized size of the variant.
                             // Calling `read` on each field will consume exactly `summed_sizes` bytes,
                             // fully consuming the trusted window.
-                            let reader = &mut unsafe { reader.as_trusted_for(summed_sizes) }?;
+                            let mut reader = unsafe { reader.as_trusted_for(summed_sizes) }?;
                             #(#read)*
                             dst.write(#constructor);
                         } else {
@@ -552,11 +552,11 @@ fn impl_enum(
 
     let read_discriminant = if let Some(tag_encoding) = tag_encoding_override {
         quote! {
-            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
         }
     } else {
         quote! {
-            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(reader)?)?
+            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(&mut reader)?)?
         }
     };
 
@@ -609,7 +609,7 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
-fn append_where_clause(generics: &mut Generics) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
     for param in generics.type_params() {
         let ident = &param.ident;
@@ -623,6 +623,48 @@ fn append_where_clause(generics: &mut Generics) {
             bounds,
         }));
     }
+
+    /// Append an additional constraint to the where clause such that
+    /// `SchemaRead<'de, WincodeConfig>` is implemented for the given
+    /// field's type.
+    ///
+    /// This constraint is only necessary for fields whose types contain lifetimes.
+    /// In particular, for an arbitrary `T`, `SchemaRead<Config>` is _only_
+    /// implemented for `&T` where `T` is `ZeroCopy<Config>`. In other words, because
+    /// there is no blanket implementation for `SchemaRead<Config>` on `&T`, we must
+    /// add constraints to the where clause such that `&T` satisfies `SchemaRead<Config>`
+    /// or the derived implementation will not type-check.
+    fn constrain_reference_type(
+        field: &Field,
+        predicates: &mut Punctuated<WherePredicate, Token![,]>,
+    ) {
+        let ty = &field.ty.with_lifetime("de");
+        let target = field.target_resolved().with_lifetime("de");
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ty>));
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: target,
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+
+    match data {
+        Data::Struct(fields) => {
+            for field in fields.fields_with_lifetime_iter() {
+                constrain_reference_type(field, &mut predicates);
+            }
+        }
+        Data::Enum(variants) => {
+            for variant in variants {
+                for field in variant.fields.fields_with_lifetime_iter() {
+                    constrain_reference_type(field, &mut predicates);
+                }
+            }
+        }
+    }
+
     if predicates.is_empty() {
         return;
     }
@@ -630,10 +672,10 @@ fn append_where_clause(generics: &mut Generics) {
     where_clause.predicates.extend(predicates);
 }
 
-fn append_generics(generics: &Generics) -> Generics {
+fn append_generics(generics: &Generics, data: &Data<Variant, Field>) -> Generics {
     let mut generics = generics.clone();
     append_de_lifetime(&mut generics);
-    append_where_clause(&mut generics);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics);
     generics
 }
@@ -641,7 +683,7 @@ fn append_generics(generics: &Generics) -> Generics {
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let appended_generics = append_generics(&args.generics);
+    let appended_generics = append_generics(&args.generics, &args.data);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
@@ -755,7 +797,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 const TYPE_META: TypeMeta = #type_meta_impl;
 
                 #[inline]
-                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                     #read_impl
                     Ok(())
                 }

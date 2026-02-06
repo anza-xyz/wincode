@@ -219,6 +219,81 @@ pub trait Reader<'a> {
     }
 }
 
+impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
+    type Trusted<'b>
+        = R::Trusted<'b>
+    where
+        Self: 'b;
+
+    #[inline(always)]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_buf(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_exact(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        (*self).fill_array()
+    }
+
+    #[inline(always)]
+    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        (*self).borrow_exact(len)
+    }
+
+    #[inline(always)]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        (*self).borrow_exact_mut(len)
+    }
+
+    #[inline(always)]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        (*self).consume_unchecked(amt)
+    }
+
+    #[inline(always)]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        (*self).consume(amt)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    fn peek(&mut self) -> ReadResult<&u8> {
+        (*self).peek()
+    }
+
+    #[inline(always)]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        (*self).copy_into_slice(dst)
+    }
+
+    #[inline(always)]
+    fn copy_into_array<const N: usize>(
+        &mut self,
+        dst: &mut MaybeUninit<[u8; N]>,
+    ) -> ReadResult<()> {
+        (*self).copy_into_array(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
+        (*self).copy_into_t(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        (*self).copy_into_slice_t(dst)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum WriteError {
     #[error("Attempting to write {0} bytes")]
@@ -336,6 +411,38 @@ pub trait Writer {
         let src = from_raw_parts(src.as_ptr().cast::<u8>(), len);
         self.write(src)?;
         Ok(())
+    }
+}
+
+impl<W: Writer> Writer for &mut W {
+    type Trusted<'a>
+        = W::Trusted<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    fn finish(&mut self) -> WriteResult<()> {
+        (*self).finish()
+    }
+
+    #[inline(always)]
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        (*self).write(src)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        (*self).write_t(src)
+    }
+
+    #[inline(always)]
+    unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
+        (*self).write_slice_t(src)
     }
 }
 
