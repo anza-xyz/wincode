@@ -1848,7 +1848,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         let val = &value.get();
         T::write(writer, val)?;
         Ok(())
@@ -1872,7 +1872,7 @@ where
     };
 
     #[inline(always)]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let value = T::get(reader)?;
         dst.write(Cell::new(value));
         Ok(())
@@ -1904,7 +1904,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         let borrowed = src
             .try_borrow()
             .map_err(|_| crate::error::WriteError::Custom("RefCell already borrowed mutably"))?;
@@ -1929,7 +1929,7 @@ where
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let val = T::get(reader)?;
         dst.write(RefCell::new(val));
         Ok(())
