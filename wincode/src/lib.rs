@@ -449,7 +449,7 @@
 //! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 //!         // Normally we have to do a big ugly cast like this
 //!         // to get a mutable `MaybeUninit<Payload>`.
 //!         let payload = unsafe {
@@ -464,14 +464,14 @@
 //!             payload_builder.init_header_with(|header| {
 //!                 // Read directly into the projected MaybeUninit<Header> slot.
 //!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                 header_builder.read_num_required_signatures(reader)?;
-//!                 header_builder.read_num_signed_accounts(reader)?;
-//!                 header_builder.read_num_unsigned_accounts(reader)?;
+//!                 header_builder.read_num_required_signatures(&mut reader)?;
+//!                 header_builder.read_num_signed_accounts(&mut reader)?;
+//!                 header_builder.read_num_unsigned_accounts(&mut reader)?;
 //!                 header_builder.finish();
 //!                 Ok(())
 //!             })?;
 //!         }
-//!         // Alternatively, we could have done `payload_builder.read_header(reader)?;`
+//!         // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
 //!         // rather than reading all the fields individually.
 //!         payload_builder.read_data(reader)?;
 //!         // Message is fully initialized, so we forget the builders

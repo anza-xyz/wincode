@@ -70,7 +70,7 @@ macro_rules! impl_fix_int {
         paste! {
             $(
                 #[inline(always)]
-                fn [<encode_ $ty>] (val: $ty, writer: &mut impl Writer) -> WriteResult<()> {
+                fn [<encode_ $ty>] (val: $ty, mut writer: impl Writer) -> WriteResult<()> {
                     let bytes = match <$byte_order>::ENDIAN {
                         Endian::Big => val.to_be_bytes(),
                         Endian::Little => val.to_le_bytes(),
@@ -79,7 +79,7 @@ macro_rules! impl_fix_int {
                 }
 
                 #[inline(always)]
-                fn [<decode_ $ty>] <'de>(reader: &mut impl Reader<'de>) -> ReadResult<$ty> {
+                fn [<decode_ $ty>] <'de>(mut reader: impl Reader<'de>) -> ReadResult<$ty> {
                     let bytes = *reader.fill_array::<{ size_of::<$ty>() }>()?;
                     // SAFETY: fill_array is guaranteed to consume `size_of::<$ty>()` bytes.
                     unsafe { reader.consume_unchecked(size_of::<$ty>()) };
@@ -134,7 +134,7 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     const ZERO_COPY: bool;
 
     /// Encode the given `u16` value and write it to the writer.
-    fn encode_u16(val: u16, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_u16(val: u16, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u16` value.
     ///
@@ -145,10 +145,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_u16(val: u16) -> usize;
 
     /// Decode a `u16` value from the reader.
-    fn decode_u16<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u16>;
+    fn decode_u16<'de>(reader: impl Reader<'de>) -> ReadResult<u16>;
 
     /// Encode a `u32` value and write it to the writer.
-    fn encode_u32(val: u32, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_u32(val: u32, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u32` value.
     ///
@@ -159,10 +159,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_u32(val: u32) -> usize;
 
     /// Decode a `u32` value from the reader.
-    fn decode_u32<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u32>;
+    fn decode_u32<'de>(reader: impl Reader<'de>) -> ReadResult<u32>;
 
     /// Encode a `u64` value and write it to the writer.
-    fn encode_u64(val: u64, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_u64(val: u64, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u64` value.
     ///
@@ -173,10 +173,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_u64(val: u64) -> usize;
 
     /// Decode a `u64` value from the reader.
-    fn decode_u64<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u64>;
+    fn decode_u64<'de>(reader: impl Reader<'de>) -> ReadResult<u64>;
 
     /// Encode a `u128` value and write it to the writer.
-    fn encode_u128(val: u128, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_u128(val: u128, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `u128` value.
     ///
@@ -187,10 +187,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_u128(val: u128) -> usize;
 
     /// Decode a `u128` value from the reader.
-    fn decode_u128<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u128>;
+    fn decode_u128<'de>(reader: impl Reader<'de>) -> ReadResult<u128>;
 
     /// Encode a `i16` value and write it to the writer.
-    fn encode_i16(val: i16, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_i16(val: i16, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i16` value.
     ///
@@ -201,10 +201,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_i16(val: i16) -> usize;
 
     /// Decode a `i16` value from the reader.
-    fn decode_i16<'de>(reader: &mut impl Reader<'de>) -> ReadResult<i16>;
+    fn decode_i16<'de>(reader: impl Reader<'de>) -> ReadResult<i16>;
 
     /// Encode a `i32` value and write it to the writer.
-    fn encode_i32(val: i32, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_i32(val: i32, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i32` value.
     ///
@@ -215,10 +215,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_i32(val: i32) -> usize;
 
     /// Decode a `i32` value from the reader.
-    fn decode_i32<'de>(reader: &mut impl Reader<'de>) -> ReadResult<i32>;
+    fn decode_i32<'de>(reader: impl Reader<'de>) -> ReadResult<i32>;
 
     /// Encode a `i64` value and write it to the writer.
-    fn encode_i64(val: i64, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_i64(val: i64, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i64` value.
     ///
@@ -229,10 +229,10 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_i64(val: i64) -> usize;
 
     /// Decode a `i64` value from the reader.
-    fn decode_i64<'de>(reader: &mut impl Reader<'de>) -> ReadResult<i64>;
+    fn decode_i64<'de>(reader: impl Reader<'de>) -> ReadResult<i64>;
 
     /// Encode a `i128` value and write it to the writer.
-    fn encode_i128(val: i128, writer: &mut impl Writer) -> WriteResult<()>;
+    fn encode_i128(val: i128, writer: impl Writer) -> WriteResult<()>;
 
     /// Get the encoded size of the given `i128` value.
     ///
@@ -243,7 +243,7 @@ pub unsafe trait IntEncoding<B: ByteOrder>: 'static {
     fn size_of_i128(val: i128) -> usize;
 
     /// Decode a `i128` value from the reader.
-    fn decode_i128<'de>(reader: &mut impl Reader<'de>) -> ReadResult<i128>;
+    fn decode_i128<'de>(reader: impl Reader<'de>) -> ReadResult<i128>;
 }
 
 /// Fixed width integer encoding.
@@ -393,7 +393,7 @@ macro_rules! varint_decode_signed {
     ($ty:ty => $target:ty) => {
         paste! {
             #[inline]
-            fn [<decode_ $ty>]<'de>(reader: &mut impl Reader<'de>) -> ReadResult<$ty> {
+            fn [<decode_ $ty>]<'de>(reader: impl Reader<'de>) -> ReadResult<$ty> {
                 let n = <VarInt as IntEncoding<B>>::[<decode_ $target>](reader)?;
                 Ok(if n % 2 == 0 {
                     // positive number
@@ -436,7 +436,7 @@ macro_rules! varint_encode_signed {
         paste! {
             #[inline]
             #[expect(clippy::arithmetic_side_effects)]
-            fn [<encode_ $ty>](val: $ty, writer: &mut impl Writer) -> WriteResult<()> {
+            fn [<encode_ $ty>](val: $ty, writer: impl Writer) -> WriteResult<()> {
                 let n: $target = if val < 0 {
                     (!(val as $target)) * 2 + 1
                 } else {
@@ -454,7 +454,7 @@ macro_rules! varint_encode_unsigned_impl {
         let needed = size_of::<$cast>() + 1;
         // SAFETY: tag (1 byte) + payload (`size_of::<$cast>()`) fully initialize the trusted
         // window, so all writes stay within `needed` bytes.
-        let writer = &mut unsafe { $writer.as_trusted_for(needed) }?;
+        let mut writer = unsafe { $writer.as_trusted_for(needed) }?;
         writer.write(&[$tag])?;
         let encoded = $val as $cast;
         let bytes = match B::ENDIAN {
@@ -470,7 +470,7 @@ macro_rules! varint_encode_unsigned_impl {
             let needed = size_of::<$cast>() + 1;
             // SAFETY: tag (1 byte) + payload (`size_of::<$cast>()`) fully initialize the trusted
             // window, so all writes stay within `needed` bytes.
-            let writer = &mut unsafe { $writer.as_trusted_for(needed) }?;
+            let mut writer = unsafe { $writer.as_trusted_for(needed) }?;
             writer.write(&[$tag])?;
             let encoded = $val as $cast;
             let bytes = match B::ENDIAN {
@@ -492,7 +492,7 @@ macro_rules! varint_encode_unsigned {
         paste! {
             #[inline]
             #[expect(clippy::arithmetic_side_effects)]
-            fn [<encode_ $ty>](val: $ty, writer: &mut impl Writer) -> WriteResult<()> {
+            fn [<encode_ $ty>](val: $ty, mut writer: impl Writer) -> WriteResult<()> {
                 if val <= SINGLE_BYTE_MAX as $ty {
                     writer.write(&[val as u8])?;
                     return Ok(());
@@ -523,8 +523,8 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
         }
     }
 
-    fn decode_u16<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u16> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u16>(reader)?;
+    fn decode_u16<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
+        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u16>(&mut reader)?;
         let (out, used) = match discriminant {
             byte @ 0..=SINGLE_BYTE_MAX => (byte as u16, 1),
             U16_BYTE => try_from_endian_bytes!(bytes => u16),
@@ -548,8 +548,8 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
         }
     }
 
-    fn decode_u32<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u32> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u32>(reader)?;
+    fn decode_u32<'de>(mut reader: impl Reader<'de>) -> ReadResult<u32> {
+        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u32>(&mut reader)?;
         let (out, used) = match discriminant {
             byte @ 0..=SINGLE_BYTE_MAX => (byte as u32, 1),
             U16_BYTE => try_from_endian_bytes!(bytes => u16 as u32),
@@ -576,8 +576,8 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
         }
     }
 
-    fn decode_u64<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u64> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u64>(reader)?;
+    fn decode_u64<'de>(mut reader: impl Reader<'de>) -> ReadResult<u64> {
+        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u64>(&mut reader)?;
         let (out, used) = match discriminant {
             byte @ 0..=SINGLE_BYTE_MAX => (byte as u64, 1),
             U16_BYTE => try_from_endian_bytes!(bytes => u16 as u64),
@@ -607,8 +607,8 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
         }
     }
 
-    fn decode_u128<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u128> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u128>(reader)?;
+    fn decode_u128<'de>(mut reader: impl Reader<'de>) -> ReadResult<u128> {
+        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u128>(&mut reader)?;
         let (out, used) = match discriminant {
             byte @ 0..=SINGLE_BYTE_MAX => (byte as u128, 1),
             U16_BYTE => try_from_endian_bytes!(bytes => u16 as u128),
