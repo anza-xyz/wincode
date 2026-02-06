@@ -1838,7 +1838,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
@@ -1874,7 +1874,7 @@ where
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
@@ -1922,7 +1922,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
@@ -1958,7 +1958,7 @@ where
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
