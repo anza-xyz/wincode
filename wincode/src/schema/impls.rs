@@ -1775,7 +1775,7 @@ macro_rules! impl_nonzero {
                 }
 
                 #[inline(always)]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                    <$primitive_ty as SchemaWrite<C>>::write(writer, &src.get())
                 }
             }
@@ -1794,7 +1794,7 @@ macro_rules! impl_nonzero {
                 };
 
                 #[inline(always)]
-                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                     let val = <$primitive_ty as SchemaRead<'de, C>>::get(reader)?;
                     let nonzero = <$nonzero_ty>::new(val)
                         .ok_or_else(|| invalid_value(concat!(
