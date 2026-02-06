@@ -223,8 +223,7 @@ impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
     type Trusted<'b>
         = R::Trusted<'b>
     where
-        Self: 'b,
-        R: 'b;
+        Self: 'b;
 
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
         (*self).fill_buf(n_bytes)
