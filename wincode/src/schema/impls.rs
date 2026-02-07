@@ -1843,15 +1843,15 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, value: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
-            Bound::Unbounded => C::TagEncoding::write_from_u32(writer, 0),
+            Bound::Unbounded => C::TagEncoding::write_from_u32(&mut writer, 0),
             Bound::Included(value) => {
-                C::TagEncoding::write_from_u32(writer, 1)?;
+                C::TagEncoding::write_from_u32(&mut writer, 1)?;
                 T::write(writer, value)
             }
             Bound::Excluded(value) => {
-                C::TagEncoding::write_from_u32(writer, 2)?;
+                C::TagEncoding::write_from_u32(&mut writer, 2)?;
                 T::write(writer, value)
             }
         }
@@ -1865,12 +1865,12 @@ where
     type Dst = Bound<T::Dst>;
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(&mut reader)?)?;
         match disc {
             0 => dst.write(Bound::Unbounded),
-            1 => dst.write(Bound::Included(T::get(reader)?)),
-            2 => dst.write(Bound::Excluded(T::get(reader)?)),
+            1 => dst.write(Bound::Included(T::get(&mut reader)?)),
+            2 => dst.write(Bound::Excluded(T::get(&mut reader)?)),
             _ => return Err(invalid_tag_encoding(disc as usize)),
         };
 
@@ -1902,19 +1902,19 @@ where
     }
 
     #[inline]
-    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let writer = &mut unsafe { writer.as_trusted_for(size) }?;
-                Idx::write(writer, &src.start)?;
-                Idx::write(writer, &src.end)?;
+                let mut writer = unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(&mut writer, &src.start)?;
+                Idx::write(&mut writer, &src.end)?;
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
-                Idx::write(writer, &src.start)?;
-                Idx::write(writer, &src.end)?;
+                Idx::write(&mut writer, &src.start)?;
+                Idx::write(&mut writer, &src.end)?;
             }
         }
         Ok(())
@@ -1938,19 +1938,19 @@ where
     };
 
     #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let reader = &mut unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(reader)?;
-                let end = Idx::get(reader)?;
+                let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
                 dst.write(Range { start, end });
             },
             TypeMeta::Dynamic => {
-                let start = Idx::get(reader)?;
-                let end = Idx::get(reader)?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
                 dst.write(Range { start, end });
             }
         };
@@ -1986,19 +1986,19 @@ where
     }
 
     #[inline]
-    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let writer = &mut unsafe { writer.as_trusted_for(size) }?;
-                Idx::write(writer, src.start())?;
-                Idx::write(writer, src.end())?;
+                let mut writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(&mut writer, src.start())?;
+                Idx::write(&mut writer, src.end())?;
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
-                Idx::write(writer, src.start())?;
-                Idx::write(writer, src.end())?;
+                Idx::write(&mut writer, src.start())?;
+                Idx::write(&mut writer, src.end())?;
             }
         }
         Ok(())
@@ -2022,19 +2022,19 @@ where
     };
 
     #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         match Self::TYPE_META {
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let reader = &mut unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(reader)?;
-                let end = Idx::get(reader)?;
+                let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
                 dst.write(RangeInclusive::new(start, end ));
             },
             TypeMeta::Dynamic => {
-                let start = Idx::get(reader)?;
-                let end = Idx::get(reader)?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
                 dst.write(RangeInclusive::new(start, end ));
             }
         };
