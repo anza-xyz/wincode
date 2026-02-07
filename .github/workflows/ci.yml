@@ -46,6 +46,22 @@ jobs:
       - name: test uuid no serde compat
         run: cargo test uuid --features alloc,uuid --all-targets --no-fail-fast --workspace
 
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.84.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: install cargo-deny
+        run: cargo install cargo-deny --version 0.14.25 --locked
+      - name: cargo deny
+        run: cargo deny check
+
   fuzz:
     name: fuzz smoke check (nightly)
     runs-on: ubuntu-latest
