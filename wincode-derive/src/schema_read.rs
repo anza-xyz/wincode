@@ -15,7 +15,7 @@ use {
     quote::{format_ident, quote},
     syn::{
         parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, LitInt, Path,
-        PredicateType, Type, WhereClause, WherePredicate,
+        PredicateType, Token, Type, WhereClause, WherePredicate,
     },
 };
 
@@ -25,7 +25,13 @@ fn impl_struct(
     repr: &StructRepr,
 ) -> (TokenStream, TokenStream) {
     if fields.is_empty() {
-        return (quote! {}, quote! {TypeMeta::Dynamic});
+        return (
+            quote! {},
+            quote! { TypeMeta::Static {
+                size: 0,
+                zero_copy: true,
+            }},
+        );
     }
 
     let num_fields = fields.len();
@@ -55,12 +61,20 @@ fn impl_struct(
             } else {
                 quote! { *init_count += 1; }
             };
-            quote! {
-                <#target as SchemaRead<'de, WincodeConfig>>::read(
-                    reader,
-                    unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
-                )?;
-                #init_count
+            if let Some(mode) = &field.skip {
+                let val = mode.default_val_token_stream();
+                quote! {
+                    unsafe { (&raw mut (*dst_ptr).#ident).write(#val); }
+                    #init_count
+                }
+            } else {
+                quote! {
+                    <#target as SchemaRead<'de, WincodeConfig>>::read(
+                        &mut reader,
+                        unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
+                    )?;
+                    #init_count
+                }
             }
         })
         .collect::<Vec<_>>();
@@ -94,7 +108,7 @@ fn impl_struct(
     });
 
     let dst = get_src_dst_fully_qualified(args);
-    let (impl_generics, ty_generics, _) = args.generics.split_for_impl();
+    let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
         let mut guard = DropGuard {
@@ -105,12 +119,12 @@ fn impl_struct(
     };
     (
         quote! {
-            struct DropGuard #impl_generics {
+            struct DropGuard #impl_generics #where_clause {
                 init_count: u8,
                 dst_ptr: *mut #dst,
             }
 
-            impl #impl_generics ::core::ops::Drop for DropGuard #ty_generics {
+            impl #impl_generics ::core::ops::Drop for DropGuard #ty_generics #where_clause {
                 #[cold]
                 fn drop(&mut self) {
                     let dst_ptr = self.dst_ptr;
@@ -129,7 +143,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `read` on each field will consume exactly `size` bytes,
                     // fully consuming the trusted window.
-                    let reader = &mut unsafe { reader.as_trusted_for(size) }?;
+                    let mut reader = unsafe { reader.as_trusted_for(size) }?;
                     #init_guard
                     #(#read_impl)*
                     mem::forget(guard);
@@ -176,7 +190,7 @@ fn impl_struct(
 /// unsafe impl<'de> SchemaRead<'de> for Message {
 ///     type Dst = Message;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         // Some more complicated logic not capturable by the macro...
 ///         let mut body = MaybeUninit::<Body>::uninit();
 ///         // Project a mutable MaybeUninit<Header> from the MaybeUninit<Body>.
@@ -350,7 +364,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
         let lifetimes = ty.lifetimes();
         // We must always extract the `Dst` from the type because `SchemaRead` implementations need
-        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self` 
+        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self`
         // (e.g., in the case of container types).
         let field_projection_type = if lifetimes.is_empty() {
             quote!(<#ty as SchemaRead<'_, WincodeConfig>>::Dst)
@@ -381,8 +395,9 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
             }
 
             /// Write a value to the maybe uninitialized field.
+            // This method can be marked `const` in the future when MSRV is >= 1.85.
             #[inline]
-            #vis const fn #write_uninit_field_ident(&mut self, val: #field_projection_type) -> &mut Self {
+            #vis fn #write_uninit_field_ident(&mut self, val: #field_projection_type) -> &mut Self {
                 self.#uninit_mut_ident().write(val);
                 #set_index_bit
                 self
@@ -390,7 +405,7 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
 
             /// Read a value from the reader into the maybe uninitialized field.
             #[inline]
-            #vis fn #read_field_ident <'de>(&mut self, reader: &mut impl Reader<'de>) -> ReadResult<&mut Self> {
+            #vis fn #read_field_ident <'de>(&mut self, reader: impl Reader<'de>) -> ReadResult<&mut Self> {
                 // SAFETY:
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
                 // - We return the field as `&mut MaybeUninit<#target>`, so
@@ -447,16 +462,16 @@ fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Result<TokenS
 fn impl_enum(
     enum_ident: &Type,
     variants: &[Variant],
-    tag_encoding: Option<&Type>,
+    tag_encoding_override: Option<&Type>,
 ) -> (TokenStream, TokenStream) {
     if variants.is_empty() {
         return (quote! {Ok(())}, quote! {TypeMeta::Dynamic});
     }
 
-    let default_tag_encoding = default_tag_encoding();
-    let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
-
-    let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaRead, tag_encoding);
+    let type_meta_impl = variants.type_meta_impl(
+        TraitImpl::SchemaRead,
+        tag_encoding_override.unwrap_or(&default_tag_encoding()),
+    );
 
     let read_impl = variants.iter().enumerate().map(|(i, variant)| {
         let variant_ident = &variant.ident;
@@ -466,10 +481,8 @@ fn impl_enum(
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let idents = fields.enum_member_ident_iter(None).collect::<Vec<_>>();
-                let read = fields
-                    .iter()
-                    .zip(&idents)
+                let mut construct_idents = Vec::with_capacity(fields.len());
+                let read = fields.enum_members_iter(None)
                     .map(|(field, ident)| {
                         let target = field.target_resolved().with_lifetime("de");
 
@@ -480,26 +493,33 @@ fn impl_enum(
                         // a macro-generated shadowed enum that wraps all variant fields with `MaybeUninit`, which
                         // could be used to facilitate direct reads. The user would have to guarantee layout on
                         // their type (a la `#[repr(C)]`), or roll the dice on non-guaranteed layout -- so it would need to be opt-in.
-                        quote! {
-                            let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader)?;
-                        }
+                        let read = if let Some(mode) = &field.skip {
+                            let val = mode.default_val_token_stream();
+                            quote! { let #ident = #val; }
+                        } else {
+                            quote! {
+                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
+                            }
+                        };
+                        construct_idents.push(ident);
+                        read
                     })
                     .collect::<Vec<_>>();
 
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let static_anon_idents = fields.member_anon_ident_iter(None).collect::<Vec<_>>();
-                let static_targets = fields.iter().map(|field| {
+                let static_anon_idents = fields.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
+                let static_targets = fields.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
                     quote! {<#target as SchemaRead<'de, WincodeConfig>>::TYPE_META}
                 });
 
                 let constructor = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#idents),*}
+                        #enum_ident::#variant_ident{#(#construct_idents),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#idents),*)
+                        #enum_ident::#variant_ident(#(#construct_idents),*)
                     }
                 };
 
@@ -511,7 +531,7 @@ fn impl_enum(
                             // which is the serialized size of the variant.
                             // Calling `read` on each field will consume exactly `summed_sizes` bytes,
                             // fully consuming the trusted window.
-                            let reader = &mut unsafe { reader.as_trusted_for(summed_sizes) }?;
+                            let mut reader = unsafe { reader.as_trusted_for(summed_sizes) }?;
                             #(#read)*
                             dst.write(#constructor);
                         } else {
@@ -530,9 +550,19 @@ fn impl_enum(
         }
     });
 
+    let read_discriminant = if let Some(tag_encoding) = tag_encoding_override {
+        quote! {
+            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
+        }
+    } else {
+        quote! {
+            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(&mut reader)?)?
+        }
+    };
+
     (
         quote! {
-            let discriminant = <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader)?;
+            let discriminant = #read_discriminant;
             match discriminant {
                 #(#read_impl)*
                 _ => return Err(error::invalid_tag_encoding(discriminant as usize)),
@@ -579,9 +609,73 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
-fn append_generics(generics: &Generics) -> Generics {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
+    let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ident>));
+
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: parse_quote!(#ident),
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+
+    /// Append an additional constraint to the where clause such that
+    /// `SchemaRead<'de, WincodeConfig>` is implemented for the given
+    /// field's type.
+    ///
+    /// This constraint is only necessary for fields whose types contain lifetimes.
+    /// In particular, for an arbitrary `T`, `SchemaRead<Config>` is _only_
+    /// implemented for `&T` where `T` is `ZeroCopy<Config>`. In other words, because
+    /// there is no blanket implementation for `SchemaRead<Config>` on `&T`, we must
+    /// add constraints to the where clause such that `&T` satisfies `SchemaRead<Config>`
+    /// or the derived implementation will not type-check.
+    fn constrain_reference_type(
+        field: &Field,
+        predicates: &mut Punctuated<WherePredicate, Token![,]>,
+    ) {
+        let ty = &field.ty.with_lifetime("de");
+        let target = field.target_resolved().with_lifetime("de");
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ty>));
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: target,
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+
+    match data {
+        Data::Struct(fields) => {
+            for field in fields.fields_with_lifetime_iter() {
+                constrain_reference_type(field, &mut predicates);
+            }
+        }
+        Data::Enum(variants) => {
+            for variant in variants {
+                for field in variant.fields.fields_with_lifetime_iter() {
+                    constrain_reference_type(field, &mut predicates);
+                }
+            }
+        }
+    }
+
+    if predicates.is_empty() {
+        return;
+    }
+    let where_clause = generics.make_where_clause();
+    where_clause.predicates.extend(predicates);
+}
+
+fn append_generics(generics: &Generics, data: &Data<Variant, Field>) -> Generics {
     let mut generics = generics.clone();
     append_de_lifetime(&mut generics);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics);
     generics
 }
@@ -589,7 +683,7 @@ fn append_generics(generics: &Generics) -> Generics {
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let appended_generics = append_generics(&args.generics);
+    let appended_generics = append_generics(&args.generics, &args.data);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
@@ -692,7 +786,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         const _: () = {
             use core::{ptr, mem::{self, MaybeUninit}};
-            use #crate_name::{SchemaRead, ReadResult, TypeMeta, io::Reader, error, config::{Config, DefaultConfig, ZeroCopy}};
+            use #crate_name::{SchemaRead, ReadResult, tag_encoding::TagEncoding, TypeMeta, io::Reader, error, config::{Config, DefaultConfig, ZeroCopy}};
 
             #zero_copy_impl
 
@@ -703,7 +797,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 const TYPE_META: TypeMeta = #type_meta_impl;
 
                 #[inline]
-                fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
                     #read_impl
                     Ok(())
                 }

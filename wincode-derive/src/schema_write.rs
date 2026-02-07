@@ -13,7 +13,10 @@ use {
     },
     proc_macro2::TokenStream,
     quote::quote,
-    syn::{parse_quote, DeriveInput, GenericParam, Generics, Type},
+    syn::{
+        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, PredicateType,
+        Token, Type, WherePredicate,
+    },
 };
 
 fn impl_struct(
@@ -21,19 +24,31 @@ fn impl_struct(
     repr: &StructRepr,
 ) -> (TokenStream, TokenStream, TokenStream) {
     if fields.is_empty() {
-        return (quote! {Ok(0)}, quote! {Ok(())}, quote! {None});
+        return (
+            quote! {Ok(0)},
+            quote! {Ok(())},
+            quote! {
+                TypeMeta::Static {
+                    size: 0,
+                    zero_copy: true,
+                }
+            },
+        );
     }
 
-    let target = fields.iter().map(|field| field.target_resolved());
-    let ident = fields.struct_member_ident_iter();
+    let target = fields.unskipped_iter().map(|field| field.target_resolved());
+    let mut size_count_idents = Vec::with_capacity(fields.len());
 
-    let writes = fields
-        .iter()
-        .enumerate()
-        .map(|(i, field)| {
-            let ident = field.struct_member_ident(i);
-            let target = field.target_resolved();
-            quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer, &src.#ident)?; }
+    let writes = fields.struct_members_iter()
+        .filter_map(|(field, ident)| {
+            if field.skip.is_none() {
+                let target = field.target_resolved();
+                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, &src.#ident)?; };
+                size_count_idents.push(ident);
+                Some(write)
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
 
@@ -46,7 +61,7 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#ident)?;
+                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
@@ -57,7 +72,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `write` on each field will write exactly `size` bytes,
                     // fully initializing the trusted window.
-                    let writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                    let mut writer = unsafe { writer.as_trusted_for(size) }?;
                     #(#writes)*
                     writer.finish()?;
                 }
@@ -74,15 +89,15 @@ fn impl_struct(
 fn impl_enum(
     enum_ident: &Type,
     variants: &[Variant],
-    tag_encoding: Option<&Type>,
+    tag_encoding_override: Option<&Type>,
 ) -> (TokenStream, TokenStream, TokenStream) {
     if variants.is_empty() {
         return (quote! {Ok(0)}, quote! {Ok(())}, quote! {TypeMeta::Dynamic});
     }
-    let default_tag_encoding = default_tag_encoding();
-    let tag_encoding = tag_encoding.unwrap_or(&default_tag_encoding);
     let mut size_of_impl = Vec::with_capacity(variants.len());
     let mut write_impl = Vec::with_capacity(variants.len());
+    let default_tag_encoding = default_tag_encoding();
+    let tag_encoding = tag_encoding_override.unwrap_or(&default_tag_encoding);
 
     let type_meta_impl = variants.type_meta_impl(TraitImpl::SchemaWrite, tag_encoding);
 
@@ -91,50 +106,75 @@ fn impl_enum(
         let fields = &variant.fields;
         let discriminant = variant.discriminant(i);
         // Bincode always encodes the discriminant using the index of the field order.
-        let size_of_discriminant = quote! {
-            <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
-        };
-        let write_discriminant = quote! {
-            <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer, &#discriminant)?;
+        let (size_of_discriminant, write_discriminant) = if let Some(tag_encoding) =
+            tag_encoding_override
+        {
+            (
+                quote! {
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
+                },
+                quote! {
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(&mut writer, &#discriminant)?
+                },
+            )
+        } else {
+            (
+                quote! {
+                    WincodeConfig::TagEncoding::size_of_from_u32(#discriminant)?
+                },
+                quote! {
+                    WincodeConfig::TagEncoding::write_from_u32(&mut writer, #discriminant)?
+                },
+            )
         };
 
         let (size, write) = match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
-                let target = fields.iter().map(|field| field.target_resolved());
-                let ident = fields.enum_member_ident_iter(None);
+                let mut pattern_fragments = Vec::with_capacity(fields.len());
+                let mut size_count_idents = vec![];
+
                 let write = fields
-                    .iter()
-                    .zip(ident.clone())
-                    .map(|(field, ident)| {
-                        let target = field.target_resolved();
-                        quote! {
-                            <#target as SchemaWrite<WincodeConfig>>::write(writer, #ident)?;
+                    .enum_members_iter(None)
+                    .filter_map(|(field, ident)| {
+                        if field.skip.is_none() {
+                            let target = field.target_resolved();
+                            let write = quote! {
+                                <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, #ident)?;
+                            };
+                            pattern_fragments.push(quote! { #ident });
+                            size_count_idents.push(ident);
+                            Some(write)
+                        } else {
+                            if style.is_struct() {
+                                pattern_fragments.push(quote! { #ident: _ });
+                            } else {
+                                pattern_fragments.push(quote! { _ });
+                            }
+                            None
                         }
                     })
                     .collect::<Vec<_>>();
-                let ident_destructure = ident.clone();
                 let match_case = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#ident_destructure),*}
+                        #enum_ident::#variant_ident{#(#pattern_fragments),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#ident_destructure),*)
+                        #enum_ident::#variant_ident(#(#pattern_fragments),*)
                     }
                 };
 
+                let unskipped_targets =
+                    fields.unskipped_iter().map(|field| field.target_resolved());
+
                 // Prefix disambiguation needed, as our match statement will destructure enum variant identifiers.
                 let static_anon_idents = fields
-                    .member_anon_ident_iter(Some("__"))
+                    .unskipped_anon_ident_iter(Some("__"))
                     .collect::<Vec<_>>();
-                let static_targets = fields
-                    .iter()
-                    .map(|field| {
-                        let target = field.target_resolved();
-                        quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META}
-                    })
+                let static_targets = unskipped_targets
+                    .clone()
+                    .map(|target| quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META})
                     .collect::<Vec<_>>();
-
                 (
                     quote! {
                         #match_case => {
@@ -144,8 +184,9 @@ fn impl_enum(
 
                             let mut total = #size_of_discriminant;
                             #(
-                                total += <#target as SchemaWrite<WincodeConfig>>::size_of(#ident)?;
+                                total += <#unskipped_targets as SchemaWrite<WincodeConfig>>::size_of(#size_count_idents)?;
                             )*
+
                             Ok(total)
                         }
                     },
@@ -157,7 +198,7 @@ fn impl_enum(
                                 // which is the serialized size of the variant.
                                 // Writing the discriminant and then calling `write` on each field will write
                                 // exactly `summed_sizes` bytes, fully initializing the trusted window.
-                                let writer = &mut unsafe { writer.as_trusted_for(summed_sizes) }?;
+                                let mut writer = unsafe { writer.as_trusted_for(summed_sizes) }?;
                                 #write_discriminant;
                                 #(#write)*
                                 writer.finish()?;
@@ -214,8 +255,31 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
+fn append_where_clause(generics: &mut Generics) {
+    let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
+    for param in generics.type_params() {
+        let ident = &param.ident;
+        let mut bounds = Punctuated::new();
+        bounds.push(parse_quote!(SchemaWrite<WincodeConfig, Src = #ident>));
+
+        predicates.push(WherePredicate::Type(PredicateType {
+            lifetimes: None,
+            bounded_ty: parse_quote!(#ident),
+            colon_token: parse_quote![:],
+            bounds,
+        }));
+    }
+    if predicates.is_empty() {
+        return;
+    }
+
+    let where_clause = generics.make_where_clause();
+    where_clause.predicates.extend(predicates);
+}
+
 fn append_generics(generics: &Generics) -> Generics {
     let mut generics = generics.clone();
+    append_where_clause(&mut generics);
     append_config(&mut generics);
     generics
 }
@@ -252,7 +316,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config};
+            use #crate_name::{SchemaWrite, WriteResult, io::Writer, TypeMeta, config::Config, tag_encoding::TagEncoding};
             unsafe impl #impl_generics #crate_name::SchemaWrite<WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = #src_dst;
 
@@ -265,7 +329,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 }
 
                 #[inline]
-                fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+                fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                     #write_impl
                 }
             }

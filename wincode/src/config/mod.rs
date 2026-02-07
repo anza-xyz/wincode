@@ -8,8 +8,9 @@
 //! additional configuration parameter.
 use {
     crate::{
-        int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian},
+        int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian, VarInt},
         len::{BincodeLen, SeqLen},
+        tag_encoding::TagEncoding,
     },
     core::marker::PhantomData,
 };
@@ -25,16 +26,19 @@ pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 /// - Length encoding is [`BincodeLen`].
 /// - Byte order is [`LittleEndian`].
 /// - Integer encoding is [`FixInt`].
+/// - Tag encoding is [`u32`].
 pub struct Configuration<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
     LengthEncoding = BincodeLen,
     ByteOrder = LittleEndian,
     IntEncoding = FixInt,
+    TagEncoding = u32,
 > {
     _l: PhantomData<LengthEncoding>,
     _b: PhantomData<ByteOrder>,
     _i: PhantomData<IntEncoding>,
+    _t: PhantomData<TagEncoding>,
 }
 
 impl<
@@ -43,6 +47,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     > Clone
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -50,6 +55,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     >
 {
     fn clone(&self) -> Self {
@@ -63,6 +69,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     > Copy
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -70,6 +77,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     >
 {
 }
@@ -80,17 +88,20 @@ const fn generate<
     LengthEncoding,
     ByteOrder,
     IntEncoding,
+    TagEncoding,
 >() -> Configuration<
     ZERO_COPY_ALIGN_CHECK,
     PREALLOCATION_SIZE_LIMIT,
     LengthEncoding,
     ByteOrder,
     IntEncoding,
+    TagEncoding,
 > {
     Configuration {
         _l: PhantomData,
         _b: PhantomData,
         _i: PhantomData,
+        _t: PhantomData,
     }
 }
 
@@ -116,6 +127,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     >
     Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -123,6 +135,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     >
 {
     #[expect(clippy::new_without_default)]
@@ -225,6 +238,27 @@ impl<
         generate()
     }
 
+    /// Use [`VarInt`] for integer encoding.
+    ///
+    /// Default is [`FixInt`].
+    ///
+    /// Performance note: variable length integer encoding will hurt serialization and deserialization
+    /// performance significantly relative to fixed width integer encoding. Additionally, all zero-copy
+    /// capabilities on integers will be lost. Variable length integer encoding may be beneficial if
+    /// reducing the resulting size of serialized data is important, but if serialization / deserialization
+    /// performance is important, fixed width integer encoding is highly recommended.
+    pub const fn with_varint_encoding(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        VarInt,
+    > {
+        generate()
+    }
+
     /// Use the given [`IntEncoding`] implementation for integer encoding.
     ///
     /// Can be used for custom, unofficial integer encodings.
@@ -310,6 +344,35 @@ impl<
     > {
         generate()
     }
+
+    /// Use the given [`TagEncoding`] implementation for enum discriminant encoding.
+    ///
+    /// Default is [`u32`].
+    ///
+    /// This can be overriden for individual cases with the `#[wincode(tag_encoding = ...)]`
+    /// attribute.
+    pub const fn with_tag_encoding<T>(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        T,
+    >
+    where
+        Configuration<
+            ZERO_COPY_ALIGN_CHECK,
+            PREALLOCATION_SIZE_LIMIT,
+            LengthEncoding,
+            ByteOrder,
+            IntEncoding,
+            T,
+        >: Config,
+    {
+        generate()
+    }
 }
 
 /// Trait for accessing configuration values when only the constant knobs are needed
@@ -333,8 +396,16 @@ impl<
         LengthEncoding: 'static,
         B,
         I,
+        TagEncoding: 'static,
     > ConfigCore
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I>
+    for Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        B,
+        I,
+        TagEncoding,
+    >
 where
     B: ByteOrder,
     I: IntEncoding<B>,
@@ -357,6 +428,7 @@ where
 /// on [`Config`] (e.g., primitive types).
 pub trait Config: ConfigCore {
     type LengthEncoding: SeqLen<Self> + 'static;
+    type TagEncoding: TagEncoding<Self> + 'static;
 }
 
 impl<
@@ -365,14 +437,17 @@ impl<
         LengthEncoding: 'static,
         B,
         I,
+        T,
     > Config
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I>
+    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I, T>
 where
     LengthEncoding: SeqLen<Self>,
+    T: TagEncoding<Self>,
     B: ByteOrder,
     I: IntEncoding<B>,
 {
     type LengthEncoding = LengthEncoding;
+    type TagEncoding = T;
 }
 
 mod serde;

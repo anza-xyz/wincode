@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: "Crate to release"
+        required: true
+        type: choice
+        options:
+          - ""
+          - wincode
+          - wincode-derive
+      ref:
+        description: "git ref to tag (can be a branch or a commit hash)"
+        required: true
+        default: "master"
+        type: string
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      ref: ${{ steps.meta.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Compute metadata
+        id: meta
+        run: |
+
+          version="$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | select(.name == "'"${CRATE_NAME}"'") | .version')"
+          if [ -z "${version}" ] || [ "${version}" = "null" ]; then
+            echo "Could not resolve version for crate: ${CRATE_NAME}"
+            exit 1
+          fi
+
+          tag="${CRATE_NAME}@v${version}"
+          ref="$(git rev-parse HEAD)"
+
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${ref}" >> "${GITHUB_OUTPUT}"
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+
+      - name: Check tag does not exist
+        run: |
+          echo "checking: refs/tags/${TAG}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${TAG}. Please bump the version first (or delete the existing tag) and retry."
+            echo "Tag exists: ${TAG}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+
+      - name: Cargo publish dry run
+        run: |
+          cargo publish -p "${CRATE_NAME}" --dry-run
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+
+      - name: Summary
+        run: |
+          echo "Tag: ${TAG}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Ref: ${REF} (https://github.com/${{ github.repository }}/commit/${REF})" >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          REF: ${{ steps.meta.outputs.ref }}
+
+  publish:
+    runs-on: ubuntu-latest
+    environment: prod
+    needs: check
+    permissions:
+      id-token: write
+      contents: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - name: Set git config
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf https://github.com/
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+          ref: ${{ needs.check.outputs.ref }}
+
+      - run: |
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push --tags
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+
+      - name: Package crate
+        run: cargo package -p "${CRATE_NAME}"
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+
+      - name: Generate SLSA provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: target/package/*.crate
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - run: cargo publish -p "${CRATE_NAME}"
+        env:
+          CRATE_NAME: ${{ inputs.crate }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+      - name: Create Github Release
+        run: |
+          gh release create "${TAG}" --title "${TAG}" --generate-notes
+        env:
+          TAG: ${{ needs.check.outputs.tag }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}

@@ -1,10 +1,10 @@
 //! Support for heterogenous sequence length encoding.
 use {
     crate::{
-        config::ConfigCore,
+        config::{ConfigCore, PREALLOCATION_SIZE_LIMIT_DISABLED},
         error::{
             pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
-            ReadResult, WriteResult,
+            PreallocationError, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian},
         io::{Reader, Writer},
@@ -13,12 +13,88 @@ use {
     core::{any::type_name, marker::PhantomData},
 };
 
+pub const PREALLOCATION_SIZE_LIMIT_USE_CONFIG: usize = 0;
+
+/// [`SeqLen`] level override of configured preallocation size limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PreallocationLimitOverride {
+    /// Use the configuration's preallocation size limit.
+    #[default]
+    UseConfig,
+    /// Override with no limit.
+    NoLimit,
+    /// Override with a specific limit, in bytes.
+    Override(usize),
+}
+
+impl PreallocationLimitOverride {
+    /// Convert the given [`PreallocationLimitOverride`] to an `Option<usize>`,
+    /// reconciling with the given configuration.
+    ///
+    /// If the override is [`PreallocationLimitOverride::UseConfig`], then the
+    /// configuration's preallocation size limit is returned.
+    /// If the override is [`PreallocationLimitOverride::NoLimit`], then `None` is returned.
+    /// Otherwise, the override is returned.
+    #[inline]
+    pub const fn to_opt_limit_with_config<C: ConfigCore>(self) -> Option<usize> {
+        match self {
+            PreallocationLimitOverride::UseConfig => C::PREALLOCATION_SIZE_LIMIT,
+            PreallocationLimitOverride::NoLimit => None,
+            PreallocationLimitOverride::Override(limit) => Some(limit),
+        }
+    }
+
+    /// Convert a raw preallocation usize value to a [`PreallocationLimitOverride`].
+    ///
+    /// Handles special case values [`PREALLOCATION_SIZE_LIMIT_USE_CONFIG`] and
+    /// [`PREALLOCATION_SIZE_LIMIT_DISABLED`].
+    #[inline]
+    pub const fn from_usize(limit: usize) -> Self {
+        match limit {
+            PREALLOCATION_SIZE_LIMIT_USE_CONFIG => PreallocationLimitOverride::UseConfig,
+            PREALLOCATION_SIZE_LIMIT_DISABLED => PreallocationLimitOverride::NoLimit,
+            _ => PreallocationLimitOverride::Override(limit),
+        }
+    }
+}
+
 /// Behavior to support heterogenous sequence length encoding.
 ///
 /// It is possible for sequences to have different length encoding schemes.
 /// This trait abstracts over that possibility, allowing users to specify
 /// the length encoding scheme for a sequence.
-pub trait SeqLen<C: ConfigCore> {
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the method `write_bytes_needed`.
+pub unsafe trait SeqLen<C: ConfigCore> {
+    /// [`SeqLen`] level override of configured preallocation size limit, in bytes.
+    ///
+    /// Allows specializing specific uses of a given [`SeqLen`] implementation
+    /// to override any configured preallocation size limit.
+    const PREALLOCATION_SIZE_LIMIT_OVERRIDE: PreallocationLimitOverride =
+        PreallocationLimitOverride::UseConfig;
+
+    #[inline]
+    fn prealloc_check<T>(len: usize) -> Result<(), PreallocationError> {
+        fn check(len: usize, type_size: usize, limit: usize) -> Result<(), PreallocationError> {
+            let needed = len
+                .checked_mul(type_size)
+                .ok_or_else(|| preallocation_size_limit(usize::MAX, limit))?;
+            if needed > limit {
+                return Err(preallocation_size_limit(needed, limit));
+            }
+            Ok(())
+        }
+        // Everything here can be const-folded by the compiler.
+        if let Some(prealloc_limit) =
+            Self::PREALLOCATION_SIZE_LIMIT_OVERRIDE.to_opt_limit_with_config::<C>()
+        {
+            check(len, size_of::<T>(), prealloc_limit)?;
+        }
+        Ok(())
+    }
+
     /// Read the length of a sequence from the reader, where
     /// `T` is the type of the sequence elements. This can be used to
     /// enforce size constraints for preallocations.
@@ -26,27 +102,38 @@ pub trait SeqLen<C: ConfigCore> {
     /// May return an error if some length condition is not met
     /// (e.g., size constraints, overflow, etc.).
     #[inline]
-    fn read_prealloc_check<'de, T>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+    fn read_prealloc_check<'de, T>(reader: impl Reader<'de>) -> ReadResult<usize> {
         let len = Self::read(reader)?;
-        if let Some(prealloc_limit) = C::PREALLOCATION_SIZE_LIMIT {
-            let needed = len
-                .checked_mul(size_of::<T>())
-                .ok_or_else(|| preallocation_size_limit(usize::MAX, prealloc_limit))?;
-            if needed > prealloc_limit {
-                return Err(preallocation_size_limit(needed, prealloc_limit));
-            }
-        }
+        Self::prealloc_check::<T>(len)?;
         Ok(len)
     }
     /// Read the length of a sequence, without doing any preallocation size checks.
     ///
     /// Note this may still return typical read errors and there is no unsafety implied.
-    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize>;
+    fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize>;
     /// Write the length of a sequence to the writer.
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()>;
+    fn write(writer: impl Writer, len: usize) -> WriteResult<()>;
+    /// Calculate the number of bytes needed to write the given length.
+    ///
+    /// Return an error if the written size would be larger than the
+    /// corresponding allocation limit while reading.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
+    fn write_bytes_needed_prealloc_check<T>(len: usize) -> WriteResult<usize> {
+        Self::prealloc_check::<T>(len)?;
+        Self::write_bytes_needed(len)
+    }
     /// Calculate the number of bytes needed to write the given length.
     ///
     /// Useful for variable length encoding schemes.
+    ///
+    /// # Safety
+    ///
+    /// If `Ok(…)` is returned, it must contain the exact number of bytes
+    /// written by the `write` function for this particular object instance.
     fn write_bytes_needed(len: usize) -> WriteResult<usize>;
 }
 
@@ -58,16 +145,48 @@ pub trait SeqLen<C: ConfigCore> {
 /// the variable-width u64 encoding.
 ///
 /// This is bincode's default behavior.
-pub struct UseIntLen<T>(PhantomData<T>);
+///
+/// Allows overriding the preallocation size limit per individual use.
+///
+/// # Examples
+///
+/// Override the preallocation size limit to 8 bytes.
+///
+/// ```
+/// # use wincode::{containers, len::UseIntLen, SchemaRead, SchemaWrite};
+/// type Max8Bytes = UseIntLen<u32, 8>;
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct OverrideLen {
+///     #[wincode(with = "containers::Vec<u8, Max8Bytes>")]
+///     bytes: Vec<u8>,
+/// }
+///
+/// let data_ok = OverrideLen { bytes: vec![0; 8] };
+/// let serialized = wincode::serialize(&data_ok).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
+///
+/// let data_err = OverrideLen { bytes: vec![0; 9] };
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// ```
+pub struct UseIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
+    PhantomData<T>,
+);
 
-impl<T, C: ConfigCore> SeqLen<C> for UseIntLen<T>
+unsafe impl<const PREALLOCATION_SIZE_LIMIT: usize, T, C: ConfigCore> SeqLen<C>
+    for UseIntLen<T, PREALLOCATION_SIZE_LIMIT>
 where
     T: SchemaWrite<C> + for<'de> SchemaRead<'de, C>,
     T::Src: TryFrom<usize>,
     usize: for<'de> TryFrom<<T as SchemaRead<'de, C>>::Dst>,
 {
+    const PREALLOCATION_SIZE_LIMIT_OVERRIDE: PreallocationLimitOverride =
+        PreallocationLimitOverride::from_usize(PREALLOCATION_SIZE_LIMIT);
+
     #[inline(always)]
-    fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+    fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize> {
         let len = T::get(reader)?;
         let Ok(len) = usize::try_from(len) else {
             return Err(pointer_sized_decode_error());
@@ -76,7 +195,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+    fn write(writer: impl Writer, len: usize) -> WriteResult<()> {
         let Ok(len) = T::Src::try_from(len) else {
             return Err(write_length_encoding_overflow(type_name::<T::Src>()));
         };
@@ -98,14 +217,47 @@ where
 /// Fixed-width integer length encoding.
 ///
 /// Integers respect the configured byte order.
-pub struct FixIntLen<T>(PhantomData<T>);
+///
+/// Allows overriding the preallocation size limit per individual use.
+///
+/// # Examples
+///
+/// Override the preallocation size limit to 8 bytes.
+///
+/// ```
+/// # use wincode::{containers, len::FixIntLen, SchemaRead, SchemaWrite};
+/// type Max8Bytes = FixIntLen<u32, 8>;
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct OverrideLen {
+///     #[wincode(with = "containers::Vec<u8, Max8Bytes>")]
+///     bytes: Vec<u8>,
+/// }
+///
+/// let data_ok = OverrideLen { bytes: vec![0; 8] };
+/// let serialized = wincode::serialize(&data_ok).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
+///
+/// let data_err = OverrideLen { bytes: vec![0; 9] };
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// ```
+pub struct FixIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
+    PhantomData<T>,
+);
 
 macro_rules! impl_fix_int {
     ($type:ty) => {
-        impl<C: ConfigCore> SeqLen<C> for FixIntLen<$type> {
+        unsafe impl<const PREALLOCATION_SIZE_LIMIT: usize, C: ConfigCore> SeqLen<C>
+            for FixIntLen<$type, PREALLOCATION_SIZE_LIMIT>
+        {
+            const PREALLOCATION_SIZE_LIMIT_OVERRIDE: PreallocationLimitOverride =
+                PreallocationLimitOverride::from_usize(PREALLOCATION_SIZE_LIMIT);
+
             #[inline(always)]
             #[allow(irrefutable_let_patterns)]
-            fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+            fn read<'de>(mut reader: impl Reader<'de>) -> ReadResult<usize> {
                 let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
                 let len = match C::ByteOrder::ENDIAN {
                     Endian::Big => <$type>::from_be_bytes(*bytes),
@@ -120,7 +272,7 @@ macro_rules! impl_fix_int {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+            fn write(mut writer: impl Writer, len: usize) -> WriteResult<()> {
                 let Ok(len) = <$type>::try_from(len) else {
                     return Err(write_length_encoding_overflow(type_name::<$type>()));
                 };
@@ -153,7 +305,34 @@ impl_fix_int!(i64);
 impl_fix_int!(i128);
 
 /// Bincode always uses a `u64` encoded with the configuration's integer encoding.
-pub type BincodeLen = UseIntLen<u64>;
+///
+/// Allows overriding the preallocation size limit per individual use.
+///
+/// # Examples
+///
+/// Override the preallocation size limit to 8 bytes.
+///
+/// ```
+/// # use wincode::{containers, len::BincodeLen, SchemaRead, SchemaWrite};
+/// type Max8Bytes = BincodeLen<8>;
+///
+/// #[derive(SchemaWrite, SchemaRead)]
+/// struct OverrideLen {
+///     #[wincode(with = "containers::Vec<u8, Max8Bytes>")]
+///     bytes: Vec<u8>,
+/// }
+///
+/// let data_ok = OverrideLen { bytes: vec![0; 8] };
+/// let serialized = wincode::serialize(&data_ok).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_ok());
+///
+/// let data_err = OverrideLen { bytes: vec![0; 9] };
+/// assert!(wincode::serialize(&data_err).is_err());
+/// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
+/// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// ```
+pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG> =
+    UseIntLen<u64, PREALLOCATION_SIZE_LIMIT>;
 
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
@@ -171,7 +350,7 @@ pub mod short_vec {
         type Dst = Self;
 
         #[inline]
-        fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
             let len = decode_short_u16_from_reader(reader)?;
             // SAFETY: `dst` is a valid pointer to a `MaybeUninit<ShortU16>`.
             let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast::<MaybeUninit<u16>>() };
@@ -187,7 +366,7 @@ pub mod short_vec {
             Ok(short_u16_bytes_needed(src.0))
         }
 
-        fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+        fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
             let val = src.0;
             let needed = short_u16_bytes_needed(val);
             let mut buf = [MaybeUninit::<u8>::uninit(); 3];
@@ -340,7 +519,7 @@ pub mod short_vec {
     }
 
     #[inline]
-    fn decode_short_u16_from_reader<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u16> {
+    fn decode_short_u16_from_reader<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
         let (len, read) = decode_short_u16(reader.fill_buf(3)?)?;
         // SAFETY: `read` is the number of bytes visited by `decode_shortu16` to decode the length,
         // which implies the reader had at least `read` bytes available.
@@ -348,14 +527,14 @@ pub mod short_vec {
         Ok(len)
     }
 
-    impl<C: ConfigCore> SeqLen<C> for ShortU16 {
+    unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {
         #[inline(always)]
-        fn read<'de>(reader: &mut impl Reader<'de>) -> ReadResult<usize> {
+        fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize> {
             Ok(decode_short_u16_from_reader(reader)? as usize)
         }
 
         #[inline(always)]
-        fn write(writer: &mut impl Writer, len: usize) -> WriteResult<()> {
+        fn write(writer: impl Writer, len: usize) -> WriteResult<()> {
             if len > u16::MAX as usize {
                 return Err(write_length_encoding_overflow("u16::MAX"));
             }

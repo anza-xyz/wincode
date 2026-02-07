@@ -162,6 +162,10 @@
 //!   default configuration, provided your [`SchemaWrite`] and [`SchemaRead`] schemas and
 //!   [`containers`] match the layout implied by your `serde` types.
 //! - Length encodings are pluggable via [`SeqLen`](len::SeqLen).
+//! - Unlike `bincode`, this crate will fail to serialize or deserialize large
+//!   dynamic data structures by default, but this can be configured. This is
+//!   done for security and performance, as it allows to preallocate these data
+//!   structures safely.
 //!
 //! # Zero-copy deserialization
 //!
@@ -304,6 +308,17 @@
 //!
 //! See those trait definitions for more details.
 //!
+//! # Crate Features
+//!
+//! |Feature|Default|Description
+//! |---|---|---|
+//! |`std`|enabled|Enables `std` support.|
+//! |`alloc`|enabled automatically when `std` is enabled|Enables `alloc` support.|
+//! |`solana-short-vec`|disabled|Enables `solana-short-vec` support.|
+//! |`derive`|disabled|Enables the derive macros for [`SchemaRead`] and [`SchemaWrite`].|
+//! |`uuid`|disabled|Enables support for the `uuid` crate.|
+//! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
+//!
 //! # Derive attributes
 //!
 //! ## Top level
@@ -434,7 +449,7 @@
 //! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 //!         // Normally we have to do a big ugly cast like this
 //!         // to get a mutable `MaybeUninit<Payload>`.
 //!         let payload = unsafe {
@@ -449,14 +464,14 @@
 //!             payload_builder.init_header_with(|header| {
 //!                 // Read directly into the projected MaybeUninit<Header> slot.
 //!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                 header_builder.read_num_required_signatures(reader)?;
-//!                 header_builder.read_num_signed_accounts(reader)?;
-//!                 header_builder.read_num_unsigned_accounts(reader)?;
+//!                 header_builder.read_num_required_signatures(&mut reader)?;
+//!                 header_builder.read_num_signed_accounts(&mut reader)?;
+//!                 header_builder.read_num_unsigned_accounts(&mut reader)?;
 //!                 header_builder.finish();
 //!                 Ok(())
 //!             })?;
 //!         }
-//!         // Alternatively, we could have done `payload_builder.read_header(reader)?;`
+//!         // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
 //!         // rather than reading all the fields individually.
 //!         payload_builder.read_data(reader)?;
 //!         // Message is fully initialized, so we forget the builders
@@ -486,6 +501,14 @@
 //! |Attribute|Type|Default|Description
 //! |---|---|---|---|
 //! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
+//! |`skip`|`bool`\|`Expr`|`false`|Skips the field during serialization and deserialization (initializing with default value).|
+//!
+//! ### `skip`
+//!
+//! Allows omitting the field during serialization and deserialization. When type is initialized
+//! during deserialization, the field will be set to the default value. This is typically
+//! `Default::default()` (when using `#[wincode(skip)]` or `#[wincode(skip(default))]`), but can
+//! be overridden by specifying `#[wincode(skip(default_val = <value>))]`.
 //!
 //! ## Variant level (enum variants)
 //! |Attribute|Type|Default|Description

@@ -31,3 +31,16 @@ Run benchmarks comparing `wincode` against `bincode`:
 ```bash
 cargo bench --features derive
 ```
+
+## Security
+
+Release `v0.1.2` is currently undergoing 3 independent security reviews with the following firms:
+- Neodyme
+- [OtterSec](audits/wincode_ottersec_audit_0.1.2.pdf)
+- Asymmetric Research
+
+Reports will be added to the repo once completed.
+
+### Fuzzing
+
+This crate has been fuzzed using the harness in the `fuzz` folder for roundtrip correctness against bincode.

@@ -24,7 +24,7 @@ pub enum ReadError {
 pub type ReadResult<T> = core::result::Result<T, ReadError>;
 
 #[cold]
-const fn read_size_limit(len: usize) -> ReadError {
+pub const fn read_size_limit(len: usize) -> ReadError {
     ReadError::ReadSizeLimit(len)
 }
 
@@ -219,6 +219,81 @@ pub trait Reader<'a> {
     }
 }
 
+impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
+    type Trusted<'b>
+        = R::Trusted<'b>
+    where
+        Self: 'b;
+
+    #[inline(always)]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_buf(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_exact(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        (*self).fill_array()
+    }
+
+    #[inline(always)]
+    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        (*self).borrow_exact(len)
+    }
+
+    #[inline(always)]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        (*self).borrow_exact_mut(len)
+    }
+
+    #[inline(always)]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        (*self).consume_unchecked(amt)
+    }
+
+    #[inline(always)]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        (*self).consume(amt)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    fn peek(&mut self) -> ReadResult<&u8> {
+        (*self).peek()
+    }
+
+    #[inline(always)]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        (*self).copy_into_slice(dst)
+    }
+
+    #[inline(always)]
+    fn copy_into_array<const N: usize>(
+        &mut self,
+        dst: &mut MaybeUninit<[u8; N]>,
+    ) -> ReadResult<()> {
+        (*self).copy_into_array(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
+        (*self).copy_into_t(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        (*self).copy_into_slice_t(dst)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum WriteError {
     #[error("Attempting to write {0} bytes")]
@@ -288,25 +363,29 @@ pub trait Writer {
     ///
     /// - Ensure that no write performed through the `Trusted` writer can
     ///   address memory outside of that `n_bytes` window.
-    /// - Ensure that, before the `Trusted` writer is finished or the parent
-    ///   writer is used again, **every byte** in that `n_bytes` window has
-    ///   been initialized at least once via the `Trusted` writer.
-    /// - Call [`Writer::finish`] on the `Trusted` writer when writing is complete and
-    ///   before the parent writer is used again.
+    /// - In case the caller does not return an error, ensure that, before the
+    ///   `Trusted` writer is finished or the parent writer is used again,
+    ///   **every byte** in that `n_bytes` window has been initialized at least
+    ///   once via the `Trusted` writer.
+    /// - In case the caller does not return an error, call [`Writer::finish`]
+    ///   on the `Trusted` writer when writing is complete and before the parent
+    ///   writer is used again.
     ///
     /// Concretely:
     /// - All writes performed via the `Trusted` writer (`write`, `write_t`,
     ///   `write_slice_t`, etc.) must stay within the `[0, n_bytes)` region of
     ///   the reserved space.
-    /// - It is permitted to overwrite the same bytes multiple times, but the
-    ///   union of all bytes written must cover the entire `[0, n_bytes)` window.
+    /// - It is permitted to overwrite the same bytes multiple times, but if the
+    ///   caller returns no error, the union of all bytes written must cover the
+    ///   entire `[0, n_bytes)` window.
     ///
     /// Violating this is undefined behavior, because:
     /// - `Trusted` writers are permitted to elide bounds checks within the
     ///   `n_bytes` window; writing past the window may write past the end of
     ///   the underlying destination.
-    /// - Failing to initialize all `n_bytes` may leave uninitialized memory in
-    ///   the destination that later safe code assumes to be fully initialized.
+    /// - Failing to initialize all `n_bytes` without returning an error may
+    ///   leave uninitialized memory in the destination that later safe code
+    ///   assumes to be fully initialized.
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>>;
 
     /// Write `T` as bytes into the source.
@@ -332,6 +411,38 @@ pub trait Writer {
         let src = from_raw_parts(src.as_ptr().cast::<u8>(), len);
         self.write(src)?;
         Ok(())
+    }
+}
+
+impl<W: Writer> Writer for &mut W {
+    type Trusted<'a>
+        = W::Trusted<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    fn finish(&mut self) -> WriteResult<()> {
+        (*self).finish()
+    }
+
+    #[inline(always)]
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        (*self).write(src)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        (*self).write_t(src)
+    }
+
+    #[inline(always)]
+    unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
+        (*self).write_slice_t(src)
     }
 }
 

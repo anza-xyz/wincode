@@ -36,7 +36,7 @@ where
 
     let size = serialized_size(data).unwrap() as usize;
     let mut buffer = vec![0u8; size];
-    serialize_into(&mut buffer.as_mut_slice(), data).unwrap();
+    serialize_into(buffer.as_mut_slice(), data).unwrap();
 
     assert_eq!(&buffer[..], &serialized[..]);
 
@@ -62,14 +62,13 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     // In-place serialization (measures pure serialization, no allocation)
     group.bench_function("u64/wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("u64/bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -115,9 +114,7 @@ fn bench_vec_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -127,8 +124,7 @@ fn bench_vec_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );
@@ -187,14 +183,13 @@ fn bench_struct_comparison(c: &mut Criterion) {
 
     group.bench_function("wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -238,14 +233,13 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
 
     group.bench_function("wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -290,9 +284,7 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -302,8 +294,7 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );
@@ -376,9 +367,7 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -388,8 +377,7 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );

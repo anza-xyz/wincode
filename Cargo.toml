@@ -1,5 +1,6 @@
 [workspace]
-members = ["wincode", "wincode-derive", "fuzz"]
+members = ["wincode", "wincode-derive"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -17,7 +18,8 @@ repository = "https://github.com/anza-xyz/wincode"
 homepage = "https://anza.xyz/"
 license = "Apache-2.0"
 edition = "2021"
+rust-version = "1.84.1"
 
 [workspace.dependencies]
-quote = "1.0.41"
-proc-macro2 = "1.0.101"
+quote = "1.0.44"
+proc-macro2 = "1.0.106"

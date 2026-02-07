@@ -167,7 +167,7 @@ pub struct TrustedSliceReader<'a, 'b> {
     _marker: PhantomData<&'a ()>,
 }
 
-impl<'a, 'b> TrustedSliceReader<'a, 'b> {
+impl<'b> TrustedSliceReader<'_, 'b> {
     pub(super) const fn new(bytes: &'b [u8]) -> Self {
         Self {
             cursor: bytes,
@@ -176,7 +176,7 @@ impl<'a, 'b> TrustedSliceReader<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Reader<'a> for TrustedSliceReader<'a, 'b> {
+impl<'a> Reader<'a> for TrustedSliceReader<'a, '_> {
     type Trusted<'c>
         = Self
     where
@@ -339,7 +339,7 @@ impl<'a> TrustedSliceWriter<'a> {
     }
 }
 
-impl<'a> Writer for TrustedSliceWriter<'a> {
+impl Writer for TrustedSliceWriter<'_> {
     type Trusted<'b>
         = TrustedSliceWriter<'b>
     where
@@ -470,7 +470,7 @@ mod tests {
     macro_rules! with_writers {
         ($buffer:expr, |$writer:ident| $body:block) => {{
             {
-                let $writer = &mut $buffer.spare_capacity_mut();
+                let mut $writer = $buffer.spare_capacity_mut();
                 $body
                 $buffer.clear();
             }
@@ -482,7 +482,7 @@ mod tests {
             {
                 let _capacity = $buffer.capacity();
                 $buffer.resize(_capacity, 0);
-                let $writer = &mut $buffer.as_mut_slice();
+                let mut $writer = $buffer.as_mut_slice();
                 $body
                 $buffer.clear();
             }
