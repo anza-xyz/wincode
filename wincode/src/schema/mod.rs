@@ -3600,7 +3600,7 @@ mod tests {
             let serialized = serialize(&value).unwrap();
             let bincode_serialized = bincode::serialize(&value).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             type T = (RefCell<u32>, RefCell<f32>, RefCell<i64>, RefCell<f64>, RefCell<bool>, RefCell<u8>);
             let deserialized: T = deserialize(&serialized).unwrap();
             let bincode_deserialized: T = bincode::deserialize(&bincode_serialized).unwrap();
@@ -3611,15 +3611,15 @@ mod tests {
     #[test]
     fn test_refcell_nested() {
         use std::cell::RefCell;
-        
+
         type Nested = RefCell<Vec<u64>>;
-        
+
         proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<u64>(), 0..=5))| {
             let value = RefCell::new(vec);
             let serialized = serialize(&value).unwrap();
             let bincode_serialized = bincode::serialize(&value).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             let deserialized: Nested = deserialize(&serialized).unwrap();
             let bincode_deserialized: Nested = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(&*deserialized.borrow(), &*bincode_deserialized.borrow());
@@ -3629,10 +3629,16 @@ mod tests {
     #[test]
     fn test_refcell_with_struct() {
         use std::cell::RefCell;
-        
+
         #[derive(
-            SchemaWrite, SchemaRead, Debug, PartialEq, Eq,
-            serde::Serialize, serde::Deserialize, Clone,
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+            Clone,
             proptest_derive::Arbitrary,
         )]
         #[wincode(internal)]
@@ -3640,15 +3646,15 @@ mod tests {
             id: u32,
             count: u64,
         }
-        
+
         type SimpleRefCell = RefCell<SimpleData>;
-        
+
         proptest!(proptest_cfg(), |(data: SimpleData)| {
             let value = RefCell::new(data);
             let serialized = serialize(&value).unwrap();
             let bincode_serialized = bincode::serialize(&value).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             let deserialized: SimpleRefCell = deserialize(&serialized).unwrap();
             let bincode_deserialized: SimpleRefCell = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(&*deserialized.borrow(), &*bincode_deserialized.borrow());
