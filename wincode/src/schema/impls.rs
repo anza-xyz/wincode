@@ -707,7 +707,7 @@ where
     const TYPE_META: TypeMeta = match (
         T::TYPE_META,
         E::TYPE_META,
-        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+        <C::TagEncoding as SchemaRead<C>>::TYPE_META,
     ) {
         (
             TypeMeta::Static { size: t_size, .. },
