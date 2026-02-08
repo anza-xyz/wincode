@@ -29,6 +29,7 @@ use {
             NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
             NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
         },
+        ops::{Bound, Range, RangeInclusive},
         time::Duration,
     },
     pastey::paste,
@@ -1823,3 +1824,220 @@ impl_nonzero!(
     NonZeroI128 => i128,
     NonZeroIsize => isize,
 );
+
+unsafe impl<C: Config, T> SchemaWrite<C> for Bound<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    type Src = Bound<T::Src>;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        match src {
+            Bound::Unbounded => C::TagEncoding::size_of_from_u32(0),
+            Bound::Included(value) => Ok(C::TagEncoding::size_of_from_u32(1)? + T::size_of(value)?),
+            Bound::Excluded(value) => Ok(C::TagEncoding::size_of_from_u32(2)? + T::size_of(value)?),
+        }
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
+        match value {
+            Bound::Unbounded => C::TagEncoding::write_from_u32(&mut writer, 0),
+            Bound::Included(value) => {
+                C::TagEncoding::write_from_u32(&mut writer, 1)?;
+                T::write(writer, value)
+            }
+            Bound::Excluded(value) => {
+                C::TagEncoding::write_from_u32(&mut writer, 2)?;
+                T::write(writer, value)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Bound<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Bound<T::Dst>;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(&mut reader)?)?;
+        match disc {
+            0 => dst.write(Bound::Unbounded),
+            1 => dst.write(Bound::Included(T::get(&mut reader)?)),
+            2 => dst.write(Bound::Excluded(T::get(&mut reader)?)),
+            _ => return Err(invalid_tag_encoding(disc as usize)),
+        };
+
+        Ok(())
+    }
+}
+
+unsafe impl<Idx, C: Config> SchemaWrite<C> for Range<Idx>
+where
+    Idx: SchemaWrite<C>,
+    Idx::Src: Sized,
+{
+    type Src = Range<Idx::Src>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(Idx::size_of(&src.start)? + Idx::size_of(&src.end)?)
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let mut writer = unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(&mut writer, &src.start)?;
+                Idx::write(&mut writer, &src.end)?;
+                writer.finish()?;
+            }
+            TypeMeta::Dynamic => {
+                Idx::write(&mut writer, &src.start)?;
+                Idx::write(&mut writer, &src.end)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+unsafe impl<'de, Idx, C: ConfigCore> SchemaRead<'de, C> for Range<Idx>
+where
+    Idx: SchemaRead<'de, C>,
+{
+    type Dst = Range<Idx::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
+                dst.write(Range { start, end });
+            },
+            TypeMeta::Dynamic => {
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
+                dst.write(Range { start, end });
+            }
+        };
+
+        Ok(())
+    }
+}
+
+unsafe impl<Idx, C: ConfigCore> SchemaWrite<C> for RangeInclusive<Idx>
+where
+    Idx: SchemaWrite<C>,
+    Idx::Src: Sized,
+{
+    type Src = RangeInclusive<Idx::Src>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            return Ok(size);
+        }
+        Ok(Idx::size_of(src.start())? + Idx::size_of(src.end())?)
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let mut writer = &mut unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(&mut writer, src.start())?;
+                Idx::write(&mut writer, src.end())?;
+                writer.finish()?;
+            }
+            TypeMeta::Dynamic => {
+                Idx::write(&mut writer, src.start())?;
+                Idx::write(&mut writer, src.end())?;
+            }
+        }
+        Ok(())
+    }
+}
+
+unsafe impl<'de, Idx, C: ConfigCore> SchemaRead<'de, C> for RangeInclusive<Idx>
+where
+    Idx: SchemaRead<'de, C>,
+{
+    type Dst = RangeInclusive<Idx::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match Idx::TYPE_META {
+            TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
+                size: idx_size + idx_size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        match Self::TYPE_META {
+            TypeMeta::Static { size, .. } => {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
+                dst.write(RangeInclusive::new(start, end ));
+            },
+            TypeMeta::Dynamic => {
+                let start = Idx::get(&mut reader)?;
+                let end = Idx::get(&mut reader)?;
+                dst.write(RangeInclusive::new(start, end ));
+            }
+        };
+        Ok(())
+    }
+}
