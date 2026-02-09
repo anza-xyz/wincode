@@ -22,6 +22,7 @@ use {
         TypeMeta,
     },
     core::{
+        cell::{Cell, RefCell},
         marker::PhantomData,
         mem::{self, transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -1825,3 +1826,114 @@ impl_nonzero!(
     NonZeroI128 => i128,
     NonZeroIsize => isize,
 );
+
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Copy,
+{
+    type Src = Cell<T::Src>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        T::size_of(&src.get())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
+        let val = &value.get();
+        T::write(writer, val)?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Cell<T::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline(always)]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let value = T::get(reader)?;
+        dst.write(Cell::new(value));
+        Ok(())
+    }
+}
+
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for RefCell<T>
+where
+    T: SchemaWrite<C>,
+{
+    type Src = RefCell<T::Src>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let borrowed = src
+            .try_borrow()
+            .map_err(|_| crate::error::WriteError::Custom("RefCell already borrowed mutably"))?;
+        T::size_of(&*borrowed)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let borrowed = src
+            .try_borrow()
+            .map_err(|_| crate::error::WriteError::Custom("RefCell already borrowed mutably"))?;
+        T::write(writer, &*borrowed)
+    }
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for RefCell<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = RefCell<T::Dst>;
+
+    const TYPE_META: TypeMeta = const {
+        match T::TYPE_META {
+            TypeMeta::Static { size, .. } => TypeMeta::Static {
+                size,
+                zero_copy: false,
+            },
+            TypeMeta::Dynamic => TypeMeta::Dynamic,
+        }
+    };
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let val = T::get(reader)?;
+        dst.write(RefCell::new(val));
+        Ok(())
+    }
+}

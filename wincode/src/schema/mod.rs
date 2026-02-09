@@ -425,7 +425,7 @@ mod tests {
         proptest::prelude::*,
         std::{
             alloc::Layout,
-            cell::Cell,
+            cell::{Cell, RefCell},
             collections::{BinaryHeap, VecDeque},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -3532,6 +3532,166 @@ mod tests {
             result.is_err(),
             "Deserializing zero should fail for NonZeroU64"
         );
+    }
+
+    #[test]
+    fn test_cell_basic() {
+        proptest!(proptest_cfg(), |(value: (u32, f32, i64, f64, bool, u8))| {
+            let value = (
+                Cell::new(value.0),
+                Cell::new(value.1),
+                Cell::new(value.2),
+                Cell::new(value.3),
+                Cell::new(value.4),
+                Cell::new(value.5),
+            );
+
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            type T = (
+                Cell<u32>,
+                Cell<f32>,
+                Cell<i64>,
+                Cell<f64>,
+                Cell<bool>,
+                Cell<u8>,
+            );
+
+            let deserialized: T = deserialize(&serialized).unwrap();
+            let bincode_deserialized: T = bincode::deserialize(&bincode_serialized).unwrap();
+
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cell_char_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(cell: Cell<char>)| {
+            let bincode_serialized = bincode::serialize(&cell).unwrap();
+            let schema_serialized = serialize(&cell).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Cell<char> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Cell<char> = deserialize(&schema_serialized).unwrap();
+
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cell_arrays_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(cell: Cell<[u32; 4]>)| {
+
+            let bincode_serialized = bincode::serialize(&cell).unwrap();
+            let schema_serialized = serialize(&cell).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Cell<[u32; 4]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Cell<[u32; 4]> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(schema_deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_refcell_basic() {
+        proptest!(proptest_cfg(), |(value: (RefCell<u32>, RefCell<f32>, RefCell<i64>, RefCell<f64>, RefCell<bool>, RefCell<u8>))| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            type T = (RefCell<u32>, RefCell<f32>, RefCell<i64>, RefCell<f64>, RefCell<bool>, RefCell<u8>);
+            let deserialized: T = deserialize(&serialized).unwrap();
+            let bincode_deserialized: T = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_refcell_nested() {
+        use std::cell::RefCell;
+
+        type Nested = RefCell<Vec<u64>>;
+
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<u64>(), 0..=5))| {
+            let value = RefCell::new(vec);
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Nested = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Nested = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&*deserialized.borrow(), &*bincode_deserialized.borrow());
+        });
+    }
+
+    #[test]
+    fn test_refcell_with_struct() {
+        use std::cell::RefCell;
+
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+            Clone,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        struct SimpleData {
+            id: u32,
+            count: u64,
+        }
+
+        type SimpleRefCell = RefCell<SimpleData>;
+
+        proptest!(proptest_cfg(), |(data: SimpleData)| {
+            let value = RefCell::new(data);
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: SimpleRefCell = deserialize(&serialized).unwrap();
+            let bincode_deserialized: SimpleRefCell = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&*deserialized.borrow(), &*bincode_deserialized.borrow());
+        });
+    }
+
+    #[test]
+    fn test_refcell_type_meta_dynamic() {
+        assert!(matches!(
+            <RefCell<String> as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+        proptest!(proptest_cfg(), |(value: u64)| {
+            let value = RefCell::new(value);
+
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &serialized);
+
+            let deserialized: RefCell<u64> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: RefCell<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+
+            let deser = deserialized.borrow();
+            let bincode = bincode_deserialized.borrow();
+            prop_assert_eq!(&*deser, &*bincode);
+        });
+    }
+
+    #[test]
+    fn test_refcell_borrow_error() {
+        let refcell = RefCell::new(42u32);
+
+        // Borrow mutably to cause serialization to fail
+        let _mut_borrow = refcell.borrow_mut();
+
+        let result = serialize(&refcell);
+        assert!(result.is_err());
     }
 
     #[test]
