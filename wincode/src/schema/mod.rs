@@ -418,7 +418,7 @@ mod tests {
             len::{BincodeLen, FixIntLen},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
-            WriteResult, ZeroCopy,
+            UninitBuilder, WriteResult, ZeroCopy,
         },
         bincode::Options,
         core::{marker::PhantomData, ptr},
@@ -1085,9 +1085,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_builder_handles_partial_drop() {
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             a: DropCounted,
             b: DropCounted,
@@ -1107,8 +1107,8 @@ mod tests {
             });
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         // Same test, but with a tuple struct.
         struct TestTuple(DropCounted, DropCounted);
 
@@ -1127,17 +1127,17 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_nested_builder_handles_partial_drop() {
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_nested_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Inner {
             a: DropCounted,
             b: DropCounted,
             c: DropCounted,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             inner: Inner,
             b: DropCounted,
@@ -1167,17 +1167,19 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_nested_fully_initialized() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_nested_fully_initialized() {
+        #[derive(
+            SchemaWrite, SchemaRead, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
         struct Inner {
             a: DropCounted,
             b: DropCounted,
             c: DropCounted,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             inner: Inner,
             b: DropCounted,
@@ -1211,9 +1213,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             a: Vec<u8>,
             b: [u8; 32],
@@ -1237,9 +1239,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_container() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_with_container() {
+        #[derive(UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
             a: Vec<u8>,
@@ -1265,16 +1267,15 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_reference() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal)]
+    fn test_uninit_builder_extensions_with_reference() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         struct Test {
             a: Vec<u8>,
             b: Option<String>,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(UninitBuilder, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
         struct TestRef<'a> {
             a: &'a [u8],
             b: Option<&'a str>,
@@ -1295,17 +1296,17 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_mapped_type() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal)]
+    fn test_uninit_builder_with_mapped_type() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         struct Test {
             a: Vec<u8>,
             b: [u8; 32],
             c: u64,
         }
 
-        #[derive(SchemaWrite, SchemaRead)]
-        #[wincode(internal, from = "Test", struct_extensions)]
+        #[derive(UninitBuilder)]
+        #[wincode(internal, from = "Test")]
+        #[allow(unused)]
         struct TestMapped {
             a: containers::Vec<containers::Pod<u8>, BincodeLen>,
             b: containers::Pod<[u8; 32]>,
@@ -1327,9 +1328,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_builder_fully_initialized() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_builder_fully_initialized() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             a: DropCounted,
             b: DropCounted,
@@ -1356,8 +1357,8 @@ mod tests {
             });
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         // Same test, but with a tuple struct.
         struct TestTuple(DropCounted, DropCounted);
 
@@ -1378,6 +1379,46 @@ mod tests {
                 prop_assert_eq!(test, init);
             });
         }
+    }
+
+    #[test]
+    #[cfg(feature = "solana-short-vec")]
+    fn test_uninit_builder_with() {
+        use crate::len::ShortU16;
+
+        #[derive(
+            SchemaWrite,
+            UninitBuilder,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Test {
+            #[wincode(with = "containers::Vec<u8, ShortU16>")]
+            #[serde(with = "solana_short_vec")]
+            foo: Vec<u8>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let bincode_serialized = bincode::serialize(&test).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let bincode_deserialized: Test = bincode::deserialize(&bincode_serialized).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            let mut reader = serialized.as_slice();
+            builder.read_foo(&mut reader)?;
+            builder.finish();
+            let deserialized = unsafe { uninit.assume_init() };
+
+            prop_assert_eq!(&test, &bincode_deserialized);
+            prop_assert_eq!(test, deserialized);
+        });
     }
 
     #[test]

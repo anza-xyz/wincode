@@ -326,7 +326,7 @@
 //! |---|---|---|---|
 //! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
-//! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
+//! |`struct_extensions` (DEPRECATED)|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations. DEPRECATED; Use `#[derive(UninitBuilder)]` instead.|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
 //!
@@ -369,131 +369,6 @@
 //! }
 //!
 //! assert_eq!(&wincode::serialize(&Enum::B).unwrap(), &1u8.to_le_bytes());
-//! # }
-//! ```
-//!
-//! ### `struct_extensions`
-//!
-//! You may have some exotic serialization logic that requires you to implement `SchemaRead` manually
-//! for a type. In these scenarios, you'll likely want to leverage some additional helper methods
-//! to reduce the amount of boilerplate that is typically required when dealing with uninitialized
-//! fields.
-//!
-//! `#[wincode(struct_extensions)]` generates a corresponding uninit builder struct for the type.
-//! The name of the builder struct is the name of the type with `UninitBuilder` appended.
-//! E.g., `Header` -> `HeaderUninitBuilder`.
-//!
-//! The builder has automatic initialization tracking that does bookkeeping of which fields have been initialized.
-//! Calling `write_<field_name>` or `read_<field_name>`, for example, will mark the field as
-//! initialized so that it's properly dropped if the builder is dropped on error or panic.
-//!
-//! The builder struct has the following methods:
-//! - `from_maybe_uninit_mut`
-//!   - Creates a new builder from a mutable `MaybeUninit` reference to the type.
-//! - `into_assume_init_mut`
-//!   - Assumes the builder is fully initialized, drops it, and returns a mutable reference to the inner type.
-//! - `finish`
-//!   - Forgets the builder, disabling the drop logic.
-//! - `is_init`
-//!   - Checks if the builder is fully initialized by checking if all field initialization bits are set.
-//!
-//! For each field, the builder struct provides the following methods:
-//! - `uninit_<field_name>_mut`
-//!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
-//! - `read_<field_name>`
-//!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
-//! - `write_<field_name>`
-//!   - Writes a `MaybeUninit`'s `<field_name>` slot with the given value.
-//! - `init_<field_name>_with`
-//!   - Initializes the `<field_name>` slot with a given initializer function.
-//! - `assume_init_<field_name>`
-//!   - Marks the `<field_name>` slot as initialized.
-//!
-//! #### Safety
-//!
-//! Correct code will call `finish` or `into_assume_init_mut` once all fields have been initialized.
-//! Failing to do so will result in the initialized fields being dropped when the builder is dropped, which
-//! is undefined behavior if the `MaybeUninit` is later assumed to be initialized (e.g., on successful deserialization).
-//!
-//! #### Example
-//!
-//! ```
-//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config};
-//! # use serde::{Serialize, Deserialize};
-//! # use core::mem::MaybeUninit;
-//! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaRead, SchemaWrite)]
-//! #[wincode(struct_extensions)]
-//! struct Header {
-//!     num_required_signatures: u8,
-//!     num_signed_accounts: u8,
-//!     num_unsigned_accounts: u8,
-//! }
-//!
-//! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaRead, SchemaWrite)]
-//! #[wincode(struct_extensions)]
-//! struct Payload {
-//!     header: Header,
-//!     data: Vec<u8>,
-//! }
-//!
-//! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaWrite)]
-//! struct Message {
-//!     payload: Payload,
-//! }
-//!
-//! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
-//! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
-//!     type Dst = Message;
-//!
-//!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-//!         // Normally we have to do a big ugly cast like this
-//!         // to get a mutable `MaybeUninit<Payload>`.
-//!         let payload = unsafe {
-//!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
-//!         };
-//!         // Note that the order matters here. Values are dropped in reverse
-//!         // declaration order, and we need to ensure `header_builder` is dropped
-//!         // before `payload_builder` in the event of an error or panic.
-//!         let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
-//!         unsafe {
-//!             // payload.header will be marked as initialized if the function succeeds.
-//!             payload_builder.init_header_with(|header| {
-//!                 // Read directly into the projected MaybeUninit<Header> slot.
-//!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                 header_builder.read_num_required_signatures(&mut reader)?;
-//!                 header_builder.read_num_signed_accounts(&mut reader)?;
-//!                 header_builder.read_num_unsigned_accounts(&mut reader)?;
-//!                 header_builder.finish();
-//!                 Ok(())
-//!             })?;
-//!         }
-//!         // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
-//!         // rather than reading all the fields individually.
-//!         payload_builder.read_data(reader)?;
-//!         // Message is fully initialized, so we forget the builders
-//!         // to avoid dropping the initialized fields.
-//!         payload_builder.finish();
-//!         Ok(())
-//!     }
-//! }
-//!
-//! let msg = Message {
-//!     payload: Payload {
-//!         header: Header {
-//!             num_required_signatures: 1,
-//!             num_signed_accounts: 2,
-//!             num_unsigned_accounts: 3
-//!         },
-//!         data: vec![4, 5, 6, 7, 8, 9]
-//!     }
-//! };
-//! let serialized = wincode::serialize(&msg).unwrap();
-//! let deserialized = wincode::deserialize(&serialized).unwrap();
-//! assert_eq!(msg, deserialized);
 //! # }
 //! ```
 //!
@@ -542,6 +417,130 @@
 //! }
 //!
 //! assert_eq!(&wincode::serialize(&Enum::A).unwrap(), &5u32.to_le_bytes());
+//! # }
+//! ```
+//!
+//! # UninitBuilder
+//!
+//! You may have some exotic serialization logic that requires you to implement `SchemaRead` manually
+//! for a type. In these scenarios, you'll likely want to leverage some additional helper methods
+//! to reduce the amount of boilerplate that is typically required when dealing with uninitialized
+//! fields.
+//!
+//! `#[derive(UninitBuilder)]` generates a corresponding uninit builder struct for the type.
+//! The name of the builder struct is the name of the type with `UninitBuilder` appended.
+//! E.g., `Header` -> `HeaderUninitBuilder`.
+//!
+//! The builder has automatic initialization tracking that does bookkeeping of which fields have been initialized.
+//! Calling `write_<field_name>` or `read_<field_name>`, for example, will mark the field as
+//! initialized so that it's properly dropped if the builder is dropped on error or panic.
+//!
+//! The builder struct has the following methods:
+//! - `from_maybe_uninit_mut`
+//!   - Creates a new builder from a mutable `MaybeUninit` reference to the type.
+//! - `into_assume_init_mut`
+//!   - Assumes the builder is fully initialized, drops it, and returns a mutable reference to the inner type.
+//! - `finish`
+//!   - Forgets the builder, disabling the drop logic.
+//! - `is_init`
+//!   - Checks if the builder is fully initialized by checking if all field initialization bits are set.
+//!
+//! For each field, the builder struct provides the following methods:
+//! - `uninit_<field_name>_mut`
+//!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
+//! - `read_<field_name>`
+//!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
+//! - `write_<field_name>`
+//!   - Writes a `MaybeUninit`'s `<field_name>` slot with the given value.
+//! - `init_<field_name>_with`
+//!   - Initializes the `<field_name>` slot with a given initializer function.
+//! - `assume_init_<field_name>`
+//!   - Marks the `<field_name>` slot as initialized.
+//!
+//! #### Safety
+//!
+//! Correct code will call `finish` or `into_assume_init_mut` once all fields have been initialized.
+//! Failing to do so will result in the initialized fields being dropped when the builder is dropped, which
+//! is undefined behavior if the `MaybeUninit` is later assumed to be initialized (e.g., on successful deserialization).
+//!
+//! #### Example
+//!
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config, UninitBuilder};
+//! # use serde::{Serialize, Deserialize};
+//! # use core::mem::MaybeUninit;
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaRead, SchemaWrite, UninitBuilder)]
+//! struct Header {
+//!     num_required_signatures: u8,
+//!     num_signed_accounts: u8,
+//!     num_unsigned_accounts: u8,
+//! }
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaRead, SchemaWrite, UninitBuilder)]
+//! struct Payload {
+//!     header: Header,
+//!     data: Vec<u8>,
+//! }
+//!
+//! # #[derive(Debug, PartialEq, Eq)]
+//! #[derive(SchemaWrite, UninitBuilder)]
+//! struct Message {
+//!     payload: Payload,
+//! }
+//!
+//! // Assume for some reason we have to manually implement `SchemaRead` for `Message`.
+//! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
+//!     type Dst = Message;
+//!
+//!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!         let mut msg_builder = MessageUninitBuilder::<C>::from_maybe_uninit_mut(dst);
+//!         unsafe {
+//!             msg_builder.init_payload_with(|payload| {
+//!                 // Note that the order matters here. Values are dropped in reverse
+//!                 // declaration order, and we need to ensure `header_builder` is dropped
+//!                 // before `payload_builder` in the event of an error or panic.
+//!                 let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!                 // payload.header will be marked as initialized if the function succeeds.
+//!                 payload_builder.init_header_with(|header| {
+//!                     // Read directly into the projected MaybeUninit<Header> slot.
+//!                     let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
+//!                     header_builder.read_num_required_signatures(&mut reader)?;
+//!                     header_builder.read_num_signed_accounts(&mut reader)?;
+//!                     header_builder.read_num_unsigned_accounts(&mut reader)?;
+//!                     header_builder.finish();
+//!                     Ok(())
+//!                 })?;
+//!                 // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
+//!                 // rather than reading all the fields individually.
+//!                 payload_builder.read_data(&mut reader)?;
+//!                 // Payload is fully initialized, so we forget the builder
+//!                 // to avoid dropping the initialized fields.
+//!                 payload_builder.finish();
+//!                 Ok(())
+//!             })?;
+//!         }
+//!         // Message is fully initialized.
+//!         msg_builder.finish();
+//!         Ok(())
+//!     }
+//! }
+//!
+//! let msg = Message {
+//!     payload: Payload {
+//!         header: Header {
+//!             num_required_signatures: 1,
+//!             num_signed_accounts: 2,
+//!             num_unsigned_accounts: 3
+//!         },
+//!         data: vec![4, 5, 6, 7, 8, 9]
+//!     }
+//! };
+//! let serialized = wincode::serialize(&msg).unwrap();
+//! let deserialized = wincode::deserialize(&serialized).unwrap();
+//! assert_eq!(msg, deserialized);
 //! # }
 //! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]
