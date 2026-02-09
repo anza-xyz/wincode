@@ -552,10 +552,7 @@ pub mod short_vec {
     mod tests {
         use {
             super::*,
-            crate::{
-                containers::{self, Pod},
-                proptest_config::proptest_cfg,
-            },
+            crate::{containers, proptest_config::proptest_cfg},
             alloc::vec::Vec,
             proptest::prelude::*,
             solana_short_vec::ShortU16,
@@ -578,10 +575,10 @@ pub mod short_vec {
         #[wincode(internal)]
         struct ShortVecStruct {
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<u8>, ShortU16>")]
+            #[wincode(with = "containers::Vec<u8, ShortU16>")]
             bytes: Vec<u8>,
             #[serde(with = "solana_short_vec")]
-            #[wincode(with = "containers::Vec<Pod<[u8; 32]>, ShortU16>")]
+            #[wincode(with = "containers::Vec<[u8; 32], ShortU16>")]
             ar: Vec<[u8; 32]>,
         }
 

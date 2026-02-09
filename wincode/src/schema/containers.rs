@@ -1,6 +1,6 @@
 //! This module provides specialized implementations of standard library collection types that
 //! provide control over the length encoding (see [`SeqLen`](crate::len::SeqLen)), as well
-//! as special case opt-in raw-copy overrides (see [`Pod`]).
+//! as special case opt-in raw-copy overrides (see [`pod_wrapper!`]).
 //!
 //! # Examples
 //! Raw byte vec with solana short vec length encoding:
@@ -58,7 +58,7 @@
 //! ```
 use {
     crate::{
-        config::{ConfigCore, ZeroCopy},
+        config::ConfigCore,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
@@ -126,32 +126,23 @@ pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
-/// Indicates that the type is an element of a sequence, composable with [`containers`](self).
+/// Creates a wrapper type for a type that is represented by raw bytes and does not have any invalid
+/// bit patterns.
 ///
-/// Prefer [`Pod`] for types representable as raw bytes.
-#[deprecated(
-    since = "0.2.0",
-    note = "Elem is no longer needed for container usage. Use `T` directly instead."
-)]
-pub struct Elem<T>(PhantomData<T>);
-
-/// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
-///
-/// By opting into `Pod`, you are telling wincode that it can serialize and deserialize a type
-/// with a single memcpy -- it wont pay attention to things like struct layout, endianness, or anything
-/// else that would require validity or bit pattern checks. This is a very strong claim to make,
-/// so be sure that your type adheres to those requirements.
+/// By using `pod_wrapper!`, you are telling wincode that it can serialize and deserialize a type
+/// with a single memcpy -- it wont pay attention to things like struct layout, endianness, or
+/// anything else that would require validity or bit pattern checks. This is a very strong claim to
+/// make, so be sure that your type adheres to those requirements.
 ///
 /// Composable with sequence [`containers`](self) or compound types (structs, tuples) for
 /// an optimized read/write implementation.
-///
 ///
 /// This can be useful outside of sequences as well, for example on newtype structs
 /// containing byte arrays with `#[repr(transparent)]`.
 ///
 /// ---
-/// 💡 **Note:** as of `wincode` `0.2.0`, `Pod` is no longer needed for types that wincode can determine
-/// are "Pod-safe".
+/// 💡 **Note:** as of `wincode` `0.2.0`, `pod_wrapper!` is no longer needed for types that wincode
+/// can determine are "memcpy-safe".
 ///
 /// This includes:
 /// - [`u8`]
@@ -163,26 +154,27 @@ pub struct Elem<T>(PhantomData<T>);
 /// Similarly, using built-in std collections like `Vec<T>` or `Box<[T]>` where `T` is one of the
 /// above will also be automatically optimized.
 ///
-/// You'll really only need to reach for [`Pod`] when dealing with foreign types for which you cannot
-/// derive `SchemaWrite` or `SchemaRead`. Or you're in a controlled scenario where you explicitly
-/// want to avoid endianness or layout checks.
+/// You'll really only need to reach for [`pod_wrapper!`] when dealing with foreign types for which
+/// you cannot derive `SchemaWrite` or `SchemaRead`. Or you're in a controlled scenario where you
+/// explicitly want to avoid endianness or layout checks.
 ///
 /// # Safety
 ///
 /// - The type must allow any bit pattern (e.g., no `bool`s, no `char`s, etc.)
-/// - If used on a compound type like a struct, all fields must be also be `Pod`, its
-///   layout must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`), and the struct
-///   must not have any padding.
+/// - If used on a compound type like a struct, all fields must be also be memcpy-able, its layout
+///   must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`), and the struct must not have
+///   any padding.
 /// - Must not contain references or pointers (includes types like `Vec` or `Box`).
-///     - Note, you may use `Pod` *inside* types like `Vec` or `Box`, e.g., `Vec<Pod<T>>` or `Box<[Pod<T>]>`,
-///       but specifying `Pod` on the outer type is invalid.
+///     - Note, you may use `pod_wrapper!` created types *inside* types like `Vec` or `Box`, e.g.,
+///       `Vec<PodT>` or `Box<[PodT]>`, but using `pod_wrapper!` on the outer type is invalid.
 ///
 /// # Examples
 ///
-/// A repr-transparent newtype struct containing a byte array where you cannot derive `SchemaWrite` or `SchemaRead`:
+/// A repr-transparent newtype struct containing a byte array where you cannot derive `SchemaWrite`
+/// or `SchemaRead`:
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
-/// # use wincode::{containers::{self, Pod}};
+/// # use wincode::containers;
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
@@ -190,9 +182,13 @@ pub struct Elem<T>(PhantomData<T>);
 /// #[repr(transparent)]
 /// struct Address([u8; 32]);
 ///
+/// wincode::pod_wrapper! {
+///     unsafe struct PodAddress(Address);
+/// }
+///
 /// #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead)]
 /// struct MyStruct {
-///     #[wincode(with = "Pod<_>")]
+///     #[wincode(with = "PodAddress")]
 ///     address: Address
 /// }
 ///
@@ -204,97 +200,57 @@ pub struct Elem<T>(PhantomData<T>);
 /// assert_eq!(wincode_bytes, bincode_bytes);
 /// # }
 /// ```
-pub struct Pod<T: Copy + 'static>(PhantomData<T>);
+#[macro_export]
+macro_rules! pod_wrapper {
+    ($(unsafe struct $name:ident($type:ty);)*) => {$(
+        struct $name where $type: Copy + 'static;
 
-// SAFETY:
-// - By using `Pod`, user asserts that the type is zero-copy, given the contract of Pod:
-//   - The type's in‑memory representation is exactly its serialized bytes.
-//   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
-//   - Does not contain references or pointers.
-unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
+        // SAFETY:
+        // - By using `pod_wrapper`, user asserts that the type is zero-copy, given the contract of
+        //   pod_wrapper:
+        //   - The type's in‑memory representation is exactly its serialized bytes.
+        //   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
+        //   - Does not contain references or pointers.
+        unsafe impl<C: $crate::config::ConfigCore> $crate::config::ZeroCopy<C> for $name {}
 
-unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
-where
-    T: Copy + 'static,
-{
-    type Src = T;
+        unsafe impl<C: $crate::config::ConfigCore> $crate::SchemaWrite<C> for $name {
+            type Src = $type;
 
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: true,
-    };
+            const TYPE_META: $crate::TypeMeta = $crate::TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: true,
+            };
 
-    #[inline]
-    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
-        Ok(size_of::<T>())
-    }
+            #[inline]
+            fn size_of(_: &$type) -> $crate::WriteResult<usize> {
+                Ok(size_of::<$type>())
+            }
 
-    #[inline]
-    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(writer.write_t(src)?) }
-    }
+            #[inline]
+            fn write(mut writer: impl $crate::io::Writer, src: &$type) -> $crate::WriteResult<()> {
+                unsafe {
+                    Ok(writer.write_t(src)?)
+                }
+            }
+        }
+
+        unsafe impl<'de, C: $crate::config::ConfigCore> $crate::SchemaRead<'de, C> for $name {
+            type Dst = $type;
+
+            const TYPE_META: $crate::TypeMeta = $crate::TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: true,
+            };
+
+            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<$type>) -> $crate::ReadResult<()> {
+                unsafe {
+                    Ok(reader.copy_into_t(dst)?)
+                }
+            }
+        }
+    )*}
 }
-
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
-where
-    T: Copy + 'static,
-{
-    type Dst = T;
-
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: true,
-    };
-
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(reader.copy_into_t(dst)?) }
-    }
-}
-
-// Provide `SchemaWrite` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
-where
-    T: SchemaWrite<C>,
-{
-    type Src = T::Src;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        T::size_of(src)
-    }
-
-    #[inline]
-    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        T::write(writer, src)
-    }
-}
-
-// Provide `SchemaRead` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
-where
-    T: SchemaRead<'de, C>,
-{
-    type Dst = T::Dst;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        T::read(reader, dst)
-    }
-}
+pub use pod_wrapper;
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
