@@ -383,6 +383,9 @@
 //! The name of the builder struct is the name of the type with `UninitBuilder` appended.
 //! E.g., `Header` -> `HeaderUninitBuilder`.
 //!
+//! Note that `struct_extensions` can be used as a proc-macro attribute without the derive macro
+//! for cases where the struct itself needs a custom `SchemaRead` implementation.
+//!
 //! The builder has automatic initialization tracking that does bookkeeping of which fields have been initialized.
 //! Calling `write_<field_name>` or `read_<field_name>`, for example, will mark the field as
 //! initialized so that it's properly dropped if the builder is dropped on error or panic.
@@ -419,7 +422,7 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config};
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config, struct_extensions};
 //! # use serde::{Serialize, Deserialize};
 //! # use core::mem::MaybeUninit;
 //! # #[derive(Debug, PartialEq, Eq)]
@@ -441,6 +444,7 @@
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
 //! #[derive(SchemaWrite)]
+//! #[struct_extensions]
 //! struct Message {
 //!     payload: Payload,
 //! }
@@ -450,33 +454,34 @@
 //!     type Dst = Message;
 //!
 //!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-//!         // Normally we have to do a big ugly cast like this
-//!         // to get a mutable `MaybeUninit<Payload>`.
-//!         let payload = unsafe {
-//!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
-//!         };
-//!         // Note that the order matters here. Values are dropped in reverse
-//!         // declaration order, and we need to ensure `header_builder` is dropped
-//!         // before `payload_builder` in the event of an error or panic.
-//!         let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!         let mut msg_builder = MessageUninitBuilder::<C>::from_maybe_uninit_mut(dst);
 //!         unsafe {
-//!             // payload.header will be marked as initialized if the function succeeds.
-//!             payload_builder.init_header_with(|header| {
-//!                 // Read directly into the projected MaybeUninit<Header> slot.
-//!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                 header_builder.read_num_required_signatures(&mut reader)?;
-//!                 header_builder.read_num_signed_accounts(&mut reader)?;
-//!                 header_builder.read_num_unsigned_accounts(&mut reader)?;
-//!                 header_builder.finish();
+//!             msg_builder.init_payload_with(|payload| {
+//!                 // Note that the order matters here. Values are dropped in reverse
+//!                 // declaration order, and we need to ensure `header_builder` is dropped
+//!                 // before `payload_builder` in the event of an error or panic.
+//!                 let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!                 // payload.header will be marked as initialized if the function succeeds.
+//!                 payload_builder.init_header_with(|header| {
+//!                     // Read directly into the projected MaybeUninit<Header> slot.
+//!                     let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
+//!                     header_builder.read_num_required_signatures(&mut reader)?;
+//!                     header_builder.read_num_signed_accounts(&mut reader)?;
+//!                     header_builder.read_num_unsigned_accounts(&mut reader)?;
+//!                     header_builder.finish();
+//!                     Ok(())
+//!                 })?;
+//!                 // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
+//!                 // rather than reading all the fields individually.
+//!                 payload_builder.read_data(&mut reader)?;
+//!                 // Payload is fully initialized, so we forget the builder
+//!                 // to avoid dropping the initialized fields.
+//!                 payload_builder.finish();
 //!                 Ok(())
 //!             })?;
 //!         }
-//!         // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
-//!         // rather than reading all the fields individually.
-//!         payload_builder.read_data(reader)?;
-//!         // Message is fully initialized, so we forget the builders
-//!         // to avoid dropping the initialized fields.
-//!         payload_builder.finish();
+//!         // Message is fully initialized.
+//!         msg_builder.finish();
 //!         Ok(())
 //!     }
 //! }

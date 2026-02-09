@@ -439,6 +439,7 @@ mod tests {
             sync::Arc,
             time::{Duration, SystemTime, UNIX_EPOCH},
         },
+        wincode_derive::struct_extensions,
     };
 
     #[cfg(target_endian = "little")]
@@ -1378,6 +1379,44 @@ mod tests {
                 prop_assert_eq!(test, init);
             });
         }
+    }
+
+    #[test]
+    fn test_struct_extensions_proc_macro() {
+        #[derive(
+            SchemaWrite,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        #[struct_extensions(internal)]
+        struct Test {
+            a: u8,
+            b: u32,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let bincode_serialized = bincode::serialize(&test).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let bincode_deserialized: Test = bincode::deserialize(&bincode_serialized).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            let mut reader = serialized.as_slice();
+            builder
+                .read_a(&mut reader)?
+                .read_b(&mut reader)?;
+            builder.finish();
+            let deserialized = unsafe { uninit.assume_init() };
+
+            prop_assert_eq!(&test, &bincode_deserialized);
+            prop_assert_eq!(test, deserialized);
+        });
     }
 
     #[test]
