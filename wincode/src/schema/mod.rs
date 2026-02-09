@@ -3688,7 +3688,7 @@ mod tests {
             let serialized = serialize(&ranges).unwrap();
             let bincode_serialized = bincode::serialize(&ranges).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             let deserialized: Vec<Range<u64>> = deserialize(&serialized).unwrap();
             let bincode_deserialized: Vec<Range<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(deserialized, bincode_deserialized);
@@ -3701,7 +3701,7 @@ mod tests {
             let serialized = serialize(&ranges).unwrap();
             let bincode_serialized = bincode::serialize(&ranges).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             let deserialized: Vec<RangeInclusive<u64>> = deserialize(&serialized).unwrap();
             let bincode_deserialized: Vec<RangeInclusive<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(deserialized, bincode_deserialized);
@@ -3714,7 +3714,7 @@ mod tests {
             let serialized = serialize(&bounds).unwrap();
             let bincode_serialized = bincode::serialize(&bounds).unwrap();
             prop_assert_eq!(&serialized, &bincode_serialized);
-            
+
             let deserialized: Vec<Bound<u64>> = deserialize(&serialized).unwrap();
             let bincode_deserialized: Vec<Bound<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
             prop_assert_eq!(deserialized, bincode_deserialized);

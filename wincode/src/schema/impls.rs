@@ -1947,7 +1947,7 @@ where
                 let start = Idx::get(&mut reader)?;
                 let end = Idx::get(&mut reader)?;
                 dst.write(Range { start, end });
-            },
+            }
             TypeMeta::Dynamic => {
                 let start = Idx::get(&mut reader)?;
                 let end = Idx::get(&mut reader)?;
@@ -2030,12 +2030,12 @@ where
                 let mut reader = unsafe { reader.as_trusted_for(size) }?;
                 let start = Idx::get(&mut reader)?;
                 let end = Idx::get(&mut reader)?;
-                dst.write(RangeInclusive::new(start, end ));
-            },
+                dst.write(RangeInclusive::new(start, end));
+            }
             TypeMeta::Dynamic => {
                 let start = Idx::get(&mut reader)?;
                 let end = Idx::get(&mut reader)?;
-                dst.write(RangeInclusive::new(start, end ));
+                dst.write(RangeInclusive::new(start, end));
             }
         };
         Ok(())
