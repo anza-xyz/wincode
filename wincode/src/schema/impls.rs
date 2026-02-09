@@ -1417,7 +1417,7 @@ mod zero_copy {
                 // In this crate, `zero_copy: true` means:
                 // - The type's in‑memory representation is exactly its serialized bytes.
                 // - It can be safely initialized by memcpy (no validation, no endianness/layout work).
-                // - Containers may bulk-copy elements (e.g., Vec/BoxedSlice memcpy fast path for Pod).
+                // - Containers may bulk-copy elements (e.g., Vec/BoxedSlice memcpy fast path).
                 // - It can be deserialized by reference to some underlying source bytes.
                 //
                 // A _reference_ to a zero-copy type does not meet that contract:

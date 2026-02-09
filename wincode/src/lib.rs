@@ -105,7 +105,7 @@
 //! `wincode` can solve this with the following:
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{Serialize as _, Deserialize as _, containers::{self, Pod}};
+//! # use wincode::{Serialize as _, Deserialize as _, containers};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! mod foreign_crate {
 //!     // Defined in some foreign crate...
@@ -129,11 +129,16 @@
 //!     }
 //! }
 //!
+//! wincode::pod_wrapper! {
+//!     unsafe struct PodAddress(foreign_crate::Address);
+//!     unsafe struct PodHash(foreign_crate::Hash);
+//! }
+//!
 //! #[derive(SchemaWrite, SchemaRead)]
 //! #[wincode(from = "foreign_crate::A")]
 //! pub struct MyA {
-//!     addresses: Vec<Pod<foreign_crate::Address>>,
-//!     hash: Pod<foreign_crate::Hash>,
+//!     addresses: Vec<PodAddress>,
+//!     hash: PodHash,
 //! }
 //!
 //! let val = foreign_crate::A {
