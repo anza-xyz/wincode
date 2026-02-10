@@ -559,6 +559,8 @@ pub use serde::*;
 pub mod config;
 #[cfg(test)]
 mod proptest_config;
+#[cfg(feature = "serde")]
+pub mod serde_compat;
 #[cfg(feature = "derive")]
 pub use wincode_derive::*;
 // Include tuple impls.

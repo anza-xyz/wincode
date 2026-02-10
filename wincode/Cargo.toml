@@ -20,8 +20,9 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "warnings"]
 
 [features]
 default = ["std"]
-alloc = []
+alloc = ["serde?/alloc"]
 std = ["alloc", "thiserror/std"]
+serde = ["dep:serde"]
 solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 uuid = ["dep:uuid"]
@@ -29,6 +30,7 @@ uuid-serde-compat = ["uuid"]
 
 [dependencies]
 pastey = "0.2.1"
+serde = { version = "1.0", default-features = false, optional = true }
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 wincode-derive = { path = "../wincode-derive", version = "0.4.2", optional = true }
