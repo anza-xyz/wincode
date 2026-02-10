@@ -163,6 +163,7 @@ pub(crate) fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Re
         let write_uninit_field_ident = format_ident!("write_{ident_string}");
         let assume_init_field_ident = format_ident!("assume_init_{ident_string}");
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
+        let read_with_field_ident = format_ident!("read_{ident_string}_with");
         let lifetimes = ty.lifetimes();
         // We must always extract the `Dst` from the type because `SchemaRead` implementations need
         // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self`
@@ -213,6 +214,23 @@ pub(crate) fn impl_struct_extensions(args: &SchemaArgs, crate_name: &Path) -> Re
                 //   the field is never exposed as initialized.
                 let proj = unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() };
                 <#target_reader_bound as SchemaRead<'de, WincodeConfig>>::read(reader, proj)?;
+                #set_index_bit
+                Ok(self)
+            }
+
+            /// Read a value from the reader into the maybe uninitialized field using the given [`SchemaRead`]
+            /// implementation.
+            #[inline]
+            #vis fn #read_with_field_ident <'de, T>(&mut self, reader: impl Reader<'de>) -> ReadResult<&mut Self>
+            where
+                T: SchemaRead<'de, WincodeConfig, Dst = #ty>
+            {
+                // SAFETY:
+                // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
+                // - We return the field as `&mut MaybeUninit<#target>`, so
+                //   the field is never exposed as initialized.
+                let proj = unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() };
+                <T as SchemaRead<'de, WincodeConfig>>::read(reader, proj)?;
                 #set_index_bit
                 Ok(self)
             }

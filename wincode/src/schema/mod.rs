@@ -1420,6 +1420,34 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "solana-short-vec")]
+    fn test_struct_extensions_read_with() {
+        use crate::len::ShortU16;
+
+        #[derive(
+            Debug, PartialEq, Eq, proptest_derive::Arbitrary, serde::Serialize, serde::Deserialize,
+        )]
+        #[struct_extensions(internal)]
+        struct Test {
+            #[serde(with = "solana_short_vec")]
+            a: Vec<u8>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = bincode::serialize(&test).unwrap();
+            let mut reader = serialized.as_slice();
+
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder.read_a_with::<containers::Vec<u8, ShortU16>>(&mut reader)?;
+            builder.finish();
+            let deserialized = unsafe { uninit.assume_init() };
+
+            prop_assert_eq!(test, deserialized);
+        });
+    }
+
+    #[test]
     fn test_struct_with_reference_equivalence() {
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
