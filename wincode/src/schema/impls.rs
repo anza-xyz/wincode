@@ -708,7 +708,7 @@ where
     const TYPE_META: TypeMeta = match (
         T::TYPE_META,
         E::TYPE_META,
-        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+        <C::TagEncoding as SchemaRead<C>>::TYPE_META,
     ) {
         (
             TypeMeta::Static { size: t_size, .. },
@@ -1040,8 +1040,10 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<u8>(&mut reader)?;
-        let bytes = reader.fill_exact(len)?.to_vec();
-        unsafe { reader.consume_unchecked(len) };
+        let mut bytes: Vec<u8> = Vec::with_capacity(len);
+        reader.copy_into_slice(bytes.spare_capacity_mut())?;
+        // SAFETY: `copy_into_slice` ensures we fill the entire `bytes.spare_capacity_mut()` slice.
+        unsafe { bytes.set_len(len) };
         match String::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);

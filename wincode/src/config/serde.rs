@@ -1,4 +1,6 @@
 //! Configuration-aware serialize / deserialize traits and functions.
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use {
     crate::{
         config::{Config, ConfigCore},
