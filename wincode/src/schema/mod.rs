@@ -406,12 +406,12 @@ where
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects, deprecated)]
+    #![allow(clippy::arithmetic_side_effects)]
 
     use {
         crate::{
             config::{self, Config, Configuration, DefaultConfig},
-            containers::{self, Elem, Pod},
+            containers::{self, Pod},
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
@@ -2225,30 +2225,6 @@ mod tests {
             let bincode_deserialized: char = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized: char = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(val, bincode_deserialized);
-            prop_assert_eq!(val, schema_deserialized);
-        }
-
-        #[test]
-        fn test_elem_compat(val in any::<StructStatic>()) {
-            let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <Elem<StructStatic>>::serialize(&val).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: StructStatic = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: StructStatic = <Elem<StructStatic>>::deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&val, &bincode_deserialized);
-            prop_assert_eq!(val, schema_deserialized);
-        }
-
-        #[test]
-        fn test_elem_vec_compat(val in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
-            let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::serialize(&val).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&val, &bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
         }
 

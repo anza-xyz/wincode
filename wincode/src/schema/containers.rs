@@ -126,15 +126,6 @@ pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
-/// Indicates that the type is an element of a sequence, composable with [`containers`](self).
-///
-/// Prefer [`Pod`] for types representable as raw bytes.
-#[deprecated(
-    since = "0.2.0",
-    note = "Elem is no longer needed for container usage. Use `T` directly instead."
-)]
-pub struct Elem<T>(PhantomData<T>);
-
 /// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
 ///
 /// By opting into `Pod`, you are telling wincode that it can serialize and deserialize a type
@@ -250,49 +241,6 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(reader.copy_into_t(dst)?) }
-    }
-}
-
-// Provide `SchemaWrite` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
-where
-    T: SchemaWrite<C>,
-{
-    type Src = T::Src;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        T::size_of(src)
-    }
-
-    #[inline]
-    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        T::write(writer, src)
-    }
-}
-
-// Provide `SchemaRead` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
-where
-    T: SchemaRead<'de, C>,
-{
-    type Dst = T::Dst;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        T::read(reader, dst)
     }
 }
 
