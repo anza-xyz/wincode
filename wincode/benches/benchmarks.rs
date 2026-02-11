@@ -862,7 +862,12 @@ criterion_group!(
     bench_vec_unit_enum_comparison,
     bench_vec_same_sized_enum_comparison,
     bench_vec_mixed_sized_enum_comparison,
-    bench_short_u16_comparison,
 );
 
+#[cfg(feature = "solana-short-vec")]
+criterion_group!(benches_short_vec, bench_short_u16_comparison);
+#[cfg(feature = "solana-short-vec")]
+criterion_main!(benches, benches_short_vec);
+
+#[cfg(not(feature = "solana-short-vec"))]
 criterion_main!(benches);
