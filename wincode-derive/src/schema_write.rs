@@ -43,7 +43,7 @@ fn impl_struct(
         .filter_map(|(field, ident)| {
             if field.skip.is_none() {
                 let target = field.target_resolved();
-                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, &src.#ident)?; };
+                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer.by_ref(), &src.#ident)?; };
                 size_count_idents.push(ident);
                 Some(write)
             } else {
@@ -114,7 +114,7 @@ fn impl_enum(
                     <#tag_encoding as SchemaWrite<WincodeConfig>>::size_of(&#discriminant)?
                 },
                 quote! {
-                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(&mut writer, &#discriminant)?
+                    <#tag_encoding as SchemaWrite<WincodeConfig>>::write(writer.by_ref(), &#discriminant)?
                 },
             )
         } else {
@@ -123,7 +123,7 @@ fn impl_enum(
                     WincodeConfig::TagEncoding::size_of_from_u32(#discriminant)?
                 },
                 quote! {
-                    WincodeConfig::TagEncoding::write_from_u32(&mut writer, #discriminant)?
+                    WincodeConfig::TagEncoding::write_from_u32(writer.by_ref(), #discriminant)?
                 },
             )
         };
@@ -139,7 +139,7 @@ fn impl_enum(
                         if field.skip.is_none() {
                             let target = field.target_resolved();
                             let write = quote! {
-                                <#target as SchemaWrite<WincodeConfig>>::write(&mut writer, #ident)?;
+                                <#target as SchemaWrite<WincodeConfig>>::write(writer.by_ref(), #ident)?;
                             };
                             pattern_fragments.push(quote! { #ident });
                             size_count_idents.push(ident);

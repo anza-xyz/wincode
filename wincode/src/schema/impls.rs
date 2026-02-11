@@ -573,13 +573,13 @@ where
             let mut reader = unsafe { reader.as_trusted_for(size) }?;
             for i in 0..N {
                 let slot = unsafe { &mut *base.add(i) };
-                T::read(&mut reader, slot)?;
+                T::read(reader.by_ref(), slot)?;
                 guard.inc_len();
             }
         } else {
             for i in 0..N {
                 let slot = unsafe { &mut *base.add(i) };
-                T::read(&mut reader, slot)?;
+                T::read(reader.by_ref(), slot)?;
                 guard.inc_len();
             }
         }
@@ -635,13 +635,13 @@ where
                 // `N` writes of `T` will write `size` bytes, fully initializing the trusted window.
                 let mut writer = unsafe { writer.as_trusted_for(size) }?;
                 for item in value {
-                    T::write(&mut writer, item)?;
+                    T::write(writer.by_ref(), item)?;
                 }
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
                 for item in value {
-                    T::write(&mut writer, item)?;
+                    T::write(writer.by_ref(), item)?;
                 }
             }
         }
@@ -658,7 +658,7 @@ where
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let variant = <u8 as SchemaRead<'de, C>>::get(&mut reader)?;
+        let variant = <u8 as SchemaRead<'de, C>>::get(reader.by_ref())?;
         match variant {
             0 => dst.write(Option::None),
             1 => dst.write(Option::Some(T::get(reader)?)),
@@ -690,7 +690,7 @@ where
     fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Option::Some(value) => {
-                <u8 as SchemaWrite<C>>::write(&mut writer, &1)?;
+                <u8 as SchemaWrite<C>>::write(writer.by_ref(), &1)?;
                 T::write(writer, value)
             }
             Option::None => <u8 as SchemaWrite<C>>::write(writer, &0),
@@ -725,7 +725,7 @@ where
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(&mut reader)?)?;
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader.by_ref())?)?;
         match disc {
             0 => dst.write(Result::Ok(T::get(reader)?)),
             1 => dst.write(Result::Err(E::get(reader)?)),
@@ -777,11 +777,11 @@ where
     fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
             Result::Ok(value) => {
-                C::TagEncoding::write_from_u32(&mut writer, 0)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 0)?;
                 T::write(writer, value)
             }
             Result::Err(error) => {
-                C::TagEncoding::write_from_u32(&mut writer, 1)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
                 E::write(writer, error)
             }
         }
@@ -994,7 +994,7 @@ unsafe impl<C: Config> SchemaWrite<C> for str {
 
     #[inline]
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        C::LengthEncoding::write(&mut writer, src.len())?;
+        C::LengthEncoding::write(writer.by_ref(), src.len())?;
         writer.write(src.as_bytes())?;
         Ok(())
     }
@@ -1021,7 +1021,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = C::LengthEncoding::read(&mut reader)?;
+        let len = C::LengthEncoding::read(reader.by_ref())?;
         let bytes = reader.borrow_exact(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
@@ -1039,7 +1039,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = C::LengthEncoding::read_prealloc_check::<u8>(&mut reader)?;
+        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
         let mut bytes: Vec<u8> = Vec::with_capacity(len);
         reader.copy_into_slice(bytes.spare_capacity_mut())?;
         // SAFETY: `copy_into_slice` ensures we fill the entire `bytes.spare_capacity_mut()` slice.
@@ -1101,18 +1101,18 @@ macro_rules! impl_seq {
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
                     // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
                     let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-                    C::LengthEncoding::write(&mut writer, len)?;
+                    C::LengthEncoding::write(writer.by_ref(), len)?;
                     for (k, v) in src.iter() {
-                        $key::write(&mut writer, k)?;
-                        $value::write(&mut writer, v)?;
+                        $key::write(writer.by_ref(), k)?;
+                        $value::write(writer.by_ref(), v)?;
                     }
                     writer.finish()?;
                     return Ok(());
                 }
-                C::LengthEncoding::write(&mut writer, src.len())?;
+                C::LengthEncoding::write(writer.by_ref(), src.len())?;
                 for (k, v) in src.iter() {
-                    $key::write(&mut writer, k)?;
-                    $value::write(&mut writer, v)?;
+                    $key::write(writer.by_ref(), k)?;
+                    $value::write(writer.by_ref(), v)?;
                 }
                 Ok(())
             }
@@ -1129,7 +1129,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(&mut reader)?;
+                let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader.by_ref())?;
 
                 let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     #[allow(clippy::arithmetic_side_effects)]
@@ -1138,16 +1138,16 @@ macro_rules! impl_seq {
                     let mut reader = unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
                     let mut map = $with_capacity(len);
                     for _ in 0..len {
-                        let k = $key::get(&mut reader)?;
-                        let v = $value::get(&mut reader)?;
+                        let k = $key::get(reader.by_ref())?;
+                        let v = $value::get(reader.by_ref())?;
                         map.insert(k, v);
                     }
                     map
                 } else {
                     let mut map = $with_capacity(len);
                     for _ in 0..len {
-                        let k = $key::get(&mut reader)?;
-                        let v = $value::get(&mut reader)?;
+                        let k = $key::get(reader.by_ref())?;
+                        let v = $value::get(reader.by_ref())?;
                         map.insert(k, v);
                     }
                     map
@@ -1188,7 +1188,7 @@ macro_rules! impl_seq {
 
             #[inline]
             fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(&mut reader)?;
+                let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader.by_ref())?;
 
                 let map = match $key::TYPE_META {
                     TypeMeta::Static { size, .. } => {
@@ -1198,14 +1198,14 @@ macro_rules! impl_seq {
                         let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
                         let mut set = $with_capacity(len);
                         for _ in 0..len {
-                            set.$insert($key::get(&mut reader)?);
+                            set.$insert($key::get(reader.by_ref())?);
                         }
                         set
                     }
                     TypeMeta::Dynamic => {
                         let mut set = $with_capacity(len);
                         for _ in 0..len {
-                            set.$insert($key::get(&mut reader)?);
+                            set.$insert($key::get(reader.by_ref())?);
                         }
                         set
                     }
@@ -1506,7 +1506,7 @@ where
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
-        let (len, total_size) = zero_copy::read_slice_len_checked::<C>(&mut reader, size)?;
+        let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader.by_ref(), size)?;
         let bytes = reader.borrow_exact(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -1527,7 +1527,7 @@ where
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
-        let (len, total_size) = zero_copy::read_slice_len_checked::<C>(&mut reader, size)?;
+        let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader.by_ref(), size)?;
         let bytes = reader.borrow_exact_mut(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -1570,7 +1570,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
 
     #[inline]
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        <u64 as SchemaWrite<C>>::write(&mut writer, &src.as_secs())?;
+        <u64 as SchemaWrite<C>>::write(writer.by_ref(), &src.as_secs())?;
         <u32 as SchemaWrite<C>>::write(writer, &src.subsec_nanos())?;
         Ok(())
     }
@@ -1583,7 +1583,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Duration {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let secs = <u64 as SchemaRead<'de, C>>::get(&mut reader)?;
+        let secs = <u64 as SchemaRead<'de, C>>::get(reader.by_ref())?;
         let nanos = <u32 as SchemaRead<'de, C>>::get(reader)?;
         if secs.checked_add(u64::from(nanos) / 1_000_000_000).is_none() {
             return Err(invalid_value("Duration overflow"));
@@ -1731,11 +1731,11 @@ unsafe impl<C: Config> SchemaWrite<C> for IpAddr {
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         match src {
             IpAddr::V4(addr) => {
-                C::TagEncoding::write_from_u32(&mut writer, 0)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 0)?;
                 <Ipv4Addr as SchemaWrite<C>>::write(writer, addr)
             }
             IpAddr::V6(addr) => {
-                C::TagEncoding::write_from_u32(&mut writer, 1)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
                 <Ipv6Addr as SchemaWrite<C>>::write(writer, addr)
             }
         }
@@ -1747,7 +1747,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(&mut reader)?)?;
+        let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader.by_ref())?)?;
         match tag {
             0 => {
                 let addr = <Ipv4Addr as SchemaRead<'de, C>>::get(reader)?;
@@ -1847,13 +1847,13 @@ where
     #[inline]
     fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
         match value {
-            Bound::Unbounded => C::TagEncoding::write_from_u32(&mut writer, 0),
+            Bound::Unbounded => C::TagEncoding::write_from_u32(writer.by_ref(), 0),
             Bound::Included(value) => {
-                C::TagEncoding::write_from_u32(&mut writer, 1)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
                 T::write(writer, value)
             }
             Bound::Excluded(value) => {
-                C::TagEncoding::write_from_u32(&mut writer, 2)?;
+                C::TagEncoding::write_from_u32(writer.by_ref(), 2)?;
                 T::write(writer, value)
             }
         }
@@ -1868,11 +1868,11 @@ where
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(&mut reader)?)?;
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader.by_ref())?)?;
         match disc {
             0 => dst.write(Bound::Unbounded),
-            1 => dst.write(Bound::Included(T::get(&mut reader)?)),
-            2 => dst.write(Bound::Excluded(T::get(&mut reader)?)),
+            1 => dst.write(Bound::Included(T::get(reader.by_ref())?)),
+            2 => dst.write(Bound::Excluded(T::get(reader.by_ref())?)),
             _ => return Err(invalid_tag_encoding(disc as usize)),
         };
 
@@ -1910,13 +1910,13 @@ where
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
                 let mut writer = unsafe { writer.as_trusted_for(size) }?;
-                Idx::write(&mut writer, &src.start)?;
-                Idx::write(&mut writer, &src.end)?;
+                Idx::write(writer.by_ref(), &src.start)?;
+                Idx::write(writer.by_ref(), &src.end)?;
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
-                Idx::write(&mut writer, &src.start)?;
-                Idx::write(&mut writer, &src.end)?;
+                Idx::write(writer.by_ref(), &src.start)?;
+                Idx::write(writer.by_ref(), &src.end)?;
             }
         }
         Ok(())
@@ -1946,13 +1946,13 @@ where
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
                 let mut reader = unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(&mut reader)?;
-                let end = Idx::get(&mut reader)?;
+                let start = Idx::get(reader.by_ref())?;
+                let end = Idx::get(reader.by_ref())?;
                 dst.write(Range { start, end });
             }
             TypeMeta::Dynamic => {
-                let start = Idx::get(&mut reader)?;
-                let end = Idx::get(&mut reader)?;
+                let start = Idx::get(reader.by_ref())?;
+                let end = Idx::get(reader.by_ref())?;
                 dst.write(Range { start, end });
             }
         };
@@ -1993,14 +1993,14 @@ where
             TypeMeta::Static { size, .. } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let mut writer = &mut unsafe { writer.as_trusted_for(size) }?;
-                Idx::write(&mut writer, src.start())?;
-                Idx::write(&mut writer, src.end())?;
+                let mut writer = unsafe { writer.as_trusted_for(size) }?;
+                Idx::write(writer.by_ref(), src.start())?;
+                Idx::write(writer.by_ref(), src.end())?;
                 writer.finish()?;
             }
             TypeMeta::Dynamic => {
-                Idx::write(&mut writer, src.start())?;
-                Idx::write(&mut writer, src.end())?;
+                Idx::write(writer.by_ref(), src.start())?;
+                Idx::write(writer.by_ref(), src.end())?;
             }
         }
         Ok(())
@@ -2030,13 +2030,13 @@ where
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
                 // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
                 let mut reader = unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(&mut reader)?;
-                let end = Idx::get(&mut reader)?;
+                let start = Idx::get(reader.by_ref())?;
+                let end = Idx::get(reader.by_ref())?;
                 dst.write(RangeInclusive::new(start, end));
             }
             TypeMeta::Dynamic => {
-                let start = Idx::get(&mut reader)?;
-                let end = Idx::get(&mut reader)?;
+                let start = Idx::get(reader.by_ref())?;
+                let end = Idx::get(reader.by_ref())?;
                 dst.write(RangeInclusive::new(start, end));
             }
         };

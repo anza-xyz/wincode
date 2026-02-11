@@ -507,15 +507,15 @@
 //!                 payload_builder.init_header_with(|header| {
 //!                     // Read directly into the projected MaybeUninit<Header> slot.
 //!                     let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                     header_builder.read_num_required_signatures(&mut reader)?;
-//!                     header_builder.read_num_signed_accounts(&mut reader)?;
-//!                     header_builder.read_num_unsigned_accounts(&mut reader)?;
+//!                     header_builder.read_num_required_signatures(reader.by_ref())?;
+//!                     header_builder.read_num_signed_accounts(reader.by_ref())?;
+//!                     header_builder.read_num_unsigned_accounts(reader.by_ref())?;
 //!                     header_builder.finish();
 //!                     Ok(())
 //!                 })?;
-//!                 // Alternatively, we could have done `payload_builder.read_header(&mut reader)?;`
+//!                 // Alternatively, we could have done `payload_builder.read_header(reader.by_ref())?;`
 //!                 // rather than reading all the fields individually.
-//!                 payload_builder.read_data(&mut reader)?;
+//!                 payload_builder.read_data(reader.by_ref())?;
 //!                 // Payload is fully initialized, so we forget the builder
 //!                 // to avoid dropping the initialized fields.
 //!                 payload_builder.finish();

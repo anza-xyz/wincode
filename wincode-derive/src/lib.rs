@@ -60,7 +60,7 @@ pub fn derive_schema_read(input: TokenStream) -> TokenStream {
 ///         // Deserializes a `Vec<u8>` into the `payload` slot of `Message` and marks the field
 ///         // as initialized. If the subsequent `read_bytes` call fails, the `payload` field will
 ///         // be dropped.
-///         msg_builder.read_payload(&mut reader)?;
+///         msg_builder.read_payload(reader.by_ref())?;
 ///         msg_builder.read_bytes(reader)?;
 ///         msg_builder.finish();
 ///     }

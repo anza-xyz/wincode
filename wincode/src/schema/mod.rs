@@ -330,17 +330,17 @@ where
         // `Len::write` and len writes of `T::Src` will write `needed` bytes,
         // fully initializing the trusted window.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(&mut writer, src.len())?;
+        Len::write(writer.by_ref(), src.len())?;
         for item in src {
-            T::write(&mut writer, item)?;
+            T::write(writer.by_ref(), item)?;
         }
         writer.finish()?;
         return Ok(());
     }
 
-    Len::write(&mut writer, src.len())?;
+    Len::write(writer.by_ref(), src.len())?;
     for item in src {
-        T::write(&mut writer, item)?;
+        T::write(writer.by_ref(), item)?;
     }
     Ok(())
 }
@@ -380,7 +380,7 @@ where
         // `Len::write` and `writer.write(src)` will write `needed` bytes,
         // fully initializing the trusted window.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(&mut writer, src.len())?;
+        Len::write(writer.by_ref(), src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
         writer.finish()?;
@@ -1101,7 +1101,7 @@ mod tests {
                 let mut test = MaybeUninit::<Test>::uninit();
                 let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
-                builder.read_a(&mut reader)?.read_b(&mut reader)?;
+                builder.read_a(reader.by_ref())?.read_b(reader.by_ref())?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
             });
@@ -1153,9 +1153,9 @@ mod tests {
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(&mut reader)?;
-                        inner_builder.read_b(&mut reader)?;
-                        inner_builder.read_c(&mut reader)?;
+                        inner_builder.read_a(reader.by_ref())?;
+                        inner_builder.read_b(reader.by_ref())?;
+                        inner_builder.read_c(reader.by_ref())?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
@@ -1195,15 +1195,15 @@ mod tests {
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(&mut reader)?;
-                        inner_builder.read_b(&mut reader)?;
-                        inner_builder.read_c(&mut reader)?;
+                        inner_builder.read_a(reader.by_ref())?;
+                        inner_builder.read_b(reader.by_ref())?;
+                        inner_builder.read_c(reader.by_ref())?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
                     })?;
                 }
-                outer_builder.read_b(&mut reader)?;
+                outer_builder.read_b(reader.by_ref())?;
                 prop_assert!(outer_builder.is_init());
                 outer_builder.finish();
                 let init = unsafe { uninit.assume_init() };
@@ -1228,8 +1228,8 @@ mod tests {
             let mut reader = serialized.as_slice();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .read_a(&mut reader)?
-                .read_b(&mut reader)?
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
             builder.finish();
@@ -1255,8 +1255,8 @@ mod tests {
             let mut reader = serialized.as_slice();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .read_a(&mut reader)?
-                .read_b(&mut reader)?
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
             builder.finish();
@@ -1372,9 +1372,9 @@ mod tests {
                 let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_a(&mut reader)?
-                    .read_b(&mut reader)?
-                    .read_c(&mut reader)?;
+                    .read_a(reader.by_ref())?
+                    .read_b(reader.by_ref())?
+                    .read_c(reader.by_ref())?;
                 prop_assert!(builder.is_init());
                 let init = unsafe { builder.into_assume_init_mut() };
                 prop_assert_eq!(&test, init);
@@ -1397,8 +1397,8 @@ mod tests {
                 let mut reader = serialized.as_slice();
                 let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_0(&mut reader)?
-                    .read_1(&mut reader)?;
+                    .read_0(reader.by_ref())?
+                    .read_1(reader.by_ref())?;
                 assert!(builder.is_init());
                 builder.finish();
 
@@ -1439,7 +1439,7 @@ mod tests {
             let mut uninit = MaybeUninit::<Test>::uninit();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             let mut reader = serialized.as_slice();
-            builder.read_foo(&mut reader)?;
+            builder.read_foo(reader.by_ref())?;
             builder.finish();
             let deserialized = unsafe { uninit.assume_init() };
 
@@ -4184,5 +4184,27 @@ mod tests {
             prop_assert_eq!(&deserialized, &bincode_deserialized);
             prop_assert_eq!(value, deserialized);
         });
+    }
+
+    #[test]
+    fn test_recursive_type() {
+        #[derive(
+            SchemaWrite, SchemaRead, PartialEq, Debug, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        pub enum Value {
+            Usize(usize),
+            List(Vec<Value>),
+        }
+
+        let val = Value::List(vec![Value::Usize(0), Value::List(vec![Value::Usize(1)])]);
+        let bincode_serialized = bincode::serialize(&val).unwrap();
+        let serialized = serialize(&val).unwrap();
+        assert_eq!(&bincode_serialized, &serialized);
+
+        let deserialized: Value = deserialize(&serialized).unwrap();
+        let bincode_deserialized: Value = bincode::deserialize(&bincode_serialized).unwrap();
+        assert_eq!(&val, &bincode_deserialized);
+        assert_eq!(val, deserialized);
     }
 }

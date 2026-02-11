@@ -71,7 +71,7 @@ fn impl_struct(
             } else {
                 quote! {
                     <#target as SchemaRead<'de, WincodeConfig>>::read(
-                        &mut reader,
+                        reader.by_ref(),
                         unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
                     )?;
                     #init_count
@@ -201,7 +201,7 @@ fn impl_enum(
                             quote! { let #ident = #val; }
                         } else {
                             quote! {
-                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
+                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader.by_ref())?;
                             }
                         };
                         construct_idents.push(ident);
@@ -255,11 +255,11 @@ fn impl_enum(
 
     let read_discriminant = if let Some(tag_encoding) = tag_encoding_override {
         quote! {
-            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(&mut reader)?;
+            <#tag_encoding as SchemaRead<'de, WincodeConfig>>::get(reader.by_ref())?;
         }
     } else {
         quote! {
-            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(&mut reader)?)?
+            WincodeConfig::TagEncoding::try_into_u32(WincodeConfig::TagEncoding::get(reader.by_ref())?)?
         }
     };
 
