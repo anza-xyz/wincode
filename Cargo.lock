@@ -822,6 +822,7 @@ dependencies = [
  "solana-short-vec",
  "thiserror",
  "uuid",
+ "wincode",
  "wincode-derive",
 ]
 

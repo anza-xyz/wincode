@@ -43,6 +43,7 @@ serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.2.0" }
 criterion = { version = "0.7.0", features = ["html_reports"] }
 uuid = { version = "1.20.0", features = ["serde"] }
+wincode = { path = ".", features = ["derive"] }
 
 [build-dependencies]
 proc-macro2.workspace = true
