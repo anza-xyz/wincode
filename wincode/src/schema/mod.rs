@@ -1239,6 +1239,39 @@ mod tests {
     }
 
     #[test]
+    fn test_uninit_builder_uninit_ref() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut reader = serialized.as_slice();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+
+            unsafe {
+                prop_assert_eq!(builder.uninit_a_ref().assume_init_ref(), &test.a);
+                prop_assert_eq!(builder.uninit_b_ref().assume_init_ref(), &test.b);
+                prop_assert_eq!(builder.uninit_c_ref().assume_init_ref(), &test.c);
+            }
+
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
     #[allow(deprecated)]
     fn test_struct_extensions_sanity() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]

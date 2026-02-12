@@ -159,6 +159,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         let ident = field.struct_member_ident(i);
         let ident_string = field.struct_member_ident_to_string(i);
         let uninit_mut_ident = format_ident!("uninit_{ident_string}_mut");
+        let uninit_ref_ident = format_ident!("uninit_{ident_string}_ref");
         let read_field_ident = format_ident!("read_{ident_string}");
         let write_uninit_field_ident = format_ident!("write_{ident_string}");
         let assume_init_field_ident = format_ident!("assume_init_{ident_string}");
@@ -193,6 +194,16 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                 // - We return the field as `&mut MaybeUninit<#target>`, so
                 //   the field is never exposed as initialized.
                 unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
+            }
+
+            /// Get a reference to the maybe uninitialized field.
+            #[inline]
+            #vis const fn #uninit_ref_ident(&self) -> &MaybeUninit<#field_projection_type> {
+                // SAFETY:
+                // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
+                // - We return the field as `&MaybeUninit<#target>`, so
+                //   the field is never exposed as initialized.
+                unsafe { &*(&raw const (*self.inner.as_ptr()).#ident).cast() }
             }
 
             /// Write a value to the maybe uninitialized field.
