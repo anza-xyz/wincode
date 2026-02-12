@@ -42,13 +42,13 @@ pub struct Configuration<
 }
 
 impl<
-        const ZERO_COPY_ALIGN_CHECK: bool,
-        const PREALLOCATION_SIZE_LIMIT: usize,
-        LengthEncoding,
-        ByteOrder,
-        IntEncoding,
-        TagEncoding,
-    > Clone
+    const ZERO_COPY_ALIGN_CHECK: bool,
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    LengthEncoding,
+    ByteOrder,
+    IntEncoding,
+    TagEncoding,
+> Clone
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
         PREALLOCATION_SIZE_LIMIT,
@@ -64,13 +64,13 @@ impl<
 }
 
 impl<
-        const ZERO_COPY_ALIGN_CHECK: bool,
-        const PREALLOCATION_SIZE_LIMIT: usize,
-        LengthEncoding,
-        ByteOrder,
-        IntEncoding,
-        TagEncoding,
-    > Copy
+    const ZERO_COPY_ALIGN_CHECK: bool,
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    LengthEncoding,
+    ByteOrder,
+    IntEncoding,
+    TagEncoding,
+> Copy
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
         PREALLOCATION_SIZE_LIMIT,
@@ -122,13 +122,13 @@ impl Configuration {
 pub type DefaultConfig = Configuration;
 
 impl<
-        const ZERO_COPY_ALIGN_CHECK: bool,
-        const PREALLOCATION_SIZE_LIMIT: usize,
-        LengthEncoding,
-        ByteOrder,
-        IntEncoding,
-        TagEncoding,
-    >
+    const ZERO_COPY_ALIGN_CHECK: bool,
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    LengthEncoding,
+    ByteOrder,
+    IntEncoding,
+    TagEncoding,
+>
     Configuration<
         ZERO_COPY_ALIGN_CHECK,
         PREALLOCATION_SIZE_LIMIT,
@@ -391,13 +391,13 @@ pub trait ConfigCore: 'static + Sized {
 }
 
 impl<
-        const ZERO_COPY_ALIGN_CHECK: bool,
-        const PREALLOCATION_SIZE_LIMIT: usize,
-        LengthEncoding: 'static,
-        B,
-        I,
-        TagEncoding: 'static,
-    > ConfigCore
+    const ZERO_COPY_ALIGN_CHECK: bool,
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    LengthEncoding: 'static,
+    B,
+    I,
+    TagEncoding: 'static,
+> ConfigCore
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
         PREALLOCATION_SIZE_LIMIT,
@@ -432,14 +432,13 @@ pub trait Config: ConfigCore {
 }
 
 impl<
-        const ZERO_COPY_ALIGN_CHECK: bool,
-        const PREALLOCATION_SIZE_LIMIT: usize,
-        LengthEncoding: 'static,
-        B,
-        I,
-        T,
-    > Config
-    for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I, T>
+    const ZERO_COPY_ALIGN_CHECK: bool,
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    LengthEncoding: 'static,
+    B,
+    I,
+    T,
+> Config for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I, T>
 where
     LengthEncoding: SeqLen<Self>,
     T: TagEncoding<Self>,

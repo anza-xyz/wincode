@@ -1,9 +1,9 @@
 use {
-    crate::common::{get_crate_name, get_src_dst_fully_qualified, SchemaArgs, TypeExt},
-    darling::{ast::Data, Error, FromDeriveInput, Result},
+    crate::common::{SchemaArgs, TypeExt, get_crate_name, get_src_dst_fully_qualified},
+    darling::{Error, FromDeriveInput, Result, ast::Data},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
-    syn::{parse_quote, DeriveInput, GenericParam, LitInt, Path, Type},
+    syn::{DeriveInput, GenericParam, LitInt, Path, Type, parse_quote},
 };
 
 pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Result<TokenStream> {
@@ -45,7 +45,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         _ => {
             return Err(Error::custom(
                 "`UninitBuilder` is only supported for structs with up to 128 fields",
-            ))
+            ));
         }
     };
     let builder_struct_decl = {

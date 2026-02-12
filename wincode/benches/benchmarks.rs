@@ -1,10 +1,10 @@
 use {
-    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, hint::black_box},
     wincode::{
-        config::DefaultConfig, deserialize, serialize, serialize_into, serialized_size, SchemaRead,
-        SchemaWrite,
+        SchemaRead, SchemaWrite, config::DefaultConfig, deserialize, serialize, serialize_into,
+        serialized_size,
     },
 };
 

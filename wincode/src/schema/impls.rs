@@ -7,27 +7,27 @@ use std::{
 };
 use {
     crate::{
+        TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::SliceDropGuard,
         error::{
-            invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
-            invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
-            unaligned_pointer_read, ReadResult, WriteResult,
+            ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
+            invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
+            read_length_encoding_overflow, unaligned_pointer_read,
         },
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
+        schema::{SchemaRead, SchemaWrite, size_of_elem_slice, write_elem_slice},
         tag_encoding::TagEncoding,
-        TypeMeta,
     },
     core::{
         marker::PhantomData,
-        mem::{self, transmute, MaybeUninit},
+        mem::{self, MaybeUninit, transmute},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         num::{
-            NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
-            NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
+            NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
+            NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
         },
         ops::{Bound, Range, RangeInclusive},
         time::Duration,
