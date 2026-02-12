@@ -16,6 +16,8 @@ pub enum ReadError {
         "Unsupported zero-copy operation: reader does not support deserializing zero-copy types"
     )]
     UnsupportedZeroCopy,
+    #[error("requested trusted size exceeds available {0} bytes")]
+    TrustedSizeAvailableLimit(usize),
     #[cfg(feature = "std")]
     #[error(transparent)]
     Io(#[from] std::io::Error),

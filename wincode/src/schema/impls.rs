@@ -15,7 +15,7 @@ use {
             unaligned_pointer_read, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
-        io::{Reader, Writer},
+        io::{ReadError, Reader, Writer},
         len::SeqLen,
         schema::{size_of_elem_slice, write_elem_slice, SchemaRead, SchemaWrite},
         tag_encoding::TagEncoding,
@@ -567,16 +567,23 @@ where
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
         let base = dst.as_mut_ptr();
         let mut guard = SliceDropGuard::<T::Dst>::new(base);
-        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
-            // `N` reads of `T` will consume `size` bytes, fully consuming the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size) }?;
-            for i in 0..N {
-                let slot = unsafe { &mut *base.add(i) };
-                T::read(reader.by_ref(), slot)?;
-                guard.inc_len();
+        'read: {
+            if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+                // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
+                // `N` reads of `T` will consume `size` bytes, fully consuming the trusted window.
+                match unsafe { reader.as_trusted_for(size) } {
+                    Ok(mut reader) => {
+                        for i in 0..N {
+                            let slot = unsafe { &mut *base.add(i) };
+                            T::read(reader.by_ref(), slot)?;
+                            guard.inc_len();
+                        }
+                        break 'read;
+                    }
+                    Err(ReadError::TrustedSizeAvailableLimit(_)) => (),
+                    Err(err) => return Err(err.into()),
+                }
             }
-        } else {
             for i in 0..N {
                 let slot = unsafe { &mut *base.add(i) };
                 T::read(reader.by_ref(), slot)?;
@@ -1941,21 +1948,23 @@ where
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
-                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(reader.by_ref())?;
-                let end = Idx::get(reader.by_ref())?;
-                dst.write(Range { start, end });
-            }
-            TypeMeta::Dynamic => {
-                let start = Idx::get(reader.by_ref())?;
-                let end = Idx::get(reader.by_ref())?;
-                dst.write(Range { start, end });
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+            // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+            match unsafe { reader.as_trusted_for(size) } {
+                Ok(mut reader) => {
+                    let start = Idx::get(reader.by_ref())?;
+                    let end = Idx::get(reader.by_ref())?;
+                    dst.write(Range { start, end });
+                    return Ok(());
+                }
+                Err(ReadError::TrustedSizeAvailableLimit(_)) => (),
+                Err(err) => return Err(err.into()),
             }
         };
+        let start = Idx::get(reader.by_ref())?;
+        let end = Idx::get(reader.by_ref())?;
+        dst.write(Range { start, end });
 
         Ok(())
     }
@@ -2025,21 +2034,24 @@ where
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        match Self::TYPE_META {
-            TypeMeta::Static { size, .. } => {
-                // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
-                // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size) }?;
-                let start = Idx::get(reader.by_ref())?;
-                let end = Idx::get(reader.by_ref())?;
-                dst.write(RangeInclusive::new(start, end));
-            }
-            TypeMeta::Dynamic => {
-                let start = Idx::get(reader.by_ref())?;
-                let end = Idx::get(reader.by_ref())?;
-                dst.write(RangeInclusive::new(start, end));
+        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
+            // SAFETY: `Self::TYPE_META` specifies a static size, which is `static_size_of(Idx) * 2`.
+            // reading `Idx` twice will consume `size` bytes, fully consuming the trusted window.
+            match unsafe { reader.as_trusted_for(size) } {
+                Ok(mut reader) => {
+                    let start = Idx::get(reader.by_ref())?;
+                    let end = Idx::get(reader.by_ref())?;
+                    dst.write(RangeInclusive::new(start, end));
+                    return Ok(());
+                }
+                Err(ReadError::TrustedSizeAvailableLimit(_)) => (),
+                Err(err) => return Err(err.into()),
             }
         };
+        let start = Idx::get(reader.by_ref())?;
+        let end = Idx::get(reader.by_ref())?;
+        dst.write(RangeInclusive::new(start, end));
+
         Ok(())
     }
 }
