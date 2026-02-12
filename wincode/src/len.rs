@@ -414,18 +414,20 @@ pub mod short_vec {
         // bytes. Each byte follows the same pattern until the 3rd byte. The 3rd
         // byte may only have the 2 least-significant bits set, otherwise the encoded
         // value will overflow the u16.
-        match needed {
-            1 => ptr::write(dst, len as u8),
-            2 => {
-                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(1), (len >> 7) as u8);
+        unsafe {
+            match needed {
+                1 => ptr::write(dst, len as u8),
+                2 => {
+                    ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+                    ptr::write(dst.add(1), (len >> 7) as u8);
+                }
+                3 => {
+                    ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
+                    ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
+                    ptr::write(dst.add(2), (len >> 14) as u8);
+                }
+                _ => unreachable!(),
             }
-            3 => {
-                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(2), (len >> 14) as u8);
-            }
-            _ => unreachable!(),
         }
     }
 

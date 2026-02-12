@@ -1,7 +1,7 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
     core::{
-        mem::{self, transmute, MaybeUninit},
+        mem::{self, MaybeUninit, transmute},
         ptr,
         slice::from_raw_parts,
     },
@@ -289,7 +289,7 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
 
     #[inline(always)]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
-        (*self).consume_unchecked(amt)
+        unsafe { (*self).consume_unchecked(amt) }
     }
 
     #[inline(always)]
@@ -299,7 +299,7 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
 
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
-        (*self).as_trusted_for(n_bytes)
+        unsafe { (*self).as_trusted_for(n_bytes) }
     }
 
     #[inline(always)]
@@ -322,12 +322,12 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
 
     #[inline(always)]
     unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
-        (*self).copy_into_t(dst)
+        unsafe { (*self).copy_into_t(dst) }
     }
 
     #[inline(always)]
     unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
-        (*self).copy_into_slice_t(dst)
+        unsafe { (*self).copy_into_slice_t(dst) }
     }
 }
 
@@ -469,7 +469,7 @@ pub trait Writer {
     /// - `T` must be plain ol' data.
     #[inline]
     unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
-        let src = from_raw_parts((src as *const T).cast::<u8>(), size_of_val(src));
+        let src = unsafe { from_raw_parts((src as *const T).cast::<u8>(), size_of_val(src)) };
         self.write(src)?;
         Ok(())
     }
@@ -482,7 +482,7 @@ pub trait Writer {
     #[inline]
     unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
         let len = size_of_val(src);
-        let src = from_raw_parts(src.as_ptr().cast::<u8>(), len);
+        let src = unsafe { from_raw_parts(src.as_ptr().cast::<u8>(), len) };
         self.write(src)?;
         Ok(())
     }
@@ -511,17 +511,17 @@ impl<W: Writer + ?Sized> Writer for &mut W {
 
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        (*self).as_trusted_for(n_bytes)
+        unsafe { (*self).as_trusted_for(n_bytes) }
     }
 
     #[inline(always)]
     unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
-        (*self).write_t(src)
+        unsafe { (*self).write_t(src) }
     }
 
     #[inline(always)]
     unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
-        (*self).write_slice_t(src)
+        unsafe { (*self).write_slice_t(src) }
     }
 }
 

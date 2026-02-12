@@ -79,7 +79,7 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
 
     #[inline]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
-        trusted_slice::consume_unchecked(&mut self.cursor, amt);
+        unsafe { trusted_slice::consume_unchecked(&mut self.cursor, amt) }
     }
 
     #[inline]
@@ -194,7 +194,7 @@ impl<'a> Reader<'a> for TrustedSliceReader<'a, '_> {
 
     #[inline]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
-        trusted_slice::consume_unchecked(&mut self.cursor, amt);
+        unsafe { trusted_slice::consume_unchecked(&mut self.cursor, amt) }
     }
 
     #[inline]
