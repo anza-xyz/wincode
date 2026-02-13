@@ -163,9 +163,7 @@ macro_rules! impl_float {
 
                 #[inline(always)]
                 fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                    let bytes = *reader.fill_array::<{ size_of::<$ty>() }>()?;
-                    // SAFETY: fill_array is guaranteed to consume `size_of::<$ty>()` bytes.
-                    unsafe { reader.consume_unchecked(size_of::<$ty>()) };
+                    let bytes = reader.take_array::<{ size_of::<$ty>() }>()?;
                     let val = match C::ByteOrder::ENDIAN {
                         Endian::Big => <$ty>::from_be_bytes(bytes),
                         Endian::Little => <$ty>::from_le_bytes(bytes),
@@ -272,9 +270,7 @@ macro_rules! impl_byte {
                     mut reader: impl Reader<'de>,
                     dst: &mut MaybeUninit<Self::Dst>,
                 ) -> ReadResult<()> {
-                    let byte = *reader.fill_array::<{ 1 }>()?;
-                    // SAFETY: `fill_array` guarantees we get one byte.
-                    unsafe { reader.consume_unchecked(1) };
+                    let byte = reader.take_array::<{ 1 }>()?;
                     dst.write(byte[0] as $type);
                     Ok(())
                 }
@@ -1669,9 +1665,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv4Addr {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let bytes = *reader.fill_array::<4>()?;
-        // SAFETY: `fill_array` guarantees 4 bytes are available
-        unsafe { reader.consume_unchecked(4) };
+        let bytes = reader.take_array::<4>()?;
         dst.write(Ipv4Addr::from(bytes));
         Ok(())
     }
@@ -1707,9 +1701,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let bytes = *reader.fill_array::<16>()?;
-        // SAFETY: `fill_array` guarantees 16 bytes are available
-        unsafe { reader.consume_unchecked(16) };
+        let bytes = reader.take_array::<16>()?;
         dst.write(Ipv6Addr::from(bytes));
         Ok(())
     }

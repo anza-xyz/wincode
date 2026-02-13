@@ -77,6 +77,16 @@ pub trait Reader<'a> {
         Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
     }
 
+    /// Return exactly `N` bytes as `[u8; N]` and advance by `N`.
+    ///
+    /// Errors if fewer than `N` bytes are available.
+    #[inline]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let arr = *self.fill_array::<N>()?;
+        unsafe { self.consume_unchecked(N) }
+        Ok(arr)
+    }
+
     /// Zero-copy: return a borrowed slice of exactly `len` bytes and advance by `len`.
     ///
     /// The returned slice is tied to `'a`. Prefer [`Reader::fill_exact`] unless you truly need zero-copy.
@@ -275,6 +285,11 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     #[inline(always)]
     fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
         (*self).fill_array()
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        (*self).take_array()
     }
 
     #[inline(always)]

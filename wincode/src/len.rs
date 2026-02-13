@@ -258,13 +258,11 @@ macro_rules! impl_fix_int {
             #[inline(always)]
             #[allow(irrefutable_let_patterns)]
             fn read<'de>(mut reader: impl Reader<'de>) -> ReadResult<usize> {
-                let bytes = reader.fill_array::<{ size_of::<$type>() }>()?;
+                let bytes = reader.take_array::<{ size_of::<$type>() }>()?;
                 let len = match C::ByteOrder::ENDIAN {
-                    Endian::Big => <$type>::from_be_bytes(*bytes),
-                    Endian::Little => <$type>::from_le_bytes(*bytes),
+                    Endian::Big => <$type>::from_be_bytes(bytes),
+                    Endian::Little => <$type>::from_le_bytes(bytes),
                 };
-                // SAFETY: `fill_array` ensures we read exactly `size_of::<$type>()` bytes.
-                unsafe { reader.consume_unchecked(size_of::<$type>()) };
                 let Ok(len) = usize::try_from(len) else {
                     return Err(pointer_sized_decode_error());
                 };

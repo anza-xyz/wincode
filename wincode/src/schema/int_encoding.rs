@@ -80,9 +80,7 @@ macro_rules! impl_fix_int {
 
                 #[inline(always)]
                 fn [<decode_ $ty>] <'de>(mut reader: impl Reader<'de>) -> ReadResult<$ty> {
-                    let bytes = *reader.fill_array::<{ size_of::<$ty>() }>()?;
-                    // SAFETY: fill_array is guaranteed to consume `size_of::<$ty>()` bytes.
-                    unsafe { reader.consume_unchecked(size_of::<$ty>()) };
+                    let bytes = reader.take_array::<{ size_of::<$ty>() }>()?;
 
                     let val = match <$byte_order>::ENDIAN {
                         Endian::Big => <$ty>::from_be_bytes(bytes),
