@@ -9,9 +9,6 @@ manual_let_else = "deny"
 used_underscore_binding = "deny"
 arithmetic_side_effects = "deny"
 
-[workspace.lints.rust]
-warnings = "deny"
-
 [workspace.package]
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 repository = "https://github.com/anza-xyz/wincode"
