@@ -3,8 +3,6 @@ name: Dispatch continuous fuzzing
 on:
   push:
     branches: [master]
-  schedule:
-    - cron: '0 0 * * *'
 
 permissions:                                                                                                                                                                                                                          
     contents: read
@@ -17,16 +15,6 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Skip if recent push
-        if: github.event_name == 'schedule'
-        run: |
-          last_commit=$(git log -1 --format=%ct)
-          now=$(date +%s)
-          diff=$(( now - last_commit ))
-          if [ "$diff" -lt 86400 ]; then
-            echo "Last commit was less than 24h ago, skipping scheduled run"
-            exit 1
-          fi
 
       - uses: dtolnay/rust-toolchain@master
         with:
