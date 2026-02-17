@@ -214,6 +214,48 @@ where
     }
 }
 
+/// Allow using integer primitives directly as [`SeqLen`].
+///
+/// Will use the configuration's integer encoding.
+macro_rules! impl_use_int_primitive {
+    ($($type:ty),+) => {
+        $(
+            unsafe impl<C: ConfigCore> SeqLen<C> for $type {
+                #[inline(always)]
+                #[allow(irrefutable_let_patterns)]
+                fn read<'de>(reader: impl Reader<'de>) -> ReadResult<usize> {
+                    let len = <$type as SchemaRead<C>>::get(reader)?;
+                    let Ok(len) = usize::try_from(len) else {
+                        return Err(pointer_sized_decode_error());
+                    };
+                    Ok(len)
+                }
+
+                #[inline(always)]
+                fn write(writer: impl Writer, len: usize) -> WriteResult<()> {
+                    let Ok(len) = <$type>::try_from(len) else {
+                        return Err(write_length_encoding_overflow(type_name::<$type>()));
+                    };
+                    <$type as SchemaWrite<C>>::write(writer, &len)
+                }
+
+                #[inline(always)]
+                fn write_bytes_needed(len: usize) -> WriteResult<usize> {
+                    if let TypeMeta::Static { size, .. } = <$type as SchemaWrite<C>>::TYPE_META {
+                        return Ok(size);
+                    }
+                    let Ok(len) = <$type>::try_from(len) else {
+                        return Err(write_length_encoding_overflow(type_name::<$type>()));
+                    };
+                    <$type as SchemaWrite<C>>::size_of(&len)
+                }
+            }
+        )+
+    };
+}
+
+impl_use_int_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
 /// Fixed-width integer length encoding.
 ///
 /// Integers respect the configured byte order.

@@ -3823,6 +3823,19 @@ mod tests {
     }
 
     #[test]
+    fn test_custom_primitive_length_encoding() {
+        let c = Configuration::default().with_length_encoding::<u32>();
+
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let serialized = config::serialize(&value, c).unwrap();
+            let deserialized: Vec<u8> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_le_bytes(serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
     fn test_duration_overflow() {
         use core::time::Duration;
 
