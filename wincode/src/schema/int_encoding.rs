@@ -4,10 +4,10 @@
 //! by configuration types to control how integers are serialized.
 use {
     crate::{
+        ReadResult, WriteResult,
         config::{ConfigCore, ZeroCopy},
         error::invalid_tag_encoding,
-        io::{read_size_limit, Reader, Writer},
-        ReadResult, WriteResult,
+        io::{Reader, Writer, read_size_limit},
     },
     pastey::paste,
 };
@@ -514,11 +514,7 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
 
     #[inline]
     fn size_of_u16(val: u16) -> usize {
-        if val <= SINGLE_BYTE_MAX as u16 {
-            1
-        } else {
-            3
-        }
+        if val <= SINGLE_BYTE_MAX as u16 { 1 } else { 3 }
     }
 
     fn decode_u16<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {

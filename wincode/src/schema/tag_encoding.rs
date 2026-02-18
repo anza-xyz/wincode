@@ -1,10 +1,10 @@
 //! Tag encoding configuration.
 use {
     crate::{
-        config::ConfigCore,
-        error::{tag_encoding_overflow, TagEncodingOverflow},
-        io::Writer,
         SchemaRead, SchemaWrite, WriteResult,
+        config::ConfigCore,
+        error::{TagEncodingOverflow, tag_encoding_overflow},
+        io::Writer,
     },
     core::any::type_name,
 };
