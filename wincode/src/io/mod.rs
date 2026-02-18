@@ -8,6 +8,8 @@ use {
     thiserror::Error,
 };
 
+pub mod buf_read;
+
 #[derive(Error, Debug)]
 pub enum ReadError {
     #[error("Attempting to read {0} bytes")]
