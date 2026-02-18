@@ -349,74 +349,56 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let b0 = *reader.peek()?;
-
-        let len = match b0 {
-            0x00..=0x7F => 1,
-            0xC2..=0xDF => 2,
-            0xE0..=0xEF => 3,
-            0xF0..=0xF4 => 4,
-            _ => return Err(invalid_char_lead(b0)),
-        };
-
-        if len == 1 {
-            unsafe { reader.consume_unchecked(1) };
-            dst.write(b0 as char);
-            return Ok(());
-        }
-
-        let buf = reader.fill_exact(len)?;
+        use crate::error::ReadError;
 
         // We re-validate with from_utf8 only on error path to get proper Utf8Error.
-        #[inline]
         #[cold]
-        fn utf8_error(buf: &[u8]) -> crate::error::ReadError {
+        fn utf8_error(buf: &[u8]) -> ReadError {
             invalid_utf8_encoding(core::str::from_utf8(buf).unwrap_err())
         }
-
-        // Manual UTF-8 decoder for 2x speedup by avoiding intermediate str allocation
-        let code_point = match len {
-            2 => {
-                let b1 = buf[1];
+        let b0 = *reader.peek()?;
+        let code_point = match b0 {
+            0x00..=0x7F => {
+                unsafe { reader.consume_unchecked(1) };
+                dst.write(b0 as char);
+                return Ok(());
+            }
+            0xC2..=0xDF => {
+                let [b0, b1] = reader.take_array()?;
                 // Validate continuation byte (must be 10xxxxxx)
                 if (b1 & 0xC0) != 0x80 {
-                    return Err(utf8_error(buf));
+                    return Err(utf8_error(&[b0, b1]));
                 }
                 ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
             }
-            3 => {
-                let b1 = buf[1];
-                let b2 = buf[2];
+            0xE0..=0xEF => {
+                let [b0, b1, b2] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
-                    return Err(utf8_error(buf));
+                    return Err(utf8_error(&[b0, b1, b2]));
                 }
                 // Check for overlong encodings (< U+0800) and surrogates (U+D800..U+DFFF)
                 if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
-                    return Err(utf8_error(buf));
+                    return Err(utf8_error(&[b0, b1, b2]));
                 }
                 ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
             }
-            4 => {
-                let b1 = buf[1];
-                let b2 = buf[2];
-                let b3 = buf[3];
+            0xF0..=0xF4 => {
+                let [b0, b1, b2, b3] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
-                    return Err(utf8_error(buf));
+                    return Err(utf8_error(&[b0, b1, b2, b3]));
                 }
                 if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
-                    return Err(utf8_error(buf));
+                    return Err(utf8_error(&[b0, b1, b2, b3]));
                 }
                 ((b0 & 0x07) as u32) << 18
                     | ((b1 & 0x3F) as u32) << 12
                     | ((b2 & 0x3F) as u32) << 6
                     | ((b3 & 0x3F) as u32)
             }
-            _ => unreachable!(),
+            _ => return Err(invalid_char_lead(b0)),
         };
 
-        let c = char::from_u32(code_point).ok_or_else(|| utf8_error(buf))?;
-
-        unsafe { reader.consume_unchecked(len) };
+        let c = char::from_u32(code_point).ok_or(ReadError::InvalidUtf8Code(code_point))?;
         dst.write(c);
         Ok(())
     }
