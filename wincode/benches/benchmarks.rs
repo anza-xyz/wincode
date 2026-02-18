@@ -1,5 +1,6 @@
 use {
     criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, hint::black_box},
     wincode::{
@@ -94,6 +95,25 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     });
 
     group.finish();
+}
+
+fn bench_char_deserialization(c: &mut Criterion) {
+    c.bench_function("char/wincode/deserialize", |b| {
+        let str: String = rand::prelude::SmallRng::seed_from_u64(0x42)
+            .sample_iter::<char, _>(rand::distr::StandardUniform)
+            .take(10_000)
+            .collect();
+
+        b.iter(|| {
+            let mut bytes = black_box(str.as_bytes());
+            let mut sum: u32 = 0;
+            while !bytes.is_empty() {
+                let ch: char = wincode::deserialize_from(&mut bytes).unwrap();
+                sum = sum.wrapping_add(ch as u32);
+            }
+            black_box(sum);
+        });
+    });
 }
 
 fn bench_vec_comparison(c: &mut Criterion) {
@@ -862,6 +882,7 @@ criterion_group!(
     bench_vec_unit_enum_comparison,
     bench_vec_same_sized_enum_comparison,
     bench_vec_mixed_sized_enum_comparison,
+    bench_char_deserialization,
 );
 
 #[cfg(feature = "solana-short-vec")]
