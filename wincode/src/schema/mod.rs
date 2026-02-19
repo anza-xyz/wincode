@@ -426,7 +426,8 @@ mod tests {
         std::{
             alloc::Layout,
             cell::Cell,
-            collections::{BinaryHeap, VecDeque},
+            collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+            hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
             num::{
@@ -2503,6 +2504,46 @@ mod tests {
             prop_assert_eq!(&set, &bincode_deserialized);
             prop_assert_eq!(set, schema_deserialized);
         }
+
+        #[test]
+        fn test_sequences_with_hasher(data in proptest::collection::hash_map(any::<String>(), any::<HashSet<u32>>(), 0..16)) {
+            #[derive(Default)]
+            struct SumHasher(u64);
+
+            impl BuildHasher for SumHasher {
+                type Hasher = Self;
+                fn build_hasher(&self) -> Self::Hasher {
+                    Self(0)
+                }
+            }
+            impl Hasher for SumHasher {
+                fn finish(&self) -> u64 {
+                    self.0
+                }
+
+                fn write(&mut self, bytes: &[u8]) {
+                    self.0 += bytes.iter().map(|b| *b as u64).sum::<u64>();
+                }
+            }
+
+            type TestMap = HashMap<String, HashSet<u32, SumHasher>, SumHasher>;
+            let test_data: TestMap = data.into_iter().map(|(k, v)| (k, HashSet::from_iter(v.into_iter()))).collect();
+            let wincode_serialized = serialize(&test_data).unwrap();
+            let bincode_serialized = bincode::serialize(&test_data).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: TestMap = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: TestMap = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&test_data, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+
+            type RegularMap = HashMap<String, HashSet<u32>>;
+            let regular_deserialized: RegularMap = deserialize(&wincode_serialized).unwrap();
+            let regular_serialized = serialize(&regular_deserialized).unwrap();
+            let test_deserialized: TestMap = deserialize(&regular_serialized).unwrap();
+            prop_assert_eq!(test_data, test_deserialized);
+        }
+
 
         #[test]
         fn test_btree_map_zero_copy(map in proptest::collection::btree_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {

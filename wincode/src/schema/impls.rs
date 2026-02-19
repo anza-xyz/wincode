@@ -2,7 +2,7 @@
 #[cfg(feature = "std")]
 use std::{
     collections::{HashMap, HashSet},
-    hash::Hash,
+    hash::{BuildHasher, Hash},
     time::{SystemTime, UNIX_EPOCH},
 };
 use {
@@ -1081,17 +1081,20 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
 /// Generally this should only be used on types for which we cannot provide an optimized implementation,
 /// and where the most optimal implementation is simply iterating over the type to write or collecting
 /// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
-macro_rules! impl_seq {
-    ($feature: literal, $target: ident<$key: ident : $($constraint:path)|*, $value: ident>, $with_capacity: expr) => {
+macro_rules! impl_seq_kv {
+    ($feature: literal,
+     $target: ident<$key: ident : $($constraint:path)|*, $value: ident $(, $state:ident : $($state_constraint:path)|* )?>,
+     $with_capacity: expr) => {
         #[cfg(feature = $feature)]
-        unsafe impl<C: Config, $key, $value> SchemaWrite<C> for $target<$key, $value>
+        unsafe impl<C: Config, $key, $value $(, $state)?> SchemaWrite<C> for $target<$key, $value $(, $state)?>
         where
             $key: SchemaWrite<C>,
             $key::Src: Sized,
             $value: SchemaWrite<C>,
-            $value::Src: Sized,
+            $value::Src: Sized
+            $($(, $state: $state_constraint+)*)?
         {
-            type Src = $target<$key::Src, $value::Src>;
+            type Src = $target<$key::Src, $value::Src $(, $state)?>;
 
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
@@ -1141,13 +1144,14 @@ macro_rules! impl_seq {
         }
 
         #[cfg(feature = $feature)]
-        unsafe impl<'de, C: Config, $key, $value> SchemaRead<'de, C> for $target<$key, $value>
+        unsafe impl<'de, C: Config, $key, $value $(, $state)?> SchemaRead<'de, C> for $target<$key, $value $(, $state)?>
         where
             $key: SchemaRead<'de, C>,
             $value: SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*,
+            $(,$key::Dst: $constraint+)*
+            $($(, $state: $state_constraint+)* )?
         {
-            type Dst = $target<$key::Dst, $value::Dst>;
+            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
 
             #[inline]
             fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -1158,7 +1162,7 @@ macro_rules! impl_seq {
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
                     // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
                     let mut reader = unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
-                    let mut map = $with_capacity(len);
+                    let mut map = $with_capacity(len $(, $state::default())?);
                     for _ in 0..len {
                         let k = $key::get(reader.by_ref())?;
                         let v = $value::get(reader.by_ref())?;
@@ -1166,7 +1170,7 @@ macro_rules! impl_seq {
                     }
                     map
                 } else {
-                    let mut map = $with_capacity(len);
+                    let mut map = $with_capacity(len $(, $state::default())?);
                     for _ in 0..len {
                         let k = $key::get(reader.by_ref())?;
                         let v = $value::get(reader.by_ref())?;
@@ -1180,14 +1184,19 @@ macro_rules! impl_seq {
             }
         }
     };
+}
 
-    ($feature: literal, $target: ident <$key: ident : $($constraint:path)|*>, $with_capacity: expr, $insert: ident) => {
+macro_rules! impl_seq_v {
+    ($feature: literal,
+     $target: ident <$key: ident : $($constraint:path)|* $(, $state:ident : $($state_constraint:path)|*)?>,
+     $with_capacity: expr, $insert: ident) => {
         #[cfg(feature = $feature)]
-        unsafe impl<C: Config, $key: SchemaWrite<C>> SchemaWrite<C> for $target<$key>
+        unsafe impl<C: Config, $key: SchemaWrite<C> $(, $state)?> SchemaWrite<C> for $target<$key $(, $state)?>
         where
-            $key::Src: Sized,
+            $key::Src: Sized
+            $($(, $state: $state_constraint+)* )?
         {
-            type Src = $target<$key::Src>;
+            type Src = $target<$key::Src $(, $state)?>;
 
             #[inline]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -1201,12 +1210,13 @@ macro_rules! impl_seq {
         }
 
         #[cfg(feature = $feature)]
-        unsafe impl<'de, C: Config, $key> SchemaRead<'de, C> for $target<$key>
+        unsafe impl<'de, C: Config, $key $(, $state)?> SchemaRead<'de, C> for $target<$key $(, $state)?>
         where
             $key: SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*,
+            $(,$key::Dst: $constraint+)*
+            $($(, $state: $state_constraint+)* )?
         {
-            type Dst = $target<$key::Dst>;
+            type Dst = $target<$key::Dst $(, $state)?>;
 
             #[inline]
             fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -1218,14 +1228,14 @@ macro_rules! impl_seq {
                         // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
                         let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                        let mut set = $with_capacity(len);
+                        let mut set = $with_capacity(len $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
                         }
                         set
                     }
                     TypeMeta::Dynamic => {
-                        let mut set = $with_capacity(len);
+                        let mut set = $with_capacity(len $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
                         }
@@ -1240,11 +1250,11 @@ macro_rules! impl_seq {
     };
 }
 
-impl_seq! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
-impl_seq! { "std", HashMap<K: Hash | Eq, V>, HashMap::with_capacity }
-impl_seq! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
-impl_seq! { "std", HashSet<K: Hash | Eq>, HashSet::with_capacity, insert }
-impl_seq! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
+impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
+impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher }
+impl_seq_v! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
+impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert }
+impl_seq_v! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, C: Config> SchemaWrite<C> for BinaryHeap<T>
