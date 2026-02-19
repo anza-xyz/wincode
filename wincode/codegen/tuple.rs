@@ -116,7 +116,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                         // of the serialized sizes of the members.
                         // Calling `write` on each field will write exactly `size` bytes,
                         // fully initializing the trusted window.
-                        let mut writer = unsafe { writer.as_trusted_for(size) }?;
+                        let mut writer = unsafe { writer.chunk_mut(size) }?;
                         #(#write_impl)*
                         writer.finish()?;
                     } else {
@@ -168,7 +168,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                         // of the serialized sizes of the members.
                         // Calling `read` on each field will consume exactly `size` bytes,
                         // fully consuming the trusted window.
-                        let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                        let mut reader = unsafe { reader.chunk(size) }?;
                         #(#read_impl)*
                     } else {
                         #(#read_impl)*

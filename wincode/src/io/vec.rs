@@ -1,47 +1,9 @@
-use {super::*, alloc::vec::Vec};
-
-/// Trusted writer for `Vec<u8>` that continues appending to the vector's spare capacity.
-///
-/// Generally this should not be constructed directly, but rather by calling [`Writer::as_trusted_for`]
-/// on a [`Vec<u8>`]. This will ensure that the safety invariants are upheld.
-///
-/// # Safety
-///
-/// - This will _not_ grow the vector, and it will not bounds check writes, as it assumes the caller has
-///   already reserved enough capacity. The `inner` Vec must have sufficient capacity for all writes.
-///   It is UB if this is not upheld.
-pub struct TrustedVecWriter<'a> {
-    inner: &'a mut Vec<u8>,
-}
-
-impl<'a> TrustedVecWriter<'a> {
-    const fn new(inner: &'a mut Vec<u8>) -> Self {
-        Self { inner }
-    }
-}
-
-impl Writer for TrustedVecWriter<'_> {
-    type Trusted<'b>
-        = TrustedVecWriter<'b>
-    where
-        Self: 'b;
-
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let spare = self.inner.spare_capacity_mut();
-        // SAFETY: Creator of this writer ensures we have sufficient capacity for all writes.
-        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), spare.as_mut_ptr().cast(), src.len()) };
-        // SAFETY: We just wrote `src.len()` bytes to the vector.
-        unsafe {
-            self.inner
-                .set_len(self.inner.len().unchecked_add(src.len()))
-        };
-        Ok(())
-    }
-
-    unsafe fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        Ok(TrustedVecWriter::new(self.inner))
-    }
-}
+use {
+    super::*,
+    crate::io::slice::{ChunksMut, SliceMutUnchecked},
+    alloc::vec::Vec,
+    core::{mem::MaybeUninit, slice::from_raw_parts_mut},
+};
 
 /// Writer implementation for `Vec<u8>` that appends to the vector. The vector will grow as needed.
 ///
@@ -70,22 +32,57 @@ impl Writer for TrustedVecWriter<'_> {
 /// ```
 ///
 impl Writer for Vec<u8> {
-    type Trusted<'b>
-        = TrustedVecWriter<'b>
-    where
-        Self: 'b;
-
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
         self.extend_from_slice(src);
         Ok(())
     }
 
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        self.reserve(n_bytes);
-        // `TrustedVecWriter` will update the length of the vector as it writes.
-        Ok(TrustedVecWriter::new(self))
+    #[inline(always)]
+    unsafe fn chunks_mut(
+        &mut self,
+        chunk_size: usize,
+        n_chunks: usize,
+    ) -> WriteResult<impl Iterator<Item = impl Writer>> {
+        let Some(total) = chunk_size.checked_mul(n_chunks) else {
+            return Err(write_size_limit(usize::MAX));
+        };
+        let cur_len = self.len();
+        self.reserve(total);
+        #[allow(clippy::uninit_vec)]
+        unsafe {
+            self.set_len(cur_len.unchecked_add(total))
+        };
+
+        let slice = unsafe {
+            from_raw_parts_mut(
+                self.as_mut_ptr().cast::<MaybeUninit<u8>>().add(cur_len),
+                total,
+            )
+        };
+
+        Ok(unsafe {
+            ChunksMut::new_unchecked(chunk_size, n_chunks, slice)
+                .map(|buf| SliceMutUnchecked::new(buf))
+        })
+    }
+
+    #[inline(always)]
+    unsafe fn chunk_mut(&mut self, chunk_size: usize) -> WriteResult<impl Writer> {
+        let cur_len = self.len();
+        self.reserve(chunk_size);
+        #[allow(clippy::uninit_vec)]
+        unsafe {
+            self.set_len(cur_len.unchecked_add(chunk_size))
+        };
+
+        let slice = unsafe {
+            from_raw_parts_mut(
+                self.as_mut_ptr().cast::<MaybeUninit<u8>>().add(cur_len),
+                chunk_size,
+            )
+        };
+        Ok(unsafe { SliceMutUnchecked::new(slice) })
     }
 }
 
@@ -119,13 +116,16 @@ mod tests {
             let quarter = half / 2;
             vec.write(&bytes[..half]).unwrap();
 
-            let mut t1 = unsafe { vec.as_trusted_for(bytes.len() - half) }.unwrap();
-            t1
-                .write(&bytes[half..half + quarter])
-                .unwrap();
+            {
+                let mut t1 = unsafe { vec.chunk_mut(bytes.len() - half) }.unwrap();
+                t1
+                    .write(&bytes[half..half + quarter])
+                    .unwrap();
 
-            let mut t2 = unsafe { t1.as_trusted_for(quarter) }.unwrap();
-            t2.write(&bytes[half + quarter..]).unwrap();
+                let tail = bytes.len() - half - quarter;
+                let mut t2 = unsafe { t1.chunk_mut(tail) }.unwrap();
+                t2.write(&bytes[half + quarter..]).unwrap();
+            }
 
             prop_assert_eq!(vec, bytes);
         }
@@ -137,14 +137,16 @@ mod tests {
             let quarter = half / 2;
             vec.write(&bytes[..half]).unwrap();
 
-            let mut t1 = unsafe { vec.as_trusted_for(bytes.len() - half) }.unwrap();
-            t1
-                .write(&bytes[half..half + quarter])
-                .unwrap();
+            {
+                let mut t1 = unsafe { vec.chunk_mut(bytes.len() - half) }.unwrap();
+                t1
+                    .write(&bytes[half..half + quarter])
+                    .unwrap();
 
-            let mut t2 = unsafe { t1.as_trusted_for(quarter) }.unwrap();
-            t2.write(&bytes[half + quarter..]).unwrap();
-
+                let tail = bytes.len() - half - quarter;
+                let mut t2 = unsafe { t1.chunk_mut(tail) }.unwrap();
+                t2.write(&bytes[half + quarter..]).unwrap();
+            }
             prop_assert_eq!(&vec[..5], &[0; 5]);
             prop_assert_eq!(&vec[5..], bytes);
         }

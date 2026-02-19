@@ -36,7 +36,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Uuid {
                 return Err(crate::error::invalid_value("Uuid: invalid length prefix"));
             }
         }
-        let bytes = reader.take_array::<{ size_of::<Uuid>() }>()?;
+        let bytes = reader.read_array::<{ size_of::<Uuid>() }>()?;
         // SAFETY: `Uuid` is a `#[repr(transparent)]` newtype over `uuid::Bytes` (`[u8; 16]`).
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Uuid>, &mut MaybeUninit<uuid::Bytes>>(dst) };

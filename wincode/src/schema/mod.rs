@@ -413,17 +413,14 @@ where
     T: SchemaWrite<C> + 'a,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
-        #[allow(clippy::arithmetic_side_effects)]
-        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
+        Len::write(writer.by_ref(), src.len())?;
         // SAFETY: `needed` is the size of the encoded length plus the size of the items.
         // `Len::write` and len writes of `T::Src` will write `needed` bytes,
         // fully initializing the trusted window.
-        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(writer.by_ref(), src.len())?;
-        for item in src {
-            T::write(writer.by_ref(), item)?;
+        let chunks = unsafe { writer.chunks_mut(size, src.len()) }?;
+        for (item, chunk) in src.zip(chunks) {
+            T::write(chunk, item)?;
         }
-        writer.finish()?;
         return Ok(());
     }
 
@@ -460,19 +457,12 @@ where
     T::Src: Sized,
 {
     if let TypeMeta::Static {
-        size,
-        zero_copy: true,
+        zero_copy: true, ..
     } = T::TYPE_META
     {
-        let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
-        // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
-        // `Len::write` and `writer.write(src)` will write `needed` bytes,
-        // fully initializing the trusted window.
-        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer.by_ref(), src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
-        writer.finish()?;
         return Ok(());
     }
     write_elem_iter::<T, Len, C>(writer, src.iter())
@@ -818,7 +808,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.read_byte()?;
             // This will increment the counter.
             dst.write(DropCounted::new());
             Ok(())
@@ -859,7 +849,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.read_byte()?;
             Err(error::ReadError::PointerSizedReadError)
         }
     }

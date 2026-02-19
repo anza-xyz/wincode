@@ -19,7 +19,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs", "-D", "warnings"]
 
 [features]
-default = ["std"]
+default = ["std", "solana-short-vec"]
 alloc = []
 std = ["alloc", "thiserror/std"]
 solana-short-vec = ["dep:solana-short-vec"]

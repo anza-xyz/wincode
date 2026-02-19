@@ -6,7 +6,7 @@ use {
     crate::{
         config::{ConfigCore, ZeroCopy},
         error::invalid_tag_encoding,
-        io::{read_size_limit, Reader, Writer},
+        io::{Reader, Writer},
         ReadResult, WriteResult,
     },
     pastey::paste,
@@ -80,7 +80,7 @@ macro_rules! impl_fix_int {
 
                 #[inline(always)]
                 fn [<decode_ $ty>] <'de>(mut reader: impl Reader<'de>) -> ReadResult<$ty> {
-                    let bytes = reader.take_array::<{ size_of::<$ty>() }>()?;
+                    let bytes = reader.read_array::<{ size_of::<$ty>() }>()?;
 
                     let val = match <$byte_order>::ENDIAN {
                         Endian::Big => <$ty>::from_be_bytes(bytes),
@@ -342,23 +342,9 @@ unsafe impl<C: ConfigCore> ZeroCopy<C> for FixInt where C::ByteOrder: PlatformEn
 pub struct VarInt;
 
 impl VarInt {
-    /// Returns the byte discriminant and subsequent byte slice needed to read the value.
-    ///
-    /// Soft requests (i.e., can return fewer) `size_of::<T>() + 1` bytes with `fill_buf`.
-    #[inline]
-    fn get_discriminant_and_bytes<'de, T>(
-        reader: &mut impl Reader<'de>,
-    ) -> ReadResult<(u8, &[u8])> {
-        // Fill the buffer with enough bytes to read the discriminant and the value.
-        //
-        // `fill_buf` returns _up to_ the given number of bytes, so will return fewer at EOF,
-        // and wont error if it returns fewer than requested.
-        #[expect(clippy::arithmetic_side_effects)]
-        let bytes = reader.fill_buf(size_of::<T>() + 1)?;
-        let Some((discriminant, bytes)) = bytes.split_at_checked(1) else {
-            return Err(read_size_limit(1).into());
-        };
-        Ok((discriminant[0], bytes))
+    #[inline(always)]
+    fn get_discriminant<'de>(reader: &mut impl Reader<'de>) -> ReadResult<u8> {
+        Ok(reader.read_array::<1>()?[0])
     }
 }
 
@@ -366,23 +352,16 @@ impl VarInt {
 ///
 /// Errors if the byte slice does not contain enough bytes.
 macro_rules! try_from_endian_bytes {
-    ($bytes:ident => $ty:ty as $target:ty) => {{
-        #[expect(clippy::arithmetic_side_effects)]
-        let needed = size_of::<$ty>() + 1;
-        let Some(bytes) = $bytes.get(..size_of::<$ty>()) else {
-            return Err(read_size_limit(needed).into());
-        };
-        let Ok(ar) = bytes.try_into() else {
-            return Err(read_size_limit(needed).into());
-        };
+    ($reader:ident => $ty:ty as $target:ty) => {{
+        let ar = $reader.read_array::<{ size_of::<$ty>() }>()?;
         let val = match B::ENDIAN {
             Endian::Big => <$ty>::from_be_bytes(ar),
             Endian::Little => <$ty>::from_le_bytes(ar),
         };
-        (val as $target, needed)
+        val as $target
     }};
-    ($bytes:ident => $ty:ty) => {{
-        try_from_endian_bytes!($bytes => $ty as $ty)
+    ($reader:ident => $ty:ty) => {{
+        try_from_endian_bytes!($reader => $ty as $ty)
     }};
 }
 
@@ -452,7 +431,7 @@ macro_rules! varint_encode_unsigned_impl {
         let needed = size_of::<$cast>() + 1;
         // SAFETY: tag (1 byte) + payload (`size_of::<$cast>()`) fully initialize the trusted
         // window, so all writes stay within `needed` bytes.
-        let mut writer = unsafe { $writer.as_trusted_for(needed) }?;
+        let mut writer = unsafe { $writer.chunk_mut(needed) }?;
         writer.write(&[$tag])?;
         let encoded = $val as $cast;
         let bytes = match B::ENDIAN {
@@ -468,7 +447,7 @@ macro_rules! varint_encode_unsigned_impl {
             let needed = size_of::<$cast>() + 1;
             // SAFETY: tag (1 byte) + payload (`size_of::<$cast>()`) fully initialize the trusted
             // window, so all writes stay within `needed` bytes.
-            let mut writer = unsafe { $writer.as_trusted_for(needed) }?;
+            let mut writer = unsafe { $writer.chunk_mut(needed) }?;
             writer.write(&[$tag])?;
             let encoded = $val as $cast;
             let bytes = match B::ENDIAN {
@@ -522,14 +501,13 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
     }
 
     fn decode_u16<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u16>(&mut reader)?;
-        let (out, used) = match discriminant {
-            byte @ 0..=SINGLE_BYTE_MAX => (byte as u16, 1),
-            U16_BYTE => try_from_endian_bytes!(bytes => u16),
+        let byte = VarInt::get_discriminant(&mut reader)?;
+        let out = match byte {
+            byte @ 0..=SINGLE_BYTE_MAX => byte as u16,
+            U16_BYTE => try_from_endian_bytes!(reader => u16),
             byte => return Err(invalid_tag_encoding(byte as usize)),
         };
-        // SAFETY: `used` represents the full number of bytes consumed.
-        unsafe { reader.consume_unchecked(used) };
+
         Ok(out)
     }
 
@@ -547,15 +525,13 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
     }
 
     fn decode_u32<'de>(mut reader: impl Reader<'de>) -> ReadResult<u32> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u32>(&mut reader)?;
-        let (out, used) = match discriminant {
-            byte @ 0..=SINGLE_BYTE_MAX => (byte as u32, 1),
-            U16_BYTE => try_from_endian_bytes!(bytes => u16 as u32),
-            U32_BYTE => try_from_endian_bytes!(bytes => u32),
+        let byte = VarInt::get_discriminant(&mut reader)?;
+        let out = match byte {
+            byte @ 0..=SINGLE_BYTE_MAX => byte as u32,
+            U16_BYTE => try_from_endian_bytes!(reader => u16 as u32),
+            U32_BYTE => try_from_endian_bytes!(reader => u32),
             byte => return Err(invalid_tag_encoding(byte as usize)),
         };
-        // SAFETY: `used` represents the full number of bytes consumed.
-        unsafe { reader.consume_unchecked(used) };
         Ok(out)
     }
 
@@ -575,16 +551,14 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
     }
 
     fn decode_u64<'de>(mut reader: impl Reader<'de>) -> ReadResult<u64> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u64>(&mut reader)?;
-        let (out, used) = match discriminant {
-            byte @ 0..=SINGLE_BYTE_MAX => (byte as u64, 1),
-            U16_BYTE => try_from_endian_bytes!(bytes => u16 as u64),
-            U32_BYTE => try_from_endian_bytes!(bytes => u32 as u64),
-            U64_BYTE => try_from_endian_bytes!(bytes => u64),
+        let byte = VarInt::get_discriminant(&mut reader)?;
+        let out = match byte {
+            byte @ 0..=SINGLE_BYTE_MAX => byte as u64,
+            U16_BYTE => try_from_endian_bytes!(reader => u16 as u64),
+            U32_BYTE => try_from_endian_bytes!(reader => u32 as u64),
+            U64_BYTE => try_from_endian_bytes!(reader => u64),
             byte => return Err(invalid_tag_encoding(byte as usize)),
         };
-        // SAFETY: `used` represents the full number of bytes consumed.
-        unsafe { reader.consume_unchecked(used) };
         Ok(out)
     }
 
@@ -606,17 +580,16 @@ unsafe impl<B: ByteOrder> IntEncoding<B> for VarInt {
     }
 
     fn decode_u128<'de>(mut reader: impl Reader<'de>) -> ReadResult<u128> {
-        let (discriminant, bytes) = VarInt::get_discriminant_and_bytes::<u128>(&mut reader)?;
-        let (out, used) = match discriminant {
-            byte @ 0..=SINGLE_BYTE_MAX => (byte as u128, 1),
-            U16_BYTE => try_from_endian_bytes!(bytes => u16 as u128),
-            U32_BYTE => try_from_endian_bytes!(bytes => u32 as u128),
-            U64_BYTE => try_from_endian_bytes!(bytes => u64 as u128),
-            U128_BYTE => try_from_endian_bytes!(bytes => u128),
+        let byte = VarInt::get_discriminant(&mut reader)?;
+        let out = match byte {
+            byte @ 0..=SINGLE_BYTE_MAX => byte as u128,
+            U16_BYTE => try_from_endian_bytes!(reader => u16 as u128),
+            U32_BYTE => try_from_endian_bytes!(reader => u32 as u128),
+            U64_BYTE => try_from_endian_bytes!(reader => u64 as u128),
+            U128_BYTE => try_from_endian_bytes!(reader => u128),
             byte => return Err(invalid_tag_encoding(byte as usize)),
         };
-        // SAFETY: `used` represents the full number of bytes consumed.
-        unsafe { reader.consume_unchecked(used) };
+
         Ok(out)
     }
 

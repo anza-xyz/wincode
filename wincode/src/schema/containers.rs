@@ -240,7 +240,7 @@ where
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(reader.copy_into_t(dst)?) }
+        unsafe { Ok(reader.read_t(dst)?) }
     }
 }
 
@@ -282,7 +282,9 @@ where
             } => {
                 let spare_capacity = vec.spare_capacity_mut();
                 // SAFETY: T::Dst is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { reader.copy_into_slice_t(spare_capacity)? };
+                unsafe {
+                    reader.read_slice_t(spare_capacity)?;
+                };
                 // SAFETY: `copy_into_slice_t` fills the entire spare capacity or errors.
                 unsafe { vec.set_len(len) };
             }
@@ -294,9 +296,9 @@ where
                 #[allow(clippy::arithmetic_side_effects)]
                 // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                 // will consume `size * len` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
+                let chunks = unsafe { reader.chunks(size, len) }?;
+                for (i, chunk) in chunks.enumerate() {
+                    T::read(chunk, unsafe { &mut *ptr })?;
                     unsafe {
                         ptr = ptr.add(1);
                         #[allow(clippy::arithmetic_side_effects)]
@@ -458,7 +460,7 @@ macro_rules! impl_heap_slice {
                         // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
                         let dst = unsafe { &mut *fat };
                         // SAFETY: T is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                        unsafe { reader.copy_into_slice_t(dst)? };
+                        unsafe { reader.read_slice_t(dst)? };
                         mem::forget(guard);
                     }
                     TypeMeta::Static {
@@ -473,14 +475,14 @@ macro_rules! impl_heap_slice {
                         // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
                         #[allow(clippy::arithmetic_side_effects)]
-                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                        for i in 0..len {
+                        let chunks = unsafe { reader.chunks(size, len) }?;
+                        for (i, chunk) in chunks.enumerate() {
                             // SAFETY:
                             // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
                             // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
                             //   less than `len`.
                             let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader.by_ref(), slot)?;
+                            T::read(chunk, slot)?;
                             guard.inner.inc_len();
                         }
 
@@ -542,16 +544,14 @@ where
     #[inline(always)]
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         if let TypeMeta::Static {
-            size,
-            zero_copy: true,
+            zero_copy: true, ..
         } = T::TYPE_META
         {
             #[allow(clippy::arithmetic_side_effects)]
-            let needed = Len::write_bytes_needed_prealloc_check::<T>(src.len())? + src.len() * size;
+            Len::prealloc_check::<T>(src.len())?;
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
-            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
 
             Len::write(writer.by_ref(), src.len())?;
             let (front, back) = src.as_slices();
@@ -562,8 +562,6 @@ where
                 writer.write_slice_t(front)?;
                 writer.write_slice_t(back)?;
             }
-
-            writer.finish()?;
 
             return Ok(());
         }

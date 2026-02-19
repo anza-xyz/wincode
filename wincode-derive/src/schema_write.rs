@@ -72,7 +72,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `write` on each field will write exactly `size` bytes,
                     // fully initializing the trusted window.
-                    let mut writer = unsafe { writer.as_trusted_for(size) }?;
+                    let mut writer = unsafe { writer.chunk_mut(size) }?;
                     #(#writes)*
                     writer.finish()?;
                 }
@@ -193,7 +193,7 @@ fn impl_enum(
                                 // which is the serialized size of the variant.
                                 // Writing the discriminant and then calling `write` on each field will write
                                 // exactly `summed_sizes` bytes, fully initializing the trusted window.
-                                let mut writer = unsafe { writer.as_trusted_for(summed_sizes) }?;
+                                let mut writer = unsafe { writer.chunk_mut(summed_sizes) }?;
                                 #write_discriminant;
                                 #(#write)*
                                 writer.finish()?;
