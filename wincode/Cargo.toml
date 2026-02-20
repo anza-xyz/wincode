@@ -26,8 +26,10 @@ solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
+bytes = ["dep:bytes"]
 
 [dependencies]
+bytes = { version = "1.11.1", optional = true, default-features = false }
 pastey = "0.2.1"
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
