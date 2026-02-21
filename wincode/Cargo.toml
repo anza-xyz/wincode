@@ -26,7 +26,8 @@ solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
 uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
-bytes = ["dep:bytes"]
+bytes = ["alloc", "dep:bytes"]
+bytes-extra-platforms = ["bytes", "bytes/extra-platforms"]
 
 [dependencies]
 bytes = { version = "1.11.1", optional = true, default-features = false }
