@@ -5,7 +5,7 @@ use {
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
     bytes::{Bytes, BytesMut},
-    std::mem::MaybeUninit,
+    core::mem::MaybeUninit,
 };
 
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for Bytes {
