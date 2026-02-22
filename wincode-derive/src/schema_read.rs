@@ -30,6 +30,7 @@ fn impl_struct(
             quote! {},
             quote! { TypeMeta::Static {
                 size: 0,
+                has_borrowed: false,
                 zero_copy: true,
             }},
         );
@@ -149,7 +150,7 @@ fn impl_struct(
                     #(#read_impl)*
                     mem::forget(guard);
                 }
-                TypeMeta::Dynamic => {
+                TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                     #init_guard
                     #(#read_impl)*
                     mem::forget(guard);

@@ -74,6 +74,7 @@ pub enum TypeMeta {
     Static {
         /// The static serialized size of the type.
         size: usize,
+        has_borrowed: bool,
         /// Whether the type is eligible for zero-copy encoding/decoding.
         ///
         /// This indicates that the type has no invalid bit patterns, no layout requirements, no endianness
@@ -84,6 +85,7 @@ pub enum TypeMeta {
     },
     /// The type has a dynamic size, and no optimizations can be made.
     Dynamic,
+    DynamicWithBorrowed,
 }
 
 impl TypeMeta {
@@ -92,6 +94,7 @@ impl TypeMeta {
         match self {
             TypeMeta::Static {
                 size,
+                has_borrowed: _,
                 zero_copy: true,
             } => size,
             _ => panic!("Type is not zero-copy"),
@@ -101,14 +104,18 @@ impl TypeMeta {
     #[cfg(all(test, feature = "std", feature = "derive"))]
     pub(crate) const fn size_assert_static(self) -> usize {
         match self {
-            TypeMeta::Static { size, zero_copy: _ } => size,
+            TypeMeta::Static {
+                size,
+                has_borrowed: _,
+                zero_copy: _,
+            } => size,
             _ => panic!("Type is not static"),
         }
     }
 
     /// Returns this [`TypeMeta`] instance with `zero_copy` masked by `keep_zero_copy`.
     ///
-    /// For `TypeMeta::Static`, this preserves `size` and computes:
+    /// For `TypeMeta::Static`, this preserves `size` and `has_borrowed`, but computes:
     /// `zero_copy = zero_copy && keep_zero_copy`.
     ///
     /// For `TypeMeta::Dynamic`, this is a no-op.
@@ -118,11 +125,42 @@ impl TypeMeta {
     /// - `keep_zero_copy(false)` clears the flag.
     pub const fn keep_zero_copy(self, keep_zero_copy: bool) -> Self {
         match self {
-            Self::Static { size, zero_copy } => TypeMeta::Static {
+            Self::Static {
                 size,
+                has_borrowed,
+                zero_copy,
+            } => TypeMeta::Static {
+                size,
+                has_borrowed,
                 zero_copy: zero_copy && keep_zero_copy,
             },
-            Self::Dynamic => Self::Dynamic,
+            other => other,
+        }
+    }
+
+    /// Returns this [`TypeMeta`] instance marked as including borrows if `mark_has_borrowed` is true.
+    ///
+    /// For `TypeMeta::Static`, this preserves `size` and `zero_copy`, but for `has_borrowed` computes:
+    /// `has_borrowed = has_borrowed || mark_has_borrowed`.
+    ///
+    /// For `TypeMeta::Dynamic`, this returns `TypeMeta::DynamicWithBorrowed`.
+    ///
+    /// This method never removes borrowed requirement:
+    /// - `require_borrowed(false)` leaves the flag unchanged and `TypeMeta::Dynamic` as is.
+    /// - `require_borrowed(true)` sets the flag or updates to `TypeMeta::DynamicWithBorrowed`
+    pub const fn require_borrowed(self, mark_has_borrowed: bool) -> Self {
+        match self {
+            Self::Static {
+                size,
+                has_borrowed,
+                zero_copy,
+            } => Self::Static {
+                size,
+                has_borrowed: has_borrowed || mark_has_borrowed,
+                zero_copy,
+            },
+            Self::Dynamic if mark_has_borrowed => Self::DynamicWithBorrowed,
+            other => other,
         }
     }
 
@@ -134,6 +172,7 @@ impl TypeMeta {
     /// - If any input is `Dynamic`, returns `Dynamic`.
     /// - Otherwise returns `Static` with:
     ///   - `size = sum of all constituent sizes`
+    ///   - `has_borrowed = logical OR of all constituent has_borrowed flags`
     ///   - `zero_copy = logical AND of all constituent zero_copy flags`
     ///
     /// Notes:
@@ -145,10 +184,10 @@ impl TypeMeta {
     /// use wincode::TypeMeta;
     ///
     /// let types = [
-    ///     TypeMeta::Static { size: 1, zero_copy: true },
-    ///     TypeMeta::Static { size: 2, zero_copy: true },
+    ///     TypeMeta::Static { size: 1, has_borrowed: false, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, has_borrowed: false, zero_copy: true },
     ///     TypeMeta::Dynamic,
-    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    ///     TypeMeta::Static { size: 3, has_borrowed: false, zero_copy: true },
     /// ];
     /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Dynamic);
     /// ```
@@ -157,41 +196,72 @@ impl TypeMeta {
     /// use wincode::TypeMeta;
     ///
     /// let types = [
-    ///     TypeMeta::Static { size: 1, zero_copy: true },
-    ///     TypeMeta::Static { size: 2, zero_copy: true },
-    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    ///     TypeMeta::Static { size: 1, has_borrowed: false, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, has_borrowed: true, zero_copy: true },
+    ///     TypeMeta::Dynamic,
+    ///     TypeMeta::Static { size: 3, has_borrowed: false, zero_copy: true },
     /// ];
-    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: true });
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::DynamicWithBorrowed);
     /// ```
     ///
     /// ```
     /// use wincode::TypeMeta;
     ///
     /// let types = [
-    ///     TypeMeta::Static { size: 1, zero_copy: true },
-    ///     TypeMeta::Static { size: 2, zero_copy: false },
-    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    ///     TypeMeta::Static { size: 1, has_borrowed: false, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, has_borrowed: false, zero_copy: true },
+    ///     TypeMeta::Static { size: 3, has_borrowed: false, zero_copy: true },
     /// ];
-    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: false });
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, has_borrowed: false, zero_copy: true });
+    /// ```
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, has_borrowed: false, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, has_borrowed: false, zero_copy: false },
+    ///     TypeMeta::Static { size: 3, has_borrowed: true, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, has_borrowed: true, zero_copy: false });
     /// ```
     #[expect(clippy::arithmetic_side_effects)]
     pub const fn join_types<const N: usize>(types: [Self; N]) -> Self {
-        let mut acc_size = 0;
+        let mut static_size = Some(0);
         let mut all_zero_copy = true;
+        let mut any_has_borrowed = false;
         let mut i = 0;
         while i < N {
             match types[i] {
-                Self::Dynamic => return Self::Dynamic,
-                Self::Static { size, zero_copy } => {
-                    acc_size += size;
+                Self::Dynamic => static_size = None,
+                Self::DynamicWithBorrowed => {
+                    static_size = None;
+                    any_has_borrowed = true;
+                }
+                Self::Static {
+                    size,
+                    has_borrowed,
+                    zero_copy,
+                } => {
+                    if let Some(static_size) = &mut static_size {
+                        *static_size += size;
+                    }
+                    any_has_borrowed |= has_borrowed;
                     all_zero_copy &= zero_copy;
                 }
             }
             i += 1;
         }
-        Self::Static {
-            size: acc_size,
-            zero_copy: all_zero_copy,
+        if let Some(size) = static_size {
+            Self::Static {
+                size,
+                has_borrowed: any_has_borrowed,
+                zero_copy: all_zero_copy,
+            }
+        } else if any_has_borrowed {
+            Self::DynamicWithBorrowed
+        } else {
+            Self::Dynamic
         }
     }
 }
@@ -461,6 +531,7 @@ where
 {
     if let TypeMeta::Static {
         size,
+        has_borrowed: _,
         zero_copy: true,
     } = T::TYPE_META
     {
@@ -648,6 +719,7 @@ mod tests {
         let size = size_of::<u8>() + size_of::<[u8; 32]>();
         let expected = TypeMeta::Static {
             size,
+            has_borrowed: false,
             zero_copy: true,
         };
         assert_eq!(
@@ -669,6 +741,7 @@ mod tests {
 
         let expected = TypeMeta::Static {
             size: size_of::<[u8; 32]>(),
+            has_borrowed: false,
             zero_copy: true,
         };
         assert_eq!(<Address as SchemaWrite<DefaultConfig>>::TYPE_META, expected);
@@ -682,6 +755,7 @@ mod tests {
     fn struct_static_derive_size() {
         let expected = TypeMeta::Static {
             size: size_of::<u64>() + size_of::<bool>() + size_of::<[u8; 32]>(),
+            has_borrowed: false,
             zero_copy: false,
         };
         assert_eq!(
@@ -797,6 +871,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -814,6 +889,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -838,6 +914,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -855,6 +932,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -875,6 +953,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -906,6 +985,7 @@ mod tests {
 
         const TYPE_META: TypeMeta = TypeMeta::Static {
             size: 1,
+            has_borrowed: false,
             zero_copy: false,
         };
 
@@ -1608,6 +1688,7 @@ mod tests {
         let expected = TypeMeta::Static {
             size: size_of::<StructZeroCopy>()
                 + <StructStatic as SchemaWrite<DefaultConfig>>::TYPE_META.size_assert_static(),
+            has_borrowed: false,
             zero_copy: false,
         };
         assert_eq!(<Test as SchemaWrite<DefaultConfig>>::TYPE_META, expected);
@@ -1633,6 +1714,7 @@ mod tests {
 
         let expected = TypeMeta::Static {
             size: size_of::<StructZeroCopy>() + size_of::<u32>(),
+            has_borrowed: false,
             zero_copy: false,
         };
         assert_eq!(
@@ -1666,6 +1748,7 @@ mod tests {
         let expected = TypeMeta::Static {
             size: size_of::<u32>() // discriminant
                 + size_of::<u64>() * 17 + size_of::<u8>(),
+            has_borrowed: false,
             zero_copy: false,
         };
         assert_eq!(
@@ -1719,6 +1802,7 @@ mod tests {
             <TestZeroCopy as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: size_of::<StructZeroCopy>() + 16,
+                has_borrowed: false,
                 zero_copy: true,
             }
         );
@@ -1743,6 +1827,7 @@ mod tests {
             <TestNonZeroCopy as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: size_of::<StructZeroCopy>(),
+                has_borrowed: false,
                 zero_copy: false,
             }
         );
@@ -1858,6 +1943,7 @@ mod tests {
             <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1,
+                has_borrowed: false,
                 zero_copy: false
             }
         ));
@@ -1866,6 +1952,7 @@ mod tests {
             <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1,
+                has_borrowed: false,
                 zero_copy: false
             }
         ));
@@ -1885,6 +1972,7 @@ mod tests {
             <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         ));
@@ -1893,6 +1981,7 @@ mod tests {
             <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         ));
@@ -1980,6 +2069,7 @@ mod tests {
             TypeMeta::Static {
                 // (account for discriminant u32)
                 size: 8 + 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -1988,6 +2078,7 @@ mod tests {
             TypeMeta::Static {
                 // (account for discriminant u32)
                 size: 8 + 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2039,6 +2130,7 @@ mod tests {
             <Enum as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1 + 32 + 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2046,6 +2138,7 @@ mod tests {
             <Enum as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 1 + 32 + 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2104,6 +2197,7 @@ mod tests {
             <Enum as SchemaRead<'_, _>>::type_meta(config),
             TypeMeta::Static {
                 size: 1,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2112,6 +2206,7 @@ mod tests {
             <Enum as SchemaWrite<_>>::type_meta(config),
             TypeMeta::Static {
                 size: 1,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2143,6 +2238,7 @@ mod tests {
             <Enum as SchemaRead<'_, _>>::type_meta(config),
             TypeMeta::Static {
                 size: 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2151,6 +2247,7 @@ mod tests {
             <Enum as SchemaWrite<_>>::type_meta(config),
             TypeMeta::Static {
                 size: 4,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -2387,6 +2484,7 @@ mod tests {
             TypeMeta::Static {
                 // Serialized size is still the size of the byte, not the in-memory size.
                 size: 1,
+                has_borrowed: false,
                 // Padding disqualifies the type from zero-copy optimization.
                 zero_copy: false
             }
@@ -2397,6 +2495,7 @@ mod tests {
             TypeMeta::Static {
                 // Serialized size is still the size of the byte, not the in-memory size.
                 size: 1,
+                has_borrowed: false,
                 // Padding disqualifies the type from zero-copy optimization.
                 zero_copy: false
             }
@@ -3103,6 +3202,15 @@ mod tests {
             d: [i8; 64],
         }
 
+        assert_eq!(
+            TypeMeta::Static {
+                size: size_of::<Zc>(),
+                has_borrowed: false,
+                zero_copy: true,
+            },
+            <Zc as SchemaRead<DefaultConfig>>::TYPE_META
+        );
+
         // `Zc`, mirrored with references.
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
@@ -3114,6 +3222,19 @@ mod tests {
             d: &'a [i8; 64],
         }
 
+        assert_eq!(
+            <ZcRefs as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<Zc>(),
+                has_borrowed: true,
+                zero_copy: false,
+            },
+        );
+        assert_eq!(
+            <ZcRefs as SchemaRead<DefaultConfig>>::TYPE_META,
+            <ZcRefs as SchemaWrite<DefaultConfig>>::TYPE_META
+        );
+
         // `Zc`, wrapped in a reference.
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
@@ -3121,6 +3242,19 @@ mod tests {
         struct ZcWrapper<'a> {
             data: &'a Zc,
         }
+
+        assert_eq!(
+            <ZcWrapper as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<Zc>(),
+                has_borrowed: true,
+                zero_copy: false,
+            },
+        );
+        assert_eq!(
+            <ZcWrapper as SchemaRead<DefaultConfig>>::TYPE_META,
+            <ZcWrapper as SchemaWrite<DefaultConfig>>::TYPE_META
+        );
 
         impl<'a> From<&'a ZcRefs<'a>> for Zc {
             fn from(value: &'a ZcRefs<'a>) -> Self {
@@ -3157,6 +3291,14 @@ mod tests {
         struct ZcRef<'a> {
             x: &'a StructZeroCopy,
         }
+        assert_eq!(
+            <ZcRef as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<StructZeroCopy>(),
+                has_borrowed: true,
+                zero_copy: false,
+            },
+        );
 
         proptest!(proptest_cfg(), |(data in any::<StructZeroCopy>())| {
             let serialized = serialize_aligned(&data).unwrap();
@@ -3174,6 +3316,10 @@ mod tests {
             A,
             B(StructZeroCopy),
         }
+        assert_eq!(
+            <Enum as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic,
+        );
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
@@ -3182,6 +3328,15 @@ mod tests {
             A,
             B(&'a StructZeroCopy),
         }
+
+        assert_eq!(
+            <EnumRef as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::DynamicWithBorrowed,
+        );
+        assert_eq!(
+            <EnumRef as SchemaRead<DefaultConfig>>::TYPE_META,
+            <EnumRef as SchemaWrite<DefaultConfig>>::TYPE_META
+        );
 
         proptest!(proptest_cfg(), |(data in any::<Enum>())| {
             let serialized = serialize_aligned(&data).unwrap();
@@ -3237,12 +3392,28 @@ mod tests {
             #[wincode(with = "Pod<_>")]
             address: Address,
         }
+        assert_eq!(
+            <MyStruct as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<Address>(),
+                has_borrowed: false,
+                zero_copy: true,
+            },
+        );
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
         struct MyStructRef<'a> {
             inner: &'a MyStruct,
         }
+        assert_eq!(
+            <MyStructRef as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<Address>(),
+                has_borrowed: true,
+                zero_copy: false,
+            },
+        );
 
         proptest!(proptest_cfg(), |(data in any::<MyStruct>())| {
             let serialized = serialize(&data).unwrap();
@@ -3372,6 +3543,7 @@ mod tests {
             <Result<u64, u64> as SchemaRead<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 12,
+                has_borrowed: false,
                 zero_copy: false
             }
         ));
@@ -4192,6 +4364,7 @@ mod tests {
             <GenT<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 8,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -4234,6 +4407,7 @@ mod tests {
             <GenT<u64, u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 16,
+                has_borrowed: false,
                 zero_copy: false
             }
         );
@@ -4276,6 +4450,7 @@ mod tests {
             <GenT<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: 8,
+                has_borrowed: false,
                 zero_copy: true
             }
         );
@@ -4342,6 +4517,7 @@ mod tests {
             <GenT<u8> as SchemaWrite<DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: size_of::<u32>() + 1,
+                has_borrowed: false,
                 zero_copy: false
             }
         );

@@ -30,6 +30,7 @@ fn impl_struct(
             quote! {
                 TypeMeta::Static {
                     size: 0,
+                    has_borrowed: false,
                     zero_copy: true,
                 }
             },
@@ -76,7 +77,7 @@ fn impl_struct(
                     #(#writes)*
                     writer.finish()?;
                 }
-                TypeMeta::Dynamic => {
+                TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                     #(#writes)*
                 }
             }

@@ -23,6 +23,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Uuid {
     #[cfg(not(feature = "uuid-serde-compat"))]
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<Uuid>(),
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -55,6 +56,7 @@ unsafe impl<C: Config> SchemaWrite<C> for Uuid {
     #[cfg(not(feature = "uuid-serde-compat"))]
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<Uuid>(),
+        has_borrowed: false,
         zero_copy: true,
     };
 

@@ -64,6 +64,7 @@ macro_rules! impl_int_config_dependent {
                         TypeMeta::Static {
                             size: size_of::<$type>(),
                             zero_copy: C::IntEncoding::ZERO_COPY,
+                            has_borrowed: false,
                         }
                     } else {
                         TypeMeta::Dynamic
@@ -87,6 +88,7 @@ macro_rules! impl_int_config_dependent {
                         TypeMeta::Static {
                             size: size_of::<$type>(),
                             zero_copy: C::IntEncoding::ZERO_COPY,
+                            has_borrowed: false,
                         }
                     } else {
                         TypeMeta::Dynamic
@@ -128,6 +130,7 @@ macro_rules! impl_float {
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
                     size: size_of::<$ty>(),
+                    has_borrowed: false,
                     #[cfg(target_endian = "big")]
                     zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
                     #[cfg(target_endian = "little")]
@@ -155,6 +158,7 @@ macro_rules! impl_float {
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
                     size: size_of::<$ty>(),
+                    has_borrowed: false,
                     #[cfg(target_endian = "big")]
                     zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
                     #[cfg(target_endian = "little")]
@@ -187,6 +191,7 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        has_borrowed: false,
                         zero_copy: false,
                     }
                 } else {
@@ -210,6 +215,7 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        has_borrowed: false,
                         zero_copy: false,
                     }
                 } else {
@@ -242,6 +248,7 @@ macro_rules! impl_byte {
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
                     size: size_of::<$type>(),
+                    has_borrowed: false,
                     zero_copy: true,
                 };
 
@@ -262,6 +269,7 @@ macro_rules! impl_byte {
 
                 const TYPE_META: TypeMeta = TypeMeta::Static {
                     size: size_of::<$type>(),
+                    has_borrowed: false,
                     zero_copy: true,
                 };
 
@@ -286,6 +294,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for bool {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<bool>(),
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -305,6 +314,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for bool {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<bool>(),
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -409,6 +419,7 @@ unsafe impl<T, C: ConfigCore> SchemaWrite<C> for PhantomData<T> {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 0,
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -428,6 +439,7 @@ unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for PhantomData<T> {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 0,
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -442,6 +454,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for () {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 0,
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -461,6 +474,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 0,
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -565,11 +579,17 @@ where
 
     const TYPE_META: TypeMeta = const {
         match T::TYPE_META {
-            TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+            TypeMeta::Static {
+                size,
+                zero_copy,
+                has_borrowed,
+            } => TypeMeta::Static {
                 size: N * size,
+                has_borrowed,
                 zero_copy,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => TypeMeta::DynamicWithBorrowed,
         }
     };
 
@@ -619,11 +639,17 @@ where
 
     const TYPE_META: TypeMeta = const {
         match T::TYPE_META {
-            TypeMeta::Static { size, zero_copy } => TypeMeta::Static {
+            TypeMeta::Static {
+                size,
+                has_borrowed,
+                zero_copy,
+            } => TypeMeta::Static {
                 size: N * size,
+                has_borrowed,
                 zero_copy,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => TypeMeta::DynamicWithBorrowed,
         }
     };
 
@@ -651,6 +677,7 @@ where
             }
             TypeMeta::Static {
                 size,
+                has_borrowed: _,
                 zero_copy: false,
             } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
@@ -661,7 +688,7 @@ where
                 }
                 writer.finish()?;
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 for item in value {
                     T::write(writer.by_ref(), item)?;
                 }
@@ -733,13 +760,22 @@ where
         <C::TagEncoding as SchemaRead<C>>::TYPE_META,
     ) {
         (
-            TypeMeta::Static { size: t_size, .. },
-            TypeMeta::Static { size: e_size, .. },
+            TypeMeta::Static {
+                size: t_size,
+                has_borrowed: t_has_borrowed,
+                ..
+            },
+            TypeMeta::Static {
+                size: e_size,
+                has_borrowed: e_has_borrowed,
+                ..
+            },
             TypeMeta::Static {
                 size: disc_size, ..
             },
         ) if t_size == e_size => TypeMeta::Static {
             size: disc_size + t_size,
+            has_borrowed: t_has_borrowed || e_has_borrowed,
             zero_copy: false,
         },
         _ => TypeMeta::Dynamic,
@@ -773,13 +809,22 @@ where
         <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
     ) {
         (
-            TypeMeta::Static { size: t_size, .. },
-            TypeMeta::Static { size: e_size, .. },
+            TypeMeta::Static {
+                size: t_size,
+                has_borrowed: t_has_borrowed,
+                ..
+            },
+            TypeMeta::Static {
+                size: e_size,
+                has_borrowed: e_has_borrowed,
+                ..
+            },
             TypeMeta::Static {
                 size: disc_size, ..
             },
         ) if t_size == e_size => TypeMeta::Static {
             size: disc_size + t_size,
+            has_borrowed: t_has_borrowed || e_has_borrowed,
             zero_copy: false,
         },
         _ => TypeMeta::Dynamic,
@@ -817,7 +862,7 @@ where
 {
     type Src = &'a T::Src;
 
-    const TYPE_META: TypeMeta = T::TYPE_META;
+    const TYPE_META: TypeMeta = T::TYPE_META.require_borrowed(true);
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -1218,7 +1263,7 @@ macro_rules! impl_seq_v {
                         }
                         set
                     }
-                    TypeMeta::Dynamic => {
+                    TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                         let mut set = $with_capacity(len $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
@@ -1411,9 +1456,11 @@ mod zero_copy {
         match T::TYPE_META {
             TypeMeta::Static {
                 size,
+                has_borrowed: _,
                 zero_copy: true,
             } => TypeMeta::Static {
                 size,
+                has_borrowed: true,
                 // Note: `&'de T` is NOT zero‑copy in the "raw-bytes representable" sense.
                 // In this crate, `zero_copy: true` means:
                 // - The type's in‑memory representation is exactly its serialized bytes.
@@ -1449,7 +1496,7 @@ mod zero_copy {
         match T::TYPE_META {
             TypeMeta::Static {
                 zero_copy: true, ..
-            } => TypeMeta::Dynamic,
+            } => TypeMeta::DynamicWithBorrowed,
             _ => panic!("Type is not zero-copy"),
         }
     }
@@ -1565,6 +1612,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
         (TypeMeta::Static { size: u64_size, .. }, TypeMeta::Static { size: u32_size, .. }) => {
             TypeMeta::Static {
                 size: u64_size + u32_size,
+                has_borrowed: false,
                 zero_copy: false,
             }
         }
@@ -1576,7 +1624,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Duration {
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match <Self as SchemaWrite<C>>::TYPE_META {
             TypeMeta::Static { size, .. } => Ok(size),
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 let secs = <u64 as SchemaWrite<C>>::size_of(&src.as_secs())?;
                 let nanos = <u32 as SchemaWrite<C>>::size_of(&src.subsec_nanos())?;
                 Ok(secs + nanos)
@@ -1619,7 +1667,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
         match <Self as SchemaWrite<C>>::TYPE_META {
             TypeMeta::Static { size, .. } => Ok(size),
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 let duration = src.duration_since(UNIX_EPOCH).map_err(|_| {
                     crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH")
                 })?;
@@ -1660,6 +1708,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv4Addr {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 4,
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -1680,6 +1729,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv4Addr {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 4,
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -1696,6 +1746,7 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for Ipv6Addr {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 16,
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -1716,6 +1767,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for Ipv6Addr {
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: 16,
+        has_borrowed: false,
         zero_copy: false,
     };
 
@@ -1802,9 +1854,11 @@ macro_rules! impl_nonzero {
                     match <$primitive_ty as SchemaRead<'de, C>>::TYPE_META {
                         TypeMeta::Static { size, .. } => TypeMeta::Static {
                             size,
+                            has_borrowed: false,
                             zero_copy: false,
                         },
                         TypeMeta::Dynamic => TypeMeta::Dynamic,
+                        TypeMeta::DynamicWithBorrowed => panic!("non-zero type must not be borrowed"),
                     }
                 };
 
@@ -1903,9 +1957,11 @@ where
         match Idx::TYPE_META {
             TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
                 size: idx_size + idx_size,
+                has_borrowed: false,
                 zero_copy: false,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => panic!("index type must not be borrowed"),
         }
     };
 
@@ -1926,7 +1982,7 @@ where
                 Idx::write(writer.by_ref(), &src.end)?;
                 writer.finish()?;
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 Idx::write(writer.by_ref(), &src.start)?;
                 Idx::write(writer.by_ref(), &src.end)?;
             }
@@ -1945,9 +2001,11 @@ where
         match Idx::TYPE_META {
             TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
                 size: idx_size + idx_size,
+                has_borrowed: false,
                 zero_copy: false,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => panic!("index type must not be borrowed"),
         }
     };
 
@@ -1962,7 +2020,7 @@ where
                 let end = Idx::get(reader.by_ref())?;
                 dst.write(Range { start, end });
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 let start = Idx::get(reader.by_ref())?;
                 let end = Idx::get(reader.by_ref())?;
                 dst.write(Range { start, end });
@@ -1984,9 +2042,11 @@ where
         match Idx::TYPE_META {
             TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
                 size: idx_size + idx_size,
+                has_borrowed: false,
                 zero_copy: false,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => panic!("index type must not be borrowed"),
         }
     };
 
@@ -2010,7 +2070,7 @@ where
                 Idx::write(writer.by_ref(), src.end())?;
                 writer.finish()?;
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 Idx::write(writer.by_ref(), src.start())?;
                 Idx::write(writer.by_ref(), src.end())?;
             }
@@ -2029,9 +2089,11 @@ where
         match Idx::TYPE_META {
             TypeMeta::Static { size: idx_size, .. } => TypeMeta::Static {
                 size: idx_size + idx_size,
+                has_borrowed: false,
                 zero_copy: false,
             },
             TypeMeta::Dynamic => TypeMeta::Dynamic,
+            TypeMeta::DynamicWithBorrowed => panic!("index type must not be borrowed"),
         }
     };
 
@@ -2046,7 +2108,7 @@ where
                 let end = Idx::get(reader.by_ref())?;
                 dst.write(RangeInclusive::new(start, end));
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 let start = Idx::get(reader.by_ref())?;
                 let end = Idx::get(reader.by_ref())?;
                 dst.write(RangeInclusive::new(start, end));

@@ -249,16 +249,17 @@ impl FieldsExt for Fields<Field> {
         // - The zero-copy eligibility of a struct is the logical AND of the zero-copy eligibility flags of its fields
         //   and the zero-copy eligibility the struct representation (e.g., `#[repr(transparent)]` or `#[repr(C)]`).
         quote! {
-            // If any field is not `TypeMeta::Static`, the sum type will not match and `Dynamic` case will be used
-            if let TypeMeta::Static { size: serialized_size, zero_copy } = TypeMeta::join_types([#tuple_expansion]) {
-                // Bincode never serializes padding, so for types to qualify for zero-copy, the summed serialized size of
-                // the fields must be equal to the in-memory size of the type. This is because zero-copy types
-                // may be read/written directly using their in-memory representation; padding disqualifies a type
-                // from this kind of optimization.
-                let no_padding = serialized_size == core::mem::size_of::<Self>();
-                TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && zero_copy }
-            } else {
-                TypeMeta::Dynamic
+            // If any field is not `TypeMeta::Static`, the sum type will not match and dynamic case will be used
+            match TypeMeta::join_types([#tuple_expansion]) {
+                TypeMeta::Static { size: serialized_size, has_borrowed, zero_copy } => {
+                    // Bincode never serializes padding, so for types to qualify for zero-copy, the summed serialized size of
+                    // the fields must be equal to the in-memory size of the type. This is because zero-copy types
+                    // may be read/written directly using their in-memory representation; padding disqualifies a type
+                    // from this kind of optimization.
+                    let no_padding = serialized_size == core::mem::size_of::<Self>();
+                    TypeMeta::Static { size: serialized_size, has_borrowed, zero_copy: no_padding && #is_zero_copy_eligible && zero_copy }
+                }
+                dynamic => dynamic
             }
         }
     }
@@ -344,7 +345,7 @@ pub(crate) trait VariantsExt {
 impl VariantsExt for &[Variant] {
     fn type_meta_impl(&self, trait_impl: TraitImpl, tag_encoding: &Type) -> TokenStream {
         if self.is_empty() {
-            return quote! { TypeMeta::Static { size: 0, zero_copy: false } };
+            return quote! { TypeMeta::Static { size: 0, has_borrowed: false, zero_copy: false } };
         }
 
         // Enums have a statically known size in a very specific case: all variants have the same serialized size.
@@ -400,9 +401,10 @@ impl VariantsExt for &[Variant] {
                     quote! {
                         let #ident = match #tag_expr {
                             TypeMeta::Static { size, .. } => {
-                                TypeMeta::Static { size, zero_copy: false }
+                                TypeMeta::Static { size, has_borrowed: false, zero_copy: false }
                             }
                             TypeMeta::Dynamic => TypeMeta::Dynamic,
+                            TypeMeta::DynamicWithBorrowed => panic!("tag should be primitive type"),
                         };
                     }
                 }
@@ -426,25 +428,36 @@ impl VariantsExt for &[Variant] {
                     if variant_sizes.len() == 1 {
                         return variant_sizes[0];
                     }
-                    let mut i = 1;
+                    let mut any_has_borrowed = false;
+                    let mut equal_size = Ok(None);
                     // Can't use a `for` loop in a const context.
+                    let mut i = 0;
                     while i < variant_sizes.len() {
-                        match (variant_sizes[i], variant_sizes[0]) {
+                        match variant_sizes[i] {
                             // Iff every variant is `TypeMeta::Static` and has the same size, we can assume the type is static.
-                            (TypeMeta::Static { size: s1, .. }, TypeMeta::Static { size: s2, .. }) if s1 == s2 => {
-                                // Check the next variant.
-                                i += 1;
+                            TypeMeta::Static { size, has_borrowed, .. } => {
+                                any_has_borrowed |= has_borrowed;
+                                match equal_size {
+                                    Ok(None) => equal_size = Ok(Some(size)),
+                                    Ok(Some(prev_size)) if prev_size != size => equal_size = Err(()),
+                                    _ => ()
+                                }
                             }
-                            _ => {
-                                // If any variant is not `TypeMeta::Static` or has a different size, the enum is dynamic.
-                                return TypeMeta::Dynamic;
+                            TypeMeta::Dynamic => equal_size = Err(()),
+                            TypeMeta::DynamicWithBorrowed => {
+                                any_has_borrowed = true;
+                                equal_size = Err(());
                             }
                         }
+                        // Check the next variant.
+                        i += 1;
                     }
-
-                    // If we made it here, all variants are `TypeMeta::Static` and have the same size,
-                    // so we can return the first one.
-                    variant_sizes[0]
+                    if equal_size.is_ok() {
+                        // All variants are `TypeMeta::Static` and have the same size, so we can return the first one.
+                        variant_sizes[0]
+                    } else {
+                        TypeMeta::Dynamic
+                    }.require_borrowed(any_has_borrowed)
                 }
                 choose(&variant_sizes)
             }

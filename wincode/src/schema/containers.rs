@@ -212,6 +212,7 @@ where
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<T>(),
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -235,6 +236,7 @@ where
 
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<T>(),
+        has_borrowed: false,
         zero_copy: true,
     };
 
@@ -288,6 +290,7 @@ where
             }
             TypeMeta::Static {
                 size,
+                has_borrowed: _,
                 zero_copy: false,
             } => {
                 let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
@@ -305,7 +308,7 @@ where
                     }
                 }
             }
-            TypeMeta::Dynamic => {
+            TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                 let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
                 for i in 0..len {
                     T::read(reader.by_ref(), unsafe { &mut *ptr })?;
@@ -463,6 +466,7 @@ macro_rules! impl_heap_slice {
                     }
                     TypeMeta::Static {
                         size,
+                        has_borrowed: _,
                         zero_copy: false,
                     } => {
                         // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
@@ -486,7 +490,7 @@ macro_rules! impl_heap_slice {
 
                         mem::forget(guard);
                     }
-                    TypeMeta::Dynamic => {
+                    TypeMeta::Dynamic | TypeMeta::DynamicWithBorrowed => {
                         // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
                         let raw_base = unsafe { (*fat).as_mut_ptr() };
                         let mut guard: DropGuardElemCopy<T::Dst> =
@@ -543,6 +547,7 @@ where
     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         if let TypeMeta::Static {
             size,
+            has_borrowed: _,
             zero_copy: true,
         } = T::TYPE_META
         {
