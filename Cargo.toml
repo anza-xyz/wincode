@@ -1,5 +1,6 @@
 [workspace]
-members = ["wincode", "wincode-derive", "fuzz"]
+members = ["wincode", "wincode-derive"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.lints.clippy]
@@ -7,9 +8,6 @@ default_trait_access = "deny"
 manual_let_else = "deny"
 used_underscore_binding = "deny"
 arithmetic_side_effects = "deny"
-
-[workspace.lints.rust]
-warnings = "deny"
 
 [workspace.package]
 authors = ["Anza Maintainers <maintainers@anza.xyz>"]
@@ -20,5 +18,5 @@ edition = "2021"
 rust-version = "1.84.1"
 
 [workspace.dependencies]
-quote = "1.0.41"
-proc-macro2 = "1.0.101"
+quote = "1.0.44"
+proc-macro2 = "1.0.106"

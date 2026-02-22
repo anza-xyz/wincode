@@ -27,13 +27,16 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for Uuid {
     };
 
     #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // serde serializes byte slices as a length-prefixed array.
         #[cfg(feature = "uuid-serde-compat")]
-        let _len = C::LengthEncoding::read(reader)?;
-        let bytes = *reader.fill_array::<{ size_of::<Uuid>() }>()?;
-        // SAFETY: `fill_array` guarantees we get exactly `size_of::<Uuid>()` bytes.
-        unsafe { reader.consume_unchecked(size_of::<Uuid>()) };
+        {
+            let len = C::LengthEncoding::read(reader.by_ref())?;
+            if len != size_of::<Uuid>() {
+                return Err(crate::error::invalid_value("Uuid: invalid length prefix"));
+            }
+        }
+        let bytes = reader.take_array::<{ size_of::<Uuid>() }>()?;
         // SAFETY: `Uuid` is a `#[repr(transparent)]` newtype over `uuid::Bytes` (`[u8; 16]`).
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Uuid>, &mut MaybeUninit<uuid::Bytes>>(dst) };
@@ -71,9 +74,9 @@ unsafe impl<C: Config> SchemaWrite<C> for Uuid {
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         #[cfg(feature = "uuid-serde-compat")]
-        C::LengthEncoding::write(writer, size_of::<Uuid>())?;
+        C::LengthEncoding::write(writer.by_ref(), size_of::<Uuid>())?;
         writer.write(src.as_bytes())?;
         Ok(())
     }
@@ -86,6 +89,39 @@ mod tests {
         proptest::prelude::*,
         uuid::{Bytes, Uuid},
     };
+
+    #[cfg(feature = "uuid-serde-compat")]
+    #[test]
+    fn test_uuid_invalid_length_prefix_errors() {
+        use crate::{
+            config::{Config, DefaultConfig},
+            len::SeqLen,
+        };
+
+        let uuid = Uuid::from_bytes([7u8; size_of::<Bytes>()]);
+        let tail = 0x42u8;
+        let mut serialized = serialize(&(uuid, tail)).unwrap();
+
+        let prefix_len = serialized
+            .len()
+            .checked_sub(size_of::<Bytes>() + size_of::<u8>())
+            .unwrap();
+
+        // Insert one extra byte after the uuid bytes and bump the length prefix so the
+        // stream stays self-consistent. The decoder should reject `len != 16`.
+        serialized.insert(prefix_len + size_of::<Bytes>(), 0xAA);
+        let mut len_prefix = Vec::new();
+        <<DefaultConfig as Config>::LengthEncoding as SeqLen<DefaultConfig>>::write(
+            &mut len_prefix,
+            size_of::<Bytes>() + 1,
+        )
+        .unwrap();
+        assert_eq!(len_prefix.len(), prefix_len);
+        serialized[..prefix_len].copy_from_slice(&len_prefix);
+
+        let err = deserialize::<(Uuid, u8)>(&serialized).unwrap_err();
+        assert!(matches!(err, crate::error::ReadError::InvalidValue(_)));
+    }
 
     // We can only compare against bincode's serialization if
     // serde compatibility is enabled due to length prefixing.

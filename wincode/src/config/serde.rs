@@ -1,4 +1,6 @@
 //! Configuration-aware serialize / deserialize traits and functions.
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use {
     crate::{
         config::{Config, ConfigCore},
@@ -16,7 +18,7 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
         let capacity = Self::size_of(src)?;
         let mut buffer = Vec::with_capacity(capacity);
         let mut writer = buffer.spare_capacity_mut();
-        Self::serialize_into(&mut writer, src, config)?;
+        Self::serialize_into(writer.by_ref(), src, config)?;
         let len = writer.len();
         unsafe {
             #[allow(clippy::arithmetic_side_effects)]
@@ -28,8 +30,8 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
     /// Serialize a serializable type into the given [`Writer`].
     #[inline]
     #[expect(unused_variables)]
-    fn serialize_into(dst: &mut impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
-        Self::write(dst, src)?;
+    fn serialize_into(mut dst: impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
+        Self::write(dst.by_ref(), src)?;
         dst.finish()?;
         Ok(())
     }
@@ -49,19 +51,19 @@ pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
     /// Deserialize the input bytes into a new `Self::Dst`.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn deserialize(mut src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
-        Self::get(&mut src)
+    fn deserialize(src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
+        Self::get(src)
     }
 
     /// Deserialize the input bytes into `dst`.
     #[inline]
     #[expect(unused_variables)]
     fn deserialize_into(
-        mut src: &'de [u8],
+        src: &'de [u8],
         dst: &mut MaybeUninit<Self::Dst>,
         config: C,
     ) -> ReadResult<()> {
-        Self::read(&mut src, dst)
+        Self::read(src, dst)
     }
 }
 
@@ -72,7 +74,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, C>>::Dst> {
         Self::get(src)
     }
@@ -80,7 +82,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     /// Deserialize from the given [`Reader`] into `dst`.
     #[inline]
     fn deserialize_from_into<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, C>>::Dst>,
     ) -> ReadResult<()> {
         Self::read(src, dst)
@@ -112,7 +114,7 @@ where
 
 /// Like [`crate::serialize_into`], but allows the caller to provide a custom configuration.
 #[inline]
-pub fn serialize_into<T, C: Config>(dst: &mut impl Writer, src: &T, config: C) -> WriteResult<()>
+pub fn serialize_into<T, C: Config>(dst: impl Writer, src: &T, config: C) -> WriteResult<()>
 where
     T: SchemaWrite<C, Src = T> + ?Sized,
 {
@@ -154,17 +156,17 @@ where
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
 #[inline(always)]
 #[expect(unused_variables)]
-pub fn deserialize_mut<'de, T, C: Config>(mut src: &'de mut [u8], config: C) -> ReadResult<T>
+pub fn deserialize_mut<'de, T, C: Config>(src: &'de mut [u8], config: C) -> ReadResult<T>
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    T::get(&mut src)
+    T::get(src)
 }
 
 /// Like [`crate::deserialize_from`], but allows the caller to provide a custom configuration.
 #[inline(always)]
 #[expect(unused_variables)]
-pub fn deserialize_from<'de, T, C: Config>(src: &mut impl Reader<'de>, config: C) -> ReadResult<T>
+pub fn deserialize_from<'de, T, C: Config>(src: impl Reader<'de>, config: C) -> ReadResult<T>
 where
     T: SchemaReadOwned<C, Dst = T>,
 {
@@ -186,20 +188,20 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     /// Like [`crate::ZeroCopy::from_bytes`], but allows the caller to provide a custom configuration.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn from_bytes<'de>(mut bytes: &'de [u8], config: C) -> ReadResult<&'de Self>
+    fn from_bytes<'de>(bytes: &'de [u8], config: C) -> ReadResult<&'de Self>
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de, C>>::get(&mut bytes)
+        <&Self as SchemaRead<'de, C>>::get(bytes)
     }
 
     /// Like [`crate::ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
     #[inline(always)]
     #[expect(unused_variables)]
-    fn from_bytes_mut<'de>(mut bytes: &'de mut [u8], config: C) -> ReadResult<&'de mut Self>
+    fn from_bytes_mut<'de>(bytes: &'de mut [u8], config: C) -> ReadResult<&'de mut Self>
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de, C>>::get(&mut bytes)
+        <&mut Self as SchemaRead<'de, C>>::get(bytes)
     }
 }

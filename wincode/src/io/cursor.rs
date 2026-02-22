@@ -691,5 +691,28 @@ mod tests {
             // Remaining bytes are untouched
             prop_assert_eq!(&cursor.inner[bytes.len()..], &vec![1; bytes.len()]);
         }
+
+        #[cfg(feature = "derive")]
+        #[test]
+        fn cursor_read_items_with_inner_zero_copy(bytes in proptest::collection::vec(any::<u8>(), 64)) {
+            use crate::{config::DefaultConfig, SchemaRead};
+
+            // Test reader not supporting zero-copy, but used to read items that contain nested
+            // zero-copy content
+            #[derive(crate::SchemaRead)]
+            #[wincode(internal)]
+            struct NonZeroCopyWrapper {
+                zero_copy_content: [u8; 8],
+            }
+
+            let mut cursor = Cursor::new(&bytes);
+            let mut dst = MaybeUninit::uninit();
+            <[NonZeroCopyWrapper; 8] as SchemaRead<DefaultConfig>>::read(&mut cursor, &mut dst)
+                .unwrap();
+            let deserialized = unsafe { dst.assume_init() };
+            for (i, chunk) in bytes.chunks_exact(size_of::<NonZeroCopyWrapper>()).enumerate() {
+                prop_assert_eq!(&deserialized[i].zero_copy_content, chunk);
+            }
+        }
     }
 }

@@ -1,5 +1,6 @@
 use {
     criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
     std::{collections::HashMap, hint::black_box},
     wincode::{
@@ -33,7 +34,7 @@ where
 
     let size = serialized_size(data).unwrap() as usize;
     let mut buffer = vec![0u8; size];
-    serialize_into(&mut buffer.as_mut_slice(), data).unwrap();
+    serialize_into(buffer.as_mut_slice(), data).unwrap();
 
     assert_eq!(&buffer[..], &serialized[..]);
 
@@ -59,14 +60,13 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     // In-place serialization (measures pure serialization, no allocation)
     group.bench_function("u64/wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("u64/bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -97,6 +97,25 @@ fn bench_primitives_comparison(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_char_deserialization(c: &mut Criterion) {
+    c.bench_function("char/wincode/deserialize", |b| {
+        let str: String = rand::prelude::SmallRng::seed_from_u64(0x42)
+            .sample_iter::<char, _>(rand::distr::StandardUniform)
+            .take(10_000)
+            .collect();
+
+        b.iter(|| {
+            let mut bytes = black_box(str.as_bytes());
+            let mut sum: u32 = 0;
+            while !bytes.is_empty() {
+                let ch: char = wincode::deserialize_from(&mut bytes).unwrap();
+                sum = sum.wrapping_add(ch as u32);
+            }
+            black_box(sum);
+        });
+    });
+}
+
 fn bench_vec_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Vec<u64>");
 
@@ -112,9 +131,7 @@ fn bench_vec_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -124,8 +141,7 @@ fn bench_vec_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );
@@ -184,14 +200,13 @@ fn bench_struct_comparison(c: &mut Criterion) {
 
     group.bench_function("wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -235,14 +250,13 @@ fn bench_pod_struct_single_comparison(c: &mut Criterion) {
 
     group.bench_function("wincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap());
+        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
     });
 
     group.bench_function("bincode/serialize_into", |b| {
         let mut buffer = create_bench_buffer(&data);
         b.iter(|| {
-            bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                .unwrap()
+            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
         });
     });
 
@@ -287,9 +301,7 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -299,8 +311,7 @@ fn bench_hashmap_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );
@@ -373,9 +384,7 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
             &data,
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
+                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
             },
         );
 
@@ -385,8 +394,7 @@ fn bench_hashmap_pod_comparison(c: &mut Criterion) {
             |b, d| {
                 let mut buffer = create_bench_buffer(d);
                 b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
+                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
                 })
             },
         );
@@ -874,7 +882,13 @@ criterion_group!(
     bench_vec_unit_enum_comparison,
     bench_vec_same_sized_enum_comparison,
     bench_vec_mixed_sized_enum_comparison,
-    bench_short_u16_comparison,
+    bench_char_deserialization,
 );
 
+#[cfg(feature = "solana-short-vec")]
+criterion_group!(benches_short_vec, bench_short_u16_comparison);
+#[cfg(feature = "solana-short-vec")]
+criterion_main!(benches, benches_short_vec);
+
+#[cfg(not(feature = "solana-short-vec"))]
 criterion_main!(benches);

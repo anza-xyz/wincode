@@ -77,6 +77,16 @@ pub trait Reader<'a> {
         Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
     }
 
+    /// Return exactly `N` bytes as `[u8; N]` and advance by `N`.
+    ///
+    /// Errors if fewer than `N` bytes are available.
+    #[inline]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let arr = *self.fill_array::<N>()?;
+        unsafe { self.consume_unchecked(N) }
+        Ok(arr)
+    }
+
     /// Zero-copy: return a borrowed slice of exactly `len` bytes and advance by `len`.
     ///
     /// The returned slice is tied to `'a`. Prefer [`Reader::fill_exact`] unless you truly need zero-copy.
@@ -142,6 +152,38 @@ pub trait Reader<'a> {
     #[inline]
     fn peek(&mut self) -> ReadResult<&u8> {
         self.fill_buf(1)?.first().ok_or_else(|| read_size_limit(1))
+    }
+
+    /// Get a mutable reference to the [`Reader`].
+    ///
+    /// Useful in situations where one only has an `impl Reader<'de>` that
+    /// needs to be passed to mulitple functions requiring `impl Reader<'de>`.
+    ///
+    /// Always prefer this over `&mut reader` to avoid recursive borrows.
+    ///
+    /// ```
+    /// # use wincode::{io::Reader, ReadResult, config::Config, SchemaRead};
+    /// # use core::mem::MaybeUninit;
+    /// struct FooBar {
+    ///     foo: u32,
+    ///     bar: u32,
+    /// }
+    ///
+    /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for FooBar {
+    ///     type Dst = Self;
+    ///
+    ///     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+    ///         // `reader.by_ref()`; Good ✅
+    ///         let foo = <u32 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+    ///         let bar = <u32 as SchemaRead<'de, C>>::get(reader)?;
+    ///         dst.write(FooBar { foo, bar });
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Reader<'a> {
+        self
     }
 
     /// Copy and consume exactly `dst.len()` bytes from the [`Reader`] into `dst`.
@@ -219,6 +261,91 @@ pub trait Reader<'a> {
     }
 }
 
+impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
+    type Trusted<'b>
+        = R::Trusted<'b>
+    where
+        Self: 'b;
+
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Reader<'a> {
+        &mut **self
+    }
+
+    #[inline(always)]
+    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_buf(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
+        (*self).fill_exact(n_bytes)
+    }
+
+    #[inline(always)]
+    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        (*self).fill_array()
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        (*self).take_array()
+    }
+
+    #[inline(always)]
+    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        (*self).borrow_exact(len)
+    }
+
+    #[inline(always)]
+    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+        (*self).borrow_exact_mut(len)
+    }
+
+    #[inline(always)]
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        (*self).consume_unchecked(amt)
+    }
+
+    #[inline(always)]
+    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+        (*self).consume(amt)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    fn peek(&mut self) -> ReadResult<&u8> {
+        (*self).peek()
+    }
+
+    #[inline(always)]
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        (*self).copy_into_slice(dst)
+    }
+
+    #[inline(always)]
+    fn copy_into_array<const N: usize>(
+        &mut self,
+        dst: &mut MaybeUninit<[u8; N]>,
+    ) -> ReadResult<()> {
+        (*self).copy_into_array(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
+        (*self).copy_into_t(dst)
+    }
+
+    #[inline(always)]
+    unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
+        (*self).copy_into_slice_t(dst)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum WriteError {
     #[error("Attempting to write {0} bytes")]
@@ -245,6 +372,43 @@ pub trait Writer {
     type Trusted<'a>: Writer
     where
         Self: 'a;
+
+    /// Get a mutable reference to the [`Writer`].
+    ///
+    /// Useful in situations where one has an `impl Writer` that
+    /// needs to be passed to mulitple functions requiring `impl Writer`.
+    ///
+    /// Always prefer this over `&mut writer` to avoid recursive borrows.
+    ///
+    /// ```
+    /// # use wincode::{io::Writer, WriteResult, config::Config, SchemaWrite};
+    /// # use core::mem::MaybeUninit;
+    /// struct FooBar {
+    ///     foo: u32,
+    ///     bar: u32,
+    /// }
+    ///
+    /// unsafe impl<C: Config> SchemaWrite<C> for FooBar {
+    ///     type Src = Self;
+    /// #
+    /// #    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+    /// #        let foo = <u32 as SchemaWrite<C>>::size_of(&src.foo)?;
+    /// #        let bar = <u32 as SchemaWrite<C>>::size_of(&src.bar)?;
+    /// #        Ok(foo + bar)
+    /// #    }
+    ///
+    ///     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+    ///         // `writer.by_ref()`; Good ✅
+    ///         let foo = <u32 as SchemaWrite<C>>::write(writer.by_ref(), &src.foo)?;
+    ///         let bar = <u32 as SchemaWrite<C>>::write(writer, &src.bar)?;
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Writer {
+        self
+    }
 
     /// Finalize the writer by performing any required cleanup or flushing.
     ///
@@ -336,6 +500,43 @@ pub trait Writer {
         let src = from_raw_parts(src.as_ptr().cast::<u8>(), len);
         self.write(src)?;
         Ok(())
+    }
+}
+
+impl<W: Writer + ?Sized> Writer for &mut W {
+    type Trusted<'a>
+        = W::Trusted<'a>
+    where
+        Self: 'a;
+
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Writer {
+        &mut **self
+    }
+
+    #[inline(always)]
+    fn finish(&mut self) -> WriteResult<()> {
+        (*self).finish()
+    }
+
+    #[inline(always)]
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        (*self).write(src)
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+        (*self).as_trusted_for(n_bytes)
+    }
+
+    #[inline(always)]
+    unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+        (*self).write_t(src)
+    }
+
+    #[inline(always)]
+    unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
+        (*self).write_slice_t(src)
     }
 }
 

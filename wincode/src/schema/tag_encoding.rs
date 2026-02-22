@@ -27,7 +27,7 @@ use {
 /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for Foo {
 ///     type Dst = Self;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         let tag = C::TagEncoding::get(reader)?;
 ///         // Cannot match a generic type with an integer literal.
 ///         match tag {
@@ -64,7 +64,7 @@ use {
 /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for Foo {
 ///     type Dst = Self;
 ///
-///     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
 ///         let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader)?)?;
 ///         // Now we can match on integer literals.
 ///         match tag {
@@ -116,7 +116,7 @@ pub trait TagEncoding<C: ConfigCore>:
     /// The `u32` will be converted to the encoding target before calling
     /// [`SchemaWrite::write`] on the target implementation.
     #[inline(always)]
-    fn write_from_u32(writer: &mut impl Writer, value: u32) -> WriteResult<()> {
+    fn write_from_u32(writer: impl Writer, value: u32) -> WriteResult<()> {
         Self::write(writer, &Self::try_from_u32(value)?)
     }
 }

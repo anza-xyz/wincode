@@ -4,7 +4,7 @@ use {
         FromDeriveInput, FromField, FromMeta, FromVariant, Result,
     },
     proc_macro2::{Span, TokenStream},
-    quote::quote,
+    quote::{quote, ToTokens as _},
     std::{
         borrow::Cow,
         collections::VecDeque,
@@ -41,6 +41,31 @@ pub(crate) struct Field {
     /// ```
     #[darling(default)]
     pub(crate) with: Option<Type>,
+
+    /// Opt out of writing or reading this field.
+    ///
+    /// The field will be initialized using one of the available modes:
+    /// * `SkipMode::Default` - using `Default::default()`
+    /// * `SkipMode::DefaultVal(expr)` - using value provided by (typically constant) `expr`
+    pub(crate) skip: Option<SkipMode>,
+}
+
+#[derive(FromMeta)]
+#[darling(from_word = || Ok(Self::Default))]
+pub enum SkipMode {
+    /// Use `Default::default()` value to initialize the field.
+    Default,
+    /// Use the provided expression as value to initialize the field.
+    DefaultVal(Expr),
+}
+
+impl SkipMode {
+    pub(crate) fn default_val_token_stream(&self) -> TokenStream {
+        match self {
+            Self::Default => quote! { Default::default() },
+            Self::DefaultVal(val) => val.to_token_stream(),
+        }
+    }
 }
 
 pub(crate) trait TypeExt {
@@ -65,6 +90,9 @@ pub(crate) trait TypeExt {
 
     /// Gather all the lifetimes on this type.
     fn lifetimes(&self) -> Vec<&Lifetime>;
+
+    /// Return whether the type contains a lifetime parameter.
+    fn has_lifetime(&self) -> bool;
 }
 
 impl TypeExt for Type {
@@ -94,6 +122,12 @@ impl TypeExt for Type {
         let mut lifetimes = Vec::new();
         GatherLifetimes(&mut lifetimes).visit_type(self);
         lifetimes
+    }
+
+    fn has_lifetime(&self) -> bool {
+        let mut visitor = HasLifetime(false);
+        visitor.visit_type(self);
+        visitor.0
     }
 }
 
@@ -159,18 +193,23 @@ impl Field {
             index.to_string()
         }
     }
+
+    pub(crate) fn has_lifetime(&self) -> bool {
+        self.ty.has_lifetime()
+    }
 }
 
 pub(crate) trait FieldsExt {
     fn type_meta_impl(&self, trait_impl: TraitImpl, repr: &StructRepr) -> TokenStream;
-    /// Get an iterator over the identifiers for the struct members.
+    /// Get an iterator over the fields and their identifiers for the struct members.
     ///
     /// If the field has a named identifier, return it.
     /// Otherwise (tuple struct), return an anonymous identifier.
-    fn struct_member_ident_iter(&self) -> impl Iterator<Item = Member>;
-    /// Get an iterator over type members as anonymous identifiers.
+    fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)>;
+    /// Get an iterator over unskipped type members as anonymous identifiers.
     ///
     /// If `prefix` is provided, the identifiers will be prefixed with the given str.
+    /// Fields with `skip` attribute are omitted in the iterator.
     ///
     /// Useful for tuple destructuring where using an index of a tuple struct as an identifier would
     /// incorrectly match a literal integer.
@@ -187,17 +226,21 @@ pub(crate) trait FieldsExt {
     /// ```
     ///
     /// You actually want an anonymous identifier, like `a`, `b`, etc.
-    fn member_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident>;
-    /// Get an iterator over the identifiers for the enum members.
+    fn unskipped_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident>;
+    /// Get an iterator over the fields and their identifiers for the enum members.
     ///
     /// If the field has a named identifier, return it.
     /// Otherwise (tuple enum), return an anonymous identifier.
     ///
     /// Note this is unnecessary for unit enums, as they will not have fields.
-    fn enum_member_ident_iter(
+    fn enum_members_iter(
         &self,
         prefix: Option<&str>,
-    ) -> impl Iterator<Item = Cow<'_, Ident>> + Clone;
+    ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone;
+    /// Get an iterator over the fields that do not have `skip` attribute.
+    fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone;
+    /// Get an iterator over fields that contain a lifetime parameter.
+    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field>;
 }
 
 impl FieldsExt for Fields<Field> {
@@ -205,14 +248,14 @@ impl FieldsExt for Fields<Field> {
     fn type_meta_impl(&self, trait_impl: TraitImpl, repr: &StructRepr) -> TokenStream {
         let tuple_expansion = match trait_impl {
             TraitImpl::SchemaRead => {
-                let items = self.iter().map(|field| {
+                let items = self.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
                     quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
                 });
                 quote! { #(#items),* }
             }
             TraitImpl::SchemaWrite => {
-                let items = self.iter().map(|field| {
+                let items = self.unskipped_iter().map(|field| {
                     let target = field.target_resolved();
                     quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
                 });
@@ -221,8 +264,10 @@ impl FieldsExt for Fields<Field> {
         };
         // No need to prefix, as this is only used in a struct context, where the static size is
         // known at compile time.
-        let anon_idents = self.member_anon_ident_iter(None).collect::<Vec<_>>();
-        let zero_copy_idents = self.member_anon_ident_iter(Some("zc_")).collect::<Vec<_>>();
+        let anon_idents = self.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
+        let zero_copy_idents = self
+            .unskipped_anon_ident_iter(Some("zc_"))
+            .collect::<Vec<_>>();
         let is_zero_copy_eligible = repr.is_zero_copy_eligible();
         // Extract sizes and zero-copy flags from the TYPE_META implementations of the fields of the struct.
         // We can use this in aggregate to determine the static size and zero-copy eligibility of the struct.
@@ -248,32 +293,44 @@ impl FieldsExt for Fields<Field> {
         }
     }
 
-    fn struct_member_ident_iter(&self) -> impl Iterator<Item = Member> {
+    fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)> {
         self.iter()
             .enumerate()
-            .map(|(i, f)| f.struct_member_ident(i))
+            .map(|(i, field)| (field, field.struct_member_ident(i)))
     }
 
-    fn member_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident> {
-        anon_ident_iter(prefix).take(self.len())
+    fn unskipped_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident> {
+        let len = self.unskipped_iter().count();
+        anon_ident_iter(prefix).take(len)
     }
 
-    fn enum_member_ident_iter(
+    fn enum_members_iter(
         &self,
         prefix: Option<&str>,
-    ) -> impl Iterator<Item = Cow<'_, Ident>> + Clone {
+    ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone {
         let mut alpha = anon_ident_iter(prefix);
         self.iter().map(move |field| {
-            if let Some(ident) = &field.ident {
-                Cow::Borrowed(ident)
-            } else {
-                Cow::Owned(
-                    alpha
-                        .next()
-                        .expect("alpha iterator should never be exhausted"),
-                )
-            }
+            (
+                field,
+                if let Some(ident) = &field.ident {
+                    Cow::Borrowed(ident)
+                } else {
+                    Cow::Owned(
+                        alpha
+                            .next()
+                            .expect("alpha iterator should never be exhausted"),
+                    )
+                },
+            )
         })
+    }
+
+    fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone {
+        self.iter().filter(|field| field.skip.is_none())
+    }
+
+    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field> {
+        self.iter().filter(|field| field.has_lifetime())
     }
 }
 
@@ -350,21 +407,21 @@ impl VariantsExt for &[Variant] {
                     // Gather the `TYPE_META` implementations for each field of the variant.
                     let fields_type_meta_expansion = match trait_impl {
                         TraitImpl::SchemaRead => {
-                            let items=  variant.fields.iter().map(|field| {
+                            let items = variant.fields.unskipped_iter().map(|field| {
                                 let target = field.target_resolved().with_lifetime("de");
                                 quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },
                         TraitImpl::SchemaWrite => {
-                            let items= variant.fields.iter().map(|field| {
+                            let items = variant.fields.unskipped_iter().map(|field| {
                                 let target = field.target_resolved();
                                 quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },
                     };
-                    let anon_idents = variant.fields.member_anon_ident_iter(None).collect::<Vec<_>>();
+                    let anon_idents = variant.fields.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
 
                     // Assign the `TYPE_META` to a local variant identifier (`#ident`).
                     quote! {
@@ -457,7 +514,7 @@ pub(crate) fn suppress_unused_fields(args: &SchemaArgs) -> TokenStream {
 
     match &args.data {
         Data::Struct(fields) if !fields.is_empty() => {
-            let idents = fields.struct_member_ident_iter();
+            let idents = fields.struct_members_iter().map(|(_, ident)| ident);
             let ident = &args.ident;
             let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
             quote! {
@@ -540,6 +597,8 @@ pub(crate) struct SchemaArgs {
     #[darling(default)]
     pub(crate) no_suppress_unused: bool,
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
+    ///
+    /// DEPRECATED; use `#[derive(UninitBuilder)]` instead.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
     /// Specifies the encoding to use for enum discriminants.
@@ -791,6 +850,14 @@ impl<'ast> Visit<'ast> for GatherLifetimes<'_, 'ast> {
     }
 }
 
+struct HasLifetime(bool);
+
+impl Visit<'_> for HasLifetime {
+    fn visit_lifetime(&mut self, _: &Lifetime) {
+        self.0 = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,5 +945,14 @@ mod tests {
         let ty: Type = parse_quote!(&'a Foo<'b, 'c>);
         let (a, b, c) = (parse_quote!('a), parse_quote!('b), parse_quote!('c));
         assert_eq!(ty.lifetimes(), vec![&a, &b, &c]);
+    }
+
+    #[test]
+    fn test_has_lifetime() {
+        let ty: Type = parse_quote!(&'a Foo);
+        assert!(ty.has_lifetime());
+
+        let ty: Type = parse_quote!(Foo<'b, 'c>);
+        assert!(ty.has_lifetime());
     }
 }

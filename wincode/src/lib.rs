@@ -326,7 +326,7 @@
 //! |---|---|---|---|
 //! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
 //! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
-//! |`struct_extensions`|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations|
+//! |`struct_extensions` (DEPRECATED)|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations. DEPRECATED; Use `#[derive(UninitBuilder)]` instead.|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
 //!
@@ -372,14 +372,62 @@
 //! # }
 //! ```
 //!
-//! ### `struct_extensions`
+//! ## Field level
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
+//! |`skip`|`bool`\|`Expr`|`false`|Skips the field during serialization and deserialization (initializing with default value).|
+//!
+//! ### `skip`
+//!
+//! Allows omitting the field during serialization and deserialization. When type is initialized
+//! during deserialization, the field will be set to the default value. This is typically
+//! `Default::default()` (when using `#[wincode(skip)]` or `#[wincode(skip(default))]`), but can
+//! be overridden by specifying `#[wincode(skip(default_val = <value>))]`.
+//!
+//! ## Variant level (enum variants)
+//! |Attribute|Type|Default|Description
+//! |---|---|---|---|
+//! |`tag`|`Expr`|`None`|Specifies the discriminant expression for the variant. Only usable on enums.|
+//!
+//! ### `tag`
+//!
+//! Specifies the discriminant expression for the variant. Only usable on enums.
+//!
+//! <div class="warning">
+//! There is no bincode analog to this attribute.
+//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
+//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
+//! <code>Serialize</code> impl for your enum on the serde / bincode side.
+//! </div>
+//!
+//! Example:
+//! ```
+//! # #[cfg(all(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaWrite, SchemaRead};
+//!
+//! #[derive(SchemaWrite, SchemaRead)]
+//! enum Enum {
+//!     #[wincode(tag = 5)]
+//!     A,
+//!     #[wincode(tag = 8)]
+//!     B,
+//!     #[wincode(tag = 13)]
+//!     C,
+//! }
+//!
+//! assert_eq!(&wincode::serialize(&Enum::A).unwrap(), &5u32.to_le_bytes());
+//! # }
+//! ```
+//!
+//! # UninitBuilder
 //!
 //! You may have some exotic serialization logic that requires you to implement `SchemaRead` manually
 //! for a type. In these scenarios, you'll likely want to leverage some additional helper methods
 //! to reduce the amount of boilerplate that is typically required when dealing with uninitialized
 //! fields.
 //!
-//! `#[wincode(struct_extensions)]` generates a corresponding uninit builder struct for the type.
+//! `#[derive(UninitBuilder)]` generates a corresponding uninit builder struct for the type.
 //! The name of the builder struct is the name of the type with `UninitBuilder` appended.
 //! E.g., `Header` -> `HeaderUninitBuilder`.
 //!
@@ -419,12 +467,11 @@
 //!
 //! ```
 //! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config};
+//! # use wincode::{SchemaRead, SchemaWrite, io::Reader, error::ReadResult, config::Config, UninitBuilder};
 //! # use serde::{Serialize, Deserialize};
 //! # use core::mem::MaybeUninit;
 //! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaRead, SchemaWrite)]
-//! #[wincode(struct_extensions)]
+//! #[derive(SchemaRead, SchemaWrite, UninitBuilder)]
 //! struct Header {
 //!     num_required_signatures: u8,
 //!     num_signed_accounts: u8,
@@ -432,15 +479,14 @@
 //! }
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaRead, SchemaWrite)]
-//! #[wincode(struct_extensions)]
+//! #[derive(SchemaRead, SchemaWrite, UninitBuilder)]
 //! struct Payload {
 //!     header: Header,
 //!     data: Vec<u8>,
 //! }
 //!
 //! # #[derive(Debug, PartialEq, Eq)]
-//! #[derive(SchemaWrite)]
+//! #[derive(SchemaWrite, UninitBuilder)]
 //! struct Message {
 //!     payload: Payload,
 //! }
@@ -449,34 +495,35 @@
 //! unsafe impl<'de, C: Config> SchemaRead<'de, C> for Message {
 //!     type Dst = Message;
 //!
-//!     fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-//!         // Normally we have to do a big ugly cast like this
-//!         // to get a mutable `MaybeUninit<Payload>`.
-//!         let payload = unsafe {
-//!             &mut *(&raw mut (*dst.as_mut_ptr()).payload).cast::<MaybeUninit<Payload>>()
-//!         };
-//!         // Note that the order matters here. Values are dropped in reverse
-//!         // declaration order, and we need to ensure `header_builder` is dropped
-//!         // before `payload_builder` in the event of an error or panic.
-//!         let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+//!         let mut msg_builder = MessageUninitBuilder::<C>::from_maybe_uninit_mut(dst);
 //!         unsafe {
-//!             // payload.header will be marked as initialized if the function succeeds.
-//!             payload_builder.init_header_with(|header| {
-//!                 // Read directly into the projected MaybeUninit<Header> slot.
-//!                 let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
-//!                 header_builder.read_num_required_signatures(reader)?;
-//!                 header_builder.read_num_signed_accounts(reader)?;
-//!                 header_builder.read_num_unsigned_accounts(reader)?;
-//!                 header_builder.finish();
+//!             msg_builder.init_payload_with(|payload| {
+//!                 // Note that the order matters here. Values are dropped in reverse
+//!                 // declaration order, and we need to ensure `header_builder` is dropped
+//!                 // before `payload_builder` in the event of an error or panic.
+//!                 let mut payload_builder = PayloadUninitBuilder::<C>::from_maybe_uninit_mut(payload);
+//!                 // payload.header will be marked as initialized if the function succeeds.
+//!                 payload_builder.init_header_with(|header| {
+//!                     // Read directly into the projected MaybeUninit<Header> slot.
+//!                     let mut header_builder = HeaderUninitBuilder::<C>::from_maybe_uninit_mut(header);
+//!                     header_builder.read_num_required_signatures(reader.by_ref())?;
+//!                     header_builder.read_num_signed_accounts(reader.by_ref())?;
+//!                     header_builder.read_num_unsigned_accounts(reader.by_ref())?;
+//!                     header_builder.finish();
+//!                     Ok(())
+//!                 })?;
+//!                 // Alternatively, we could have done `payload_builder.read_header(reader.by_ref())?;`
+//!                 // rather than reading all the fields individually.
+//!                 payload_builder.read_data(reader.by_ref())?;
+//!                 // Payload is fully initialized, so we forget the builder
+//!                 // to avoid dropping the initialized fields.
+//!                 payload_builder.finish();
 //!                 Ok(())
 //!             })?;
 //!         }
-//!         // Alternatively, we could have done `payload_builder.read_header(reader)?;`
-//!         // rather than reading all the fields individually.
-//!         payload_builder.read_data(reader)?;
-//!         // Message is fully initialized, so we forget the builders
-//!         // to avoid dropping the initialized fields.
-//!         payload_builder.finish();
+//!         // Message is fully initialized.
+//!         msg_builder.finish();
 //!         Ok(())
 //!     }
 //! }
@@ -494,46 +541,6 @@
 //! let serialized = wincode::serialize(&msg).unwrap();
 //! let deserialized = wincode::deserialize(&serialized).unwrap();
 //! assert_eq!(msg, deserialized);
-//! # }
-//! ```
-//!
-//! ## Field level
-//! |Attribute|Type|Default|Description
-//! |---|---|---|---|
-//! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
-//!
-//! ## Variant level (enum variants)
-//! |Attribute|Type|Default|Description
-//! |---|---|---|---|
-//! |`tag`|`Expr`|`None`|Specifies the discriminant expression for the variant. Only usable on enums.|
-//!
-//! ### `tag`
-//!
-//! Specifies the discriminant expression for the variant. Only usable on enums.
-//!
-//! <div class="warning">
-//! There is no bincode analog to this attribute.
-//! Specifying this attribute will make your enum incompatible with bincode's default enum encoding.
-//! If you need strict bincode compatibility, you should implement a custom <code>Deserialize</code> and
-//! <code>Serialize</code> impl for your enum on the serde / bincode side.
-//! </div>
-//!
-//! Example:
-//! ```
-//! # #[cfg(all(feature = "derive", feature = "alloc"))] {
-//! use wincode::{SchemaWrite, SchemaRead};
-//!
-//! #[derive(SchemaWrite, SchemaRead)]
-//! enum Enum {
-//!     #[wincode(tag = 5)]
-//!     A,
-//!     #[wincode(tag = 8)]
-//!     B,
-//!     #[wincode(tag = 13)]
-//!     C,
-//! }
-//!
-//! assert_eq!(&wincode::serialize(&Enum::A).unwrap(), &5u32.to_le_bytes());
 //! # }
 //! ```
 #![cfg_attr(docsrs, feature(doc_cfg))]

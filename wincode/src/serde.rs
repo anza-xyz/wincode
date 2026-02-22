@@ -40,14 +40,14 @@ use {
 pub trait Deserialize<'de>: SchemaRead<'de, DefaultConfig> {
     /// Deserialize the input `src` bytes into a new `Self::Dst`.
     #[inline(always)]
-    fn deserialize(mut src: &'de [u8]) -> ReadResult<Self::Dst> {
-        Self::get(&mut src)
+    fn deserialize(src: &'de [u8]) -> ReadResult<Self::Dst> {
+        Self::get(src)
     }
 
     /// Deserialize the input `src` bytes into `dst`.
     #[inline]
-    fn deserialize_into(mut src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        Self::read(&mut src, dst)
+    fn deserialize_into(src: &'de [u8], dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        Self::read(src, dst)
     }
 }
 
@@ -58,7 +58,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into a new `Self::Dst`.
     #[inline(always)]
     fn deserialize_from<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, DefaultConfig>>::Dst> {
         Self::get(src)
     }
@@ -66,7 +66,7 @@ pub trait DeserializeOwned: SchemaReadOwned<DefaultConfig> {
     /// Deserialize from the given [`Reader`] into `dst`.
     #[inline]
     fn deserialize_from_into<'de>(
-        src: &mut impl Reader<'de>,
+        src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, DefaultConfig>>::Dst>,
     ) -> ReadResult<()> {
         Self::read(src, dst)
@@ -111,7 +111,7 @@ pub trait Serialize: SchemaWrite<DefaultConfig> {
 
     /// Serialize a serializable type into the given byte buffer.
     #[inline]
-    fn serialize_into(dst: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn serialize_into(dst: impl Writer, src: &Self::Src) -> WriteResult<()> {
         <Self as config::Serialize<DefaultConfig>>::serialize_into(
             dst,
             src,
@@ -215,11 +215,11 @@ where
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize_mut<'de, T>(mut src: &'de mut [u8]) -> ReadResult<T>
+pub fn deserialize_mut<'de, T>(src: &'de mut [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
-    <T as SchemaRead<'de, DefaultConfig>>::get(&mut src)
+    <T as SchemaRead<'de, DefaultConfig>>::get(src)
 }
 
 /// Deserialize a type from the given bytes into the given target.
@@ -230,7 +230,7 @@ where
 /// requires [`SchemaReadOwned`] instead of [`SchemaRead`]. If you are deserializing
 /// from raw bytes, always prefer [`deserialize`] for maximum flexibility.
 #[inline(always)]
-pub fn deserialize_from<'de, T>(src: &mut impl Reader<'de>) -> ReadResult<T>
+pub fn deserialize_from<'de, T>(src: impl Reader<'de>) -> ReadResult<T>
 where
     T: SchemaReadOwned<DefaultConfig, Dst = T>,
 {
@@ -267,7 +267,7 @@ where
 ///
 /// Like [`serialize`], but allows the caller to provide their own writer.
 #[inline]
-pub fn serialize_into<T>(dst: &mut impl Writer, src: &T) -> WriteResult<()>
+pub fn serialize_into<T>(dst: impl Writer, src: &T) -> WriteResult<()>
 where
     T: SchemaWrite<DefaultConfig, Src = T> + ?Sized,
 {

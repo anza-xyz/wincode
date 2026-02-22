@@ -1,0 +1,59 @@
+name: Dispatch continuous fuzzing
+
+on:
+  push:
+    branches: [master]
+
+permissions:                                                                                                                                                                                                                          
+    contents: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    environment: fuzz
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+        with:
+          cache-on-failure: true
+
+      - uses: dtolnay/install@d0dc46e85ffd2c174b5ac0489e17f95dae84fa5a # cargo-fuzz
+      - run: cargo +nightly fuzz build --no-trace-compares
+
+      - name: Prepare bundle
+        run: ./fuzz/build-fuzz-bundle.sh
+
+      - name: Zip corpus
+        run: cd ./fuzz/corpus && zip -r roundtrip.zip roundtrip
+
+      - name: Upload corpus to FuzzCorp
+        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b # v1.0.4
+        with:
+          upload_type: asset
+          upload_path: ./fuzz/corpus/roundtrip.zip
+          upload_args: --seed-corpus-group roundtrip
+        env:
+          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
+          FUZZ_ORGANIZATION: anza
+          FUZZ_PROJECT: wincode
+          FUZZ_USER: ${{ secrets.FUZZ_USER }}
+          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
+
+      - name: Upload bundle to FuzzCorp
+        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b # v1.0.4
+        with:
+          upload_type: bundle
+          upload_path: ./fuzz/target/bundle
+        env:
+          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
+          FUZZ_ORGANIZATION: anza
+          FUZZ_PROJECT: wincode
+          FUZZ_USER: ${{ secrets.FUZZ_USER }}
+          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}

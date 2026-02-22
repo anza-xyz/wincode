@@ -470,7 +470,7 @@ mod tests {
     macro_rules! with_writers {
         ($buffer:expr, |$writer:ident| $body:block) => {{
             {
-                let $writer = &mut $buffer.spare_capacity_mut();
+                let mut $writer = $buffer.spare_capacity_mut();
                 $body
                 $buffer.clear();
             }
@@ -482,7 +482,7 @@ mod tests {
             {
                 let _capacity = $buffer.capacity();
                 $buffer.resize(_capacity, 0);
-                let $writer = &mut $buffer.as_mut_slice();
+                let mut $writer = $buffer.as_mut_slice();
                 $body
                 $buffer.clear();
             }

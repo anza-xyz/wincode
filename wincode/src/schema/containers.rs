@@ -126,15 +126,6 @@ pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
-/// Indicates that the type is an element of a sequence, composable with [`containers`](self).
-///
-/// Prefer [`Pod`] for types representable as raw bytes.
-#[deprecated(
-    since = "0.2.0",
-    note = "Elem is no longer needed for container usage. Use `T` directly instead."
-)]
-pub struct Elem<T>(PhantomData<T>);
-
 /// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
 ///
 /// By opting into `Pod`, you are telling wincode that it can serialize and deserialize a type
@@ -230,7 +221,7 @@ where
     }
 
     #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(writer.write_t(src)?) }
     }
@@ -247,52 +238,9 @@ where
         zero_copy: true,
     };
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: `T` is plain ol' data.
         unsafe { Ok(reader.copy_into_t(dst)?) }
-    }
-}
-
-// Provide `SchemaWrite` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaWrite`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Elem<T>
-where
-    T: SchemaWrite<C>,
-{
-    type Src = T::Src;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        T::size_of(src)
-    }
-
-    #[inline]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
-        T::write(writer, src)
-    }
-}
-
-// Provide `SchemaRead` implementation for `Elem<T>` for backwards compatibility.
-//
-// Container impls use blanket implementations over `T` where `T` is `SchemaRead`,
-// so this preserves existing behavior, such that `Elem<T>` behaves exactly like `T`.
-#[allow(deprecated)]
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Elem<T>
-where
-    T: SchemaRead<'de, C>,
-{
-    type Dst = T::Dst;
-
-    const TYPE_META: TypeMeta = T::TYPE_META;
-
-    #[inline]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        T::read(reader, dst)
     }
 }
 
@@ -311,7 +259,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
     }
 }
@@ -324,8 +272,8 @@ where
 {
     type Dst = vec::Vec<T::Dst>;
 
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = Len::read_prealloc_check::<T::Dst>(reader)?;
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
 
         match T::TYPE_META {
@@ -348,7 +296,7 @@ where
                 // will consume `size * len` bytes, fully consuming the trusted window.
                 let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
                 for i in 0..len {
-                    T::read(&mut reader, unsafe { &mut *ptr })?;
+                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
                     unsafe {
                         ptr = ptr.add(1);
                         #[allow(clippy::arithmetic_side_effects)]
@@ -360,7 +308,7 @@ where
             TypeMeta::Dynamic => {
                 let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
                 for i in 0..len {
-                    T::read(reader, unsafe { &mut *ptr })?;
+                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
                     unsafe {
                         ptr = ptr.add(1);
                         #[allow(clippy::arithmetic_side_effects)]
@@ -425,7 +373,7 @@ macro_rules! impl_heap_slice {
             }
 
             #[inline(always)]
-            fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+            fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
                 write_elem_slice_prealloc_check::<T, Len, C>(writer, src)
             }
         }
@@ -440,7 +388,7 @@ macro_rules! impl_heap_slice {
 
             #[inline(always)]
             fn read(
-                reader: &mut impl Reader<'de>,
+                mut reader: impl Reader<'de>,
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 /// Drop guard for `TypeMeta::Static { zero_copy: true }` types.
@@ -498,7 +446,7 @@ macro_rules! impl_heap_slice {
                     }
                 }
 
-                let len = Len::read_prealloc_check::<T::Dst>(reader)?;
+                let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
 
@@ -525,14 +473,14 @@ macro_rules! impl_heap_slice {
                         // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
                         #[allow(clippy::arithmetic_side_effects)]
-                        let reader = &mut unsafe { reader.as_trusted_for(size * len) }?;
+                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
                         for i in 0..len {
                             // SAFETY:
                             // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
                             // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
                             //   less than `len`.
                             let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader, slot)?;
+                            T::read(reader.by_ref(), slot)?;
                             guard.inner.inc_len();
                         }
 
@@ -550,7 +498,7 @@ macro_rules! impl_heap_slice {
                             // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
                             //   less than `len`.
                             let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader, slot)?;
+                            T::read(reader.by_ref(), slot)?;
                             guard.inner.inc_len();
                         }
 
@@ -592,7 +540,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         if let TypeMeta::Static {
             size,
             zero_copy: true,
@@ -603,9 +551,9 @@ where
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
-            let writer = &mut unsafe { writer.as_trusted_for(needed) }?;
+            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
 
-            Len::write(writer, src.len())?;
+            Len::write(writer.by_ref(), src.len())?;
             let (front, back) = src.as_slices();
             // SAFETY:
             // - `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -633,7 +581,7 @@ where
     type Dst = collections::VecDeque<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // Leverage the contiguous read optimization of `Vec`.
         // From<Vec<T>> for VecDeque<T> is basically free.
         let vec = <Vec<T, Len>>::get(reader)?;
@@ -661,7 +609,7 @@ where
     }
 
     #[inline(always)]
-    fn write(writer: &mut impl Writer, src: &Self::Src) -> WriteResult<()> {
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
         write_elem_slice_prealloc_check::<T, Len, C>(writer, src.as_slice())
     }
 }
@@ -676,7 +624,7 @@ where
     type Dst = collections::BinaryHeap<T::Dst>;
 
     #[inline(always)]
-    fn read(reader: &mut impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let vec = <Vec<T, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));
