@@ -167,10 +167,6 @@ fn impl_enum(
                 let unskipped_targets =
                     fields.unskipped_iter().map(|field| field.target_resolved());
 
-                // Prefix disambiguation needed, as our match statement will destructure enum variant identifiers.
-                let static_anon_idents = fields
-                    .unskipped_anon_ident_iter(Some("__"))
-                    .collect::<Vec<_>>();
                 let static_targets = unskipped_targets
                     .clone()
                     .map(|target| quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META})
@@ -178,8 +174,8 @@ fn impl_enum(
                 (
                     quote! {
                         #match_case => {
-                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*) {
-                                return Ok(disc_size + #(#static_anon_idents)+*);
+                            if let TypeMeta::Static { size, .. } = TypeMeta::join_types([<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*]) {
+                                return Ok(size);
                             }
 
                             let mut total = #size_of_discriminant;
@@ -192,8 +188,7 @@ fn impl_enum(
                     },
                     quote! {
                         #match_case => {
-                            if let (TypeMeta::Static { size: disc_size, .. } #(,TypeMeta::Static { size: #static_anon_idents, .. })*) = (<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*) {
-                                let summed_sizes = disc_size + #(#static_anon_idents)+*;
+                            if let TypeMeta::Static { size: summed_sizes, .. } = TypeMeta::join_types([<#tag_encoding as SchemaWrite<WincodeConfig>>::TYPE_META #(,#static_targets)*]) {
                                 // SAFETY: `summed_sizes` is the sum of the static sizes of the fields + the discriminant size,
                                 // which is the serialized size of the variant.
                                 // Writing the discriminant and then calling `write` on each field will write

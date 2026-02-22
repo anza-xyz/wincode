@@ -105,6 +105,47 @@ impl TypeMeta {
             _ => panic!("Type is not static"),
         }
     }
+
+    /// Returns type overriding static type's `zero_copy` to `false` (if `keep_zero_copy == false`)
+    ///
+    /// Note: type is never upgraded to `zero_copy` if it wasn't such before.
+    pub const fn with_zero_copy(self, keep_zero_copy: bool) -> Self {
+        match self {
+            Self::Static { size, zero_copy } => TypeMeta::Static {
+                size,
+                zero_copy: zero_copy && keep_zero_copy,
+            },
+            Self::Dynamic => Self::Dynamic,
+        }
+    }
+
+    /// Aggregate `types` assuming they are placed in memory and serialized together
+    ///
+    /// Returns `Static` type if all types are static:
+    /// * with `size` equal to sum of individual sizes and
+    /// * `zero_copy` set to true if all types are zero-copy.
+    ///
+    /// Returns `Dynamic` type if any of the `types` is dynamic.
+    #[expect(clippy::arithmetic_side_effects)]
+    pub const fn join_types<const N: usize>(types: [Self; N]) -> Self {
+        let mut acc_size = 0;
+        let mut all_zero_copy = true;
+        let mut i = 0;
+        while i < N {
+            match types[i] {
+                Self::Dynamic => return Self::Dynamic,
+                Self::Static { size, zero_copy } => {
+                    acc_size += size;
+                    all_zero_copy &= zero_copy;
+                }
+            }
+            i += 1;
+        }
+        Self::Static {
+            size: acc_size,
+            zero_copy: all_zero_copy,
+        }
+    }
 }
 
 /// Types that can be written (serialized) to a [`Writer`].

@@ -210,7 +210,6 @@ fn impl_enum(
                     .collect::<Vec<_>>();
 
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let static_anon_idents = fields.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
                 let static_targets = fields.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
                     quote! {<#target as SchemaRead<'de, WincodeConfig>>::TYPE_META}
@@ -228,8 +227,7 @@ fn impl_enum(
 
                 quote! {
                     #discriminant => {
-                        if let (#(TypeMeta::Static { size: #static_anon_idents, .. }),*) = (#(#static_targets),*) {
-                            let summed_sizes = #(#static_anon_idents)+*;
+                        if let TypeMeta::Static { size: summed_sizes, .. } = TypeMeta::join_types([#(#static_targets),*]) {
                             // SAFETY: `summed_sizes` is the sum of the static sizes of the fields,
                             // which is the serialized size of the variant.
                             // Calling `read` on each field will consume exactly `summed_sizes` bytes,

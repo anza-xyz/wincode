@@ -206,27 +206,6 @@ pub(crate) trait FieldsExt {
     /// If the field has a named identifier, return it.
     /// Otherwise (tuple struct), return an anonymous identifier.
     fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)>;
-    /// Get an iterator over unskipped type members as anonymous identifiers.
-    ///
-    /// If `prefix` is provided, the identifiers will be prefixed with the given str.
-    /// Fields with `skip` attribute are omitted in the iterator.
-    ///
-    /// Useful for tuple destructuring where using an index of a tuple struct as an identifier would
-    /// incorrectly match a literal integer.
-    ///
-    /// E.g., given the struct:
-    /// ```
-    /// struct Foo(u8, u16);
-    /// ```
-    /// Iterating over the identifiers would yield [0, 1].
-    ///
-    /// Using these integer identifiers in a match statement when determining static size, for example, is incorrect:
-    /// ```ignore
-    /// if let (TypeMeta::Static { size: 0, .. }) = (<field as SchemaWrite>::TYPE_META) {
-    /// ```
-    ///
-    /// You actually want an anonymous identifier, like `a`, `b`, etc.
-    fn unskipped_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident>;
     /// Get an iterator over the fields and their identifiers for the enum members.
     ///
     /// If the field has a named identifier, return it.
@@ -262,12 +241,6 @@ impl FieldsExt for Fields<Field> {
                 quote! { #(#items),* }
             }
         };
-        // No need to prefix, as this is only used in a struct context, where the static size is
-        // known at compile time.
-        let anon_idents = self.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
-        let zero_copy_idents = self
-            .unskipped_anon_ident_iter(Some("zc_"))
-            .collect::<Vec<_>>();
         let is_zero_copy_eligible = repr.is_zero_copy_eligible();
         // Extract sizes and zero-copy flags from the TYPE_META implementations of the fields of the struct.
         // We can use this in aggregate to determine the static size and zero-copy eligibility of the struct.
@@ -276,17 +249,14 @@ impl FieldsExt for Fields<Field> {
         // - The zero-copy eligibility of a struct is the logical AND of the zero-copy eligibility flags of its fields
         //   and the zero-copy eligibility the struct representation (e.g., `#[repr(transparent)]` or `#[repr(C)]`).
         quote! {
-            // This will simultaneously only match if all fields are `TypeMeta::Static`, and extract the sizes and zero-copy flags
-            // for each field.
-            // If any field is not `TypeMeta::Static`, the entire match will fail, and we will fall through to the `Dynamic` case.
-            if let (#(TypeMeta::Static { size: #anon_idents, zero_copy: #zero_copy_idents }),*) = (#tuple_expansion) {
-                let serialized_size = #(#anon_idents)+*;
+            // If any field is not `TypeMeta::Static`, the sum type will not match and `Dynamic` case will be used
+            if let TypeMeta::Static { size: serialized_size, zero_copy } = TypeMeta::join_types([#tuple_expansion]) {
                 // Bincode never serializes padding, so for types to qualify for zero-copy, the summed serialized size of
                 // the fields must be equal to the in-memory size of the type. This is because zero-copy types
                 // may be read/written directly using their in-memory representation; padding disqualifies a type
                 // from this kind of optimization.
                 let no_padding = serialized_size == core::mem::size_of::<Self>();
-                TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && #(#zero_copy_idents)&&* }
+                TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && zero_copy }
             } else {
                 TypeMeta::Dynamic
             }
@@ -297,11 +267,6 @@ impl FieldsExt for Fields<Field> {
         self.iter()
             .enumerate()
             .map(|(i, field)| (field, field.struct_member_ident(i)))
-    }
-
-    fn unskipped_anon_ident_iter(&self, prefix: Option<&str>) -> impl Iterator<Item = Ident> {
-        let len = self.unskipped_iter().count();
-        anon_ident_iter(prefix).take(len)
     }
 
     fn enum_members_iter(
@@ -421,20 +386,10 @@ impl VariantsExt for &[Variant] {
                             quote! { #(#items),* }
                         },
                     };
-                    let anon_idents = variant.fields.unskipped_anon_ident_iter(None).collect::<Vec<_>>();
-
                     // Assign the `TYPE_META` to a local variant identifier (`#ident`).
                     quote! {
-                        // Extract the discriminant size and the sizes of the fields.
-                        //
-                        // If all the fields are `TypeMeta::Static`, the variant is static.
-                        // Otherwise, the variant is dynamic.
-                        let #ident = if let (TypeMeta::Static { size: disc_size, .. }, #(TypeMeta::Static { size: #anon_idents, .. }),*) = (#tag_expr, #fields_type_meta_expansion) {
-                            // Sum the discriminant size and the sizes of the fields.
-                            TypeMeta::Static { size: disc_size + #(#anon_idents)+*, zero_copy: false }
-                        } else {
-                            TypeMeta::Dynamic
-                        };
+                        // Sum the discriminant size and the sizes of the fields. Enums are never zero-copy
+                        let #ident = TypeMeta::join_types([#tag_expr, #fields_type_meta_expansion]).with_zero_copy(false);
                     }
                 }
                 Style::Unit => {

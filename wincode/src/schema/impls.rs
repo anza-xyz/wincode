@@ -839,15 +839,7 @@ macro_rules! impl_heap_container {
         {
             type Src = $container<T::Src>;
 
-            const TYPE_META: TypeMeta = const {
-                match T::TYPE_META {
-                    TypeMeta::Static { size, .. } => TypeMeta::Static {
-                        size,
-                        zero_copy: false,
-                    },
-                    TypeMeta::Dynamic => TypeMeta::Dynamic,
-                }
-            };
+            const TYPE_META: TypeMeta = T::TYPE_META.with_zero_copy(false);
 
             #[inline]
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -867,15 +859,7 @@ macro_rules! impl_heap_container {
         {
             type Dst = $container<T::Dst>;
 
-            const TYPE_META: TypeMeta = const {
-                match T::TYPE_META {
-                    TypeMeta::Static { size, .. } => TypeMeta::Static {
-                        size,
-                        zero_copy: false,
-                    },
-                    TypeMeta::Dynamic => TypeMeta::Dynamic,
-                }
-            };
+            const TYPE_META: TypeMeta = T::TYPE_META.with_zero_copy(false);
 
             #[inline]
             fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {

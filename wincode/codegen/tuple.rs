@@ -65,29 +65,12 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
             quote! { <#ident as crate::SchemaRead<'de, Cfg>>::TYPE_META }
         });
 
-        let mut alpha = 'a'..='z';
-        let static_idents = (0..arity)
-            .map(|_| {
-                let char_byte = [alpha.next().unwrap() as u8];
-                let str = unsafe { str::from_utf8_unchecked(&char_byte) };
-                Ident::new(str, Span::call_site())
-            })
-            .collect::<Vec<_>>();
-
         // Tuples don't have guaranteed layout, so we never mark them as zero-copy.
         let static_size_impl_write = quote! {
-            if let (#(TypeMeta::Static { size: #static_idents, .. }),*) = (#(#write_static_size),*) {
-                TypeMeta::Static { size: #(#static_idents)+*, zero_copy: false }
-            } else {
-                TypeMeta::Dynamic
-            }
+            TypeMeta::join_types([#(#write_static_size),*]).with_zero_copy(false)
         };
         let static_size_impl_read = quote! {
-            if let (#(TypeMeta::Static { size: #static_idents, .. }),*) = (#(#read_static_size),*) {
-                TypeMeta::Static { size: #(#static_idents)+*, zero_copy: false }
-            } else {
-                TypeMeta::Dynamic
-            }
+            TypeMeta::join_types([#(#read_static_size),*]).with_zero_copy(false)
         };
 
         let drop_arms = (0..arity).map(|init_count| {
