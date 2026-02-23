@@ -389,7 +389,7 @@ impl VariantsExt for &[Variant] {
                     // Assign the `TYPE_META` to a local variant identifier (`#ident`).
                     quote! {
                         // Sum the discriminant size and the sizes of the fields. Enums are never zero-copy
-                        let #ident = TypeMeta::join_types([#tag_expr, #fields_type_meta_expansion]).with_zero_copy(false);
+                        let #ident = TypeMeta::join_types([#tag_expr, #fields_type_meta_expansion]).keep_zero_copy(false);
                     }
                 }
                 Style::Unit => {

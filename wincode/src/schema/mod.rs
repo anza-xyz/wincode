@@ -109,7 +109,7 @@ impl TypeMeta {
     /// Returns type overriding static type's `zero_copy` to `false` (if `keep_zero_copy == false`)
     ///
     /// Note: type is never upgraded to `zero_copy` if it wasn't such before.
-    pub const fn with_zero_copy(self, keep_zero_copy: bool) -> Self {
+    pub const fn keep_zero_copy(self, keep_zero_copy: bool) -> Self {
         match self {
             Self::Static { size, zero_copy } => TypeMeta::Static {
                 size,

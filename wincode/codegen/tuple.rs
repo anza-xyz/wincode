@@ -67,10 +67,10 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
 
         // Tuples don't have guaranteed layout, so we never mark them as zero-copy.
         let static_size_impl_write = quote! {
-            TypeMeta::join_types([#(#write_static_size),*]).with_zero_copy(false)
+            TypeMeta::join_types([#(#write_static_size),*]).keep_zero_copy(false)
         };
         let static_size_impl_read = quote! {
-            TypeMeta::join_types([#(#read_static_size),*]).with_zero_copy(false)
+            TypeMeta::join_types([#(#read_static_size),*]).keep_zero_copy(false)
         };
 
         let drop_arms = (0..arity).map(|init_count| {
