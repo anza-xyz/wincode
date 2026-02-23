@@ -4,6 +4,7 @@ use {
         io::{Reader, Writer},
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
+    alloc::boxed::Box,
     bytes::{Bytes, BytesMut},
     core::mem::MaybeUninit,
 };
