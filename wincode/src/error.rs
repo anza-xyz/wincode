@@ -34,6 +34,8 @@ pub enum ReadError {
     Io(#[from] io::ReadError),
     #[error(transparent)]
     InvalidUtf8Encoding(#[from] Utf8Error),
+    #[error("Decoded UTF-8 value {0} is not a valid character")]
+    InvalidUtf8Code(u32),
     #[error("Could not cast integer type to pointer sized type")]
     PointerSizedReadError,
     #[error(

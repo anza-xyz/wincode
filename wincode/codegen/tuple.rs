@@ -35,7 +35,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
         let write_impl = params
             .iter()
             .zip(&idxs)
-            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::write(&mut writer, &value.#i)?; ))
+            .map(|(ident, i)| quote!( <#ident as crate::SchemaWrite<Cfg>>::write(writer.by_ref(), &value.#i)?; ))
             .collect::<Vec<_>>();
 
         let read_impl = params
@@ -50,7 +50,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                 };
                 quote! {
                     <#ident as crate::SchemaRead<'de, Cfg>>::read(
-                        &mut reader,
+                        reader.by_ref(),
                         unsafe { &mut *(&raw mut (*dst_ptr).#index).cast() }
                     )?;
                     #init_count
@@ -158,6 +158,7 @@ pub fn generate(arity: usize, mut out: impl Write) -> Result<()> {
                     dst: &mut core::mem::MaybeUninit<Self::Dst>
                 ) -> crate::ReadResult<()>
                 {
+                    use crate::io::Reader;
                     let dst_ptr = dst.as_mut_ptr();
                     struct DropGuard<#(#params),*> {
                         init_count: u8,

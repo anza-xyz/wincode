@@ -330,17 +330,17 @@ where
         // `Len::write` and len writes of `T::Src` will write `needed` bytes,
         // fully initializing the trusted window.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(&mut writer, src.len())?;
+        Len::write(writer.by_ref(), src.len())?;
         for item in src {
-            T::write(&mut writer, item)?;
+            T::write(writer.by_ref(), item)?;
         }
         writer.finish()?;
         return Ok(());
     }
 
-    Len::write(&mut writer, src.len())?;
+    Len::write(writer.by_ref(), src.len())?;
     for item in src {
-        T::write(&mut writer, item)?;
+        T::write(writer.by_ref(), item)?;
     }
     Ok(())
 }
@@ -380,7 +380,7 @@ where
         // `Len::write` and `writer.write(src)` will write `needed` bytes,
         // fully initializing the trusted window.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(&mut writer, src.len())?;
+        Len::write(writer.by_ref(), src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
         writer.finish()?;
@@ -406,19 +406,19 @@ where
 
 #[cfg(all(test, feature = "std", feature = "derive"))]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects, deprecated)]
+    #![allow(clippy::arithmetic_side_effects)]
 
     use {
         crate::{
             config::{self, Config, Configuration, DefaultConfig},
-            containers::{self, Elem, Pod},
+            containers::{self, Pod},
             deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
             len::{BincodeLen, FixIntLen},
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
-            WriteResult, ZeroCopy,
+            UninitBuilder, WriteResult, ZeroCopy,
         },
         bincode::Options,
         core::{marker::PhantomData, ptr},
@@ -426,14 +426,15 @@ mod tests {
         std::{
             alloc::Layout,
             cell::Cell,
-            collections::{BinaryHeap, VecDeque},
+            collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+            hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
             num::{
                 NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize,
                 NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
             },
-            ops::{Deref, DerefMut},
+            ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -1085,9 +1086,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_builder_handles_partial_drop() {
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             a: DropCounted,
             b: DropCounted,
@@ -1101,14 +1102,14 @@ mod tests {
                 let mut test = MaybeUninit::<Test>::uninit();
                 let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut test);
-                builder.read_a(&mut reader)?.read_b(&mut reader)?;
+                builder.read_a(reader.by_ref())?.read_b(reader.by_ref())?;
                 prop_assert!(!builder.is_init());
                 // Struct is not fully initialized, so the two initialized fields should be dropped.
             });
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         // Same test, but with a tuple struct.
         struct TestTuple(DropCounted, DropCounted);
 
@@ -1127,17 +1128,17 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_nested_builder_handles_partial_drop() {
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_nested_builder_handles_partial_drop() {
+        #[derive(SchemaWrite, SchemaRead, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Inner {
             a: DropCounted,
             b: DropCounted,
             c: DropCounted,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             inner: Inner,
             b: DropCounted,
@@ -1153,9 +1154,9 @@ mod tests {
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(&mut reader)?;
-                        inner_builder.read_b(&mut reader)?;
-                        inner_builder.read_c(&mut reader)?;
+                        inner_builder.read_a(reader.by_ref())?;
+                        inner_builder.read_b(reader.by_ref())?;
+                        inner_builder.read_c(reader.by_ref())?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
@@ -1167,17 +1168,19 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_nested_fully_initialized() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_nested_fully_initialized() {
+        #[derive(
+            SchemaWrite, SchemaRead, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
         struct Inner {
             a: DropCounted,
             b: DropCounted,
             c: DropCounted,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             inner: Inner,
             b: DropCounted,
@@ -1193,15 +1196,15 @@ mod tests {
                 unsafe {
                     outer_builder.init_inner_with(|inner| {
                         let mut inner_builder = InnerUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(inner);
-                        inner_builder.read_a(&mut reader)?;
-                        inner_builder.read_b(&mut reader)?;
-                        inner_builder.read_c(&mut reader)?;
+                        inner_builder.read_a(reader.by_ref())?;
+                        inner_builder.read_b(reader.by_ref())?;
+                        inner_builder.read_c(reader.by_ref())?;
                         assert!(inner_builder.is_init());
                         inner_builder.finish();
                         Ok(())
                     })?;
                 }
-                outer_builder.read_b(&mut reader)?;
+                outer_builder.read_b(reader.by_ref())?;
                 prop_assert!(outer_builder.is_init());
                 outer_builder.finish();
                 let init = unsafe { uninit.assume_init() };
@@ -1211,7 +1214,67 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions() {
+    fn test_uninit_builder() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut reader = serialized.as_slice();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
+    fn test_uninit_builder_uninit_ref() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: [u8; 32],
+            c: u64,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut reader = serialized.as_slice();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
+                .write_c(test.c);
+            prop_assert!(builder.is_init());
+
+            unsafe {
+                prop_assert_eq!(builder.uninit_a_ref().assume_init_ref(), &test.a);
+                prop_assert_eq!(builder.uninit_b_ref().assume_init_ref(), &test.b);
+                prop_assert_eq!(builder.uninit_c_ref().assume_init_ref(), &test.c);
+            }
+
+            builder.finish();
+            let init = unsafe { uninit.assume_init() };
+            prop_assert_eq!(test, init);
+        });
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_struct_extensions_sanity() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal, struct_extensions)]
         struct Test {
@@ -1226,8 +1289,8 @@ mod tests {
             let mut reader = serialized.as_slice();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .read_a(&mut reader)?
-                .read_b(&mut reader)?
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
                 .write_c(test.c);
             prop_assert!(builder.is_init());
             builder.finish();
@@ -1237,9 +1300,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_container() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_with_container() {
+        #[derive(UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
             a: Vec<u8>,
@@ -1265,16 +1328,15 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_reference() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal)]
+    fn test_uninit_builder_extensions_with_reference() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         struct Test {
             a: Vec<u8>,
             b: Option<String>,
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(UninitBuilder, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
         struct TestRef<'a> {
             a: &'a [u8],
             b: Option<&'a str>,
@@ -1295,17 +1357,17 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_with_mapped_type() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal)]
+    fn test_uninit_builder_with_mapped_type() {
+        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         struct Test {
             a: Vec<u8>,
             b: [u8; 32],
             c: u64,
         }
 
-        #[derive(SchemaWrite, SchemaRead)]
-        #[wincode(internal, from = "Test", struct_extensions)]
+        #[derive(UninitBuilder)]
+        #[wincode(internal, from = "Test")]
+        #[allow(unused)]
         struct TestMapped {
             a: containers::Vec<containers::Pod<u8>, BincodeLen>,
             b: containers::Pod<[u8; 32]>,
@@ -1327,9 +1389,9 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_extensions_builder_fully_initialized() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_builder_fully_initialized() {
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         struct Test {
             a: DropCounted,
             b: DropCounted,
@@ -1344,9 +1406,9 @@ mod tests {
                 let mut reader = serialized.as_slice();
                 let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_a(&mut reader)?
-                    .read_b(&mut reader)?
-                    .read_c(&mut reader)?;
+                    .read_a(reader.by_ref())?
+                    .read_b(reader.by_ref())?
+                    .read_c(reader.by_ref())?;
                 prop_assert!(builder.is_init());
                 let init = unsafe { builder.into_assume_init_mut() };
                 prop_assert_eq!(&test, init);
@@ -1356,8 +1418,8 @@ mod tests {
             });
         }
 
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
         // Same test, but with a tuple struct.
         struct TestTuple(DropCounted, DropCounted);
 
@@ -1369,8 +1431,8 @@ mod tests {
                 let mut reader = serialized.as_slice();
                 let mut builder = TestTupleUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
                 builder
-                    .read_0(&mut reader)?
-                    .read_1(&mut reader)?;
+                    .read_0(reader.by_ref())?
+                    .read_1(reader.by_ref())?;
                 assert!(builder.is_init());
                 builder.finish();
 
@@ -1378,6 +1440,46 @@ mod tests {
                 prop_assert_eq!(test, init);
             });
         }
+    }
+
+    #[test]
+    #[cfg(feature = "solana-short-vec")]
+    fn test_uninit_builder_with() {
+        use crate::len::ShortU16;
+
+        #[derive(
+            SchemaWrite,
+            UninitBuilder,
+            Debug,
+            PartialEq,
+            Eq,
+            proptest_derive::Arbitrary,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Test {
+            #[wincode(with = "containers::Vec<u8, ShortU16>")]
+            #[serde(with = "solana_short_vec")]
+            foo: Vec<u8>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let bincode_serialized = bincode::serialize(&test).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let bincode_deserialized: Test = bincode::deserialize(&bincode_serialized).unwrap();
+            let mut uninit = MaybeUninit::<Test>::uninit();
+            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            let mut reader = serialized.as_slice();
+            builder.read_foo(reader.by_ref())?;
+            builder.finish();
+            let deserialized = unsafe { uninit.assume_init() };
+
+            prop_assert_eq!(&test, &bincode_deserialized);
+            prop_assert_eq!(test, deserialized);
+        });
     }
 
     #[test]
@@ -2229,30 +2331,6 @@ mod tests {
         }
 
         #[test]
-        fn test_elem_compat(val in any::<StructStatic>()) {
-            let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <Elem<StructStatic>>::serialize(&val).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: StructStatic = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: StructStatic = <Elem<StructStatic>>::deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&val, &bincode_deserialized);
-            prop_assert_eq!(val, schema_deserialized);
-        }
-
-        #[test]
-        fn test_elem_vec_compat(val in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
-            let bincode_serialized = bincode::serialize(&val).unwrap();
-            let schema_serialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::serialize(&val).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: Vec<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized = <containers::Vec<Elem<StructStatic>, BincodeLen>>::deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&val, &bincode_deserialized);
-            prop_assert_eq!(val, schema_deserialized);
-        }
-
-        #[test]
         fn test_vec_elem_static(vec in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(&vec).unwrap();
             let schema_serialized = serialize(&vec).unwrap();
@@ -2426,6 +2504,46 @@ mod tests {
             prop_assert_eq!(&set, &bincode_deserialized);
             prop_assert_eq!(set, schema_deserialized);
         }
+
+        #[test]
+        fn test_sequences_with_hasher(data in proptest::collection::hash_map(any::<String>(), any::<HashSet<u32>>(), 0..16)) {
+            #[derive(Default)]
+            struct SumHasher(u64);
+
+            impl BuildHasher for SumHasher {
+                type Hasher = Self;
+                fn build_hasher(&self) -> Self::Hasher {
+                    Self(0)
+                }
+            }
+            impl Hasher for SumHasher {
+                fn finish(&self) -> u64 {
+                    self.0
+                }
+
+                fn write(&mut self, bytes: &[u8]) {
+                    self.0 += bytes.iter().map(|b| *b as u64).sum::<u64>();
+                }
+            }
+
+            type TestMap = HashMap<String, HashSet<u32, SumHasher>, SumHasher>;
+            let test_data: TestMap = data.into_iter().map(|(k, v)| (k, HashSet::from_iter(v.into_iter()))).collect();
+            let wincode_serialized = serialize(&test_data).unwrap();
+            let bincode_serialized = bincode::serialize(&test_data).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: TestMap = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: TestMap = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&test_data, &wincode_deserialized);
+            prop_assert_eq!(wincode_deserialized, bincode_deserialized);
+
+            type RegularMap = HashMap<String, HashSet<u32>>;
+            let regular_deserialized: RegularMap = deserialize(&wincode_serialized).unwrap();
+            let regular_serialized = serialize(&regular_deserialized).unwrap();
+            let test_deserialized: TestMap = deserialize(&regular_serialized).unwrap();
+            prop_assert_eq!(test_data, test_deserialized);
+        }
+
 
         #[test]
         fn test_btree_map_zero_copy(map in proptest::collection::btree_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {
@@ -3535,6 +3653,193 @@ mod tests {
     }
 
     #[test]
+    fn test_bound_included_u64() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Included(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_excluded_u64() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Excluded(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_included_string() {
+        proptest!(proptest_cfg(), |(value in any::<String>())| {
+            let bound = Bound::Included(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_excluded_string() {
+        proptest!(proptest_cfg(), |(value in any::<String>())| {
+            let bound = Bound::Excluded(value);
+            let serialized = serialize(&bound).unwrap();
+            let deserialized: Bound<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&bound, &deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_included_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Included(value);
+            let wincode_serialized = serialize(&bound).unwrap();
+            let bincode_serialized = bincode::serialize(&bound).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Bound<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Bound<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&bound, &wincode_deserialized);
+            prop_assert_eq!(&wincode_deserialized, &bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_excluded_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(value in any::<u64>())| {
+            let bound = Bound::Excluded(value);
+            let wincode_serialized = serialize(&bound).unwrap();
+            let bincode_serialized = bincode::serialize(&bound).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Bound<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: Bound<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&bound, &wincode_deserialized);
+            prop_assert_eq!(&wincode_deserialized, &bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_range_u64() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = Range { start, end };
+            let serialized = serialize(&range).unwrap();
+            let deserialized: Range<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(range.start, deserialized.start);
+            prop_assert_eq!(range.end, deserialized.end);
+        });
+    }
+
+    #[test]
+    fn test_range_string() {
+        proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
+            let range = Range { start, end };
+            let serialized = serialize(&range).unwrap();
+            let deserialized: Range<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&range.start, &deserialized.start);
+            prop_assert_eq!(&range.end, &deserialized.end);
+        });
+    }
+
+    #[test]
+    fn test_range_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = Range { start, end };
+            let wincode_serialized = serialize(&range).unwrap();
+            let bincode_serialized = bincode::serialize(&range).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: Range<u64> = deserialize(&wincode_serialized).unwrap(); //happens here
+            let bincode_deserialized: Range<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(range.start, wincode_deserialized.start);
+            prop_assert_eq!(range.end, wincode_deserialized.end);
+            prop_assert_eq!(wincode_deserialized.start, bincode_deserialized.start);
+            prop_assert_eq!(wincode_deserialized.end, bincode_deserialized.end);
+        });
+    }
+
+    #[test]
+    fn test_range_inclusive_u64() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = RangeInclusive::new(start, end);
+            let serialized = serialize(&range).unwrap();
+            let deserialized: RangeInclusive<u64> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(range.start(), deserialized.start());
+            prop_assert_eq!(range.end(), deserialized.end());
+        });
+    }
+
+    #[test]
+    fn test_range_inclusive_string() {
+        proptest!(proptest_cfg(), |(start in any::<String>(), end in any::<String>())| {
+            let range = RangeInclusive::new(start, end );
+            let serialized = serialize(&range).unwrap();
+            let deserialized: RangeInclusive<String> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(&range.start(), &deserialized.start());
+            prop_assert_eq!(&range.end(), &deserialized.end());
+        });
+    }
+
+    #[test]
+    fn test_range_inclusive_bincode_equivalence() {
+        proptest!(proptest_cfg(), |(start in any::<u64>(), end in any::<u64>())| {
+            let range = RangeInclusive::new(start, end );
+            let wincode_serialized = serialize(&range).unwrap();
+            let bincode_serialized = bincode::serialize(&range).unwrap();
+            prop_assert_eq!(&wincode_serialized, &bincode_serialized);
+
+            let wincode_deserialized: RangeInclusive<u64> = deserialize(&wincode_serialized).unwrap();
+            let bincode_deserialized: RangeInclusive<u64> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(range.start(), wincode_deserialized.start());
+            prop_assert_eq!(range.end(), wincode_deserialized.end());
+            prop_assert_eq!(wincode_deserialized.start(), bincode_deserialized.start());
+            prop_assert_eq!(wincode_deserialized.end(), bincode_deserialized.end());
+        });
+    }
+
+    #[test]
+    fn test_range_vec_u64() {
+        proptest!(proptest_cfg(), |(ranges: Vec<Range<u64>>)| {
+            let serialized = serialize(&ranges).unwrap();
+            let bincode_serialized = bincode::serialize(&ranges).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Vec<Range<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<Range<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_range_inclusive_vec_u64() {
+        proptest!(proptest_cfg(), |(ranges: Vec<RangeInclusive<u64>>)| {
+            let serialized = serialize(&ranges).unwrap();
+            let bincode_serialized = bincode::serialize(&ranges).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Vec<RangeInclusive<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<RangeInclusive<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_bound_vec_u64() {
+        proptest!(proptest_cfg(), |(bounds: Vec<Bound<u64>>)| {
+            let serialized = serialize(&bounds).unwrap();
+            let bincode_serialized = bincode::serialize(&bounds).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+
+            let deserialized: Vec<Bound<u64>> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Vec<Bound<u64>> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(deserialized, bincode_deserialized);
+        });
+    }
+
+    #[test]
     fn test_byte_order_configuration() {
         let c = Configuration::default().with_big_endian();
         let bincode_c = bincode::DefaultOptions::new()
@@ -3587,6 +3892,19 @@ mod tests {
             let deserialized: Vec<u8> = config::deserialize(&serialized, c).unwrap();
             let len = value.len();
             prop_assert_eq!(len, u32::from_be_bytes(serialized[0..4].try_into().unwrap()) as usize);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_custom_primitive_length_encoding() {
+        let c = Configuration::default().with_length_encoding::<u32>();
+
+        proptest!(proptest_cfg(), |(value: Vec<u8>)| {
+            let serialized = config::serialize(&value, c).unwrap();
+            let deserialized: Vec<u8> = config::deserialize(&serialized, c).unwrap();
+            let len = value.len();
+            prop_assert_eq!(len, u32::from_le_bytes(serialized[0..4].try_into().unwrap()) as usize);
             prop_assert_eq!(value, deserialized);
         });
     }
@@ -3953,5 +4271,27 @@ mod tests {
             prop_assert_eq!(&deserialized, &bincode_deserialized);
             prop_assert_eq!(value, deserialized);
         });
+    }
+
+    #[test]
+    fn test_recursive_type() {
+        #[derive(
+            SchemaWrite, SchemaRead, PartialEq, Debug, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        pub enum Value {
+            Usize(usize),
+            List(Vec<Value>),
+        }
+
+        let val = Value::List(vec![Value::Usize(0), Value::List(vec![Value::Usize(1)])]);
+        let bincode_serialized = bincode::serialize(&val).unwrap();
+        let serialized = serialize(&val).unwrap();
+        assert_eq!(&bincode_serialized, &serialized);
+
+        let deserialized: Value = deserialize(&serialized).unwrap();
+        let bincode_deserialized: Value = bincode::deserialize(&bincode_serialized).unwrap();
+        assert_eq!(&val, &bincode_deserialized);
+        assert_eq!(val, deserialized);
     }
 }

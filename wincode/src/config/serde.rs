@@ -1,4 +1,6 @@
 //! Configuration-aware serialize / deserialize traits and functions.
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
 use {
     crate::{
         config::{Config, ConfigCore},
@@ -16,7 +18,7 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
         let capacity = Self::size_of(src)?;
         let mut buffer = Vec::with_capacity(capacity);
         let mut writer = buffer.spare_capacity_mut();
-        Self::serialize_into(&mut writer, src, config)?;
+        Self::serialize_into(writer.by_ref(), src, config)?;
         let len = writer.len();
         unsafe {
             #[allow(clippy::arithmetic_side_effects)]
@@ -29,7 +31,7 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
     #[inline]
     #[expect(unused_variables)]
     fn serialize_into(mut dst: impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
-        Self::write(&mut dst, src)?;
+        Self::write(dst.by_ref(), src)?;
         dst.finish()?;
         Ok(())
     }

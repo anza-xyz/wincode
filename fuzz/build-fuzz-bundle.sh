@@ -2,7 +2,7 @@
 
 set -e
 
-# Get the commit hash (short version, 10 chars like in the example)
+# Get the commit hash
 COMMIT=$(git rev-parse --short=10 HEAD)
 
 # Get the repository URL
@@ -74,6 +74,7 @@ for target in "${targets[@]}"; do
 			"SeedCorpusGroup": "$target",
 			"Confs": [
 				{
+					"Name": "$target",
 					"Driver": {
 						"Type": "libfuzzer",
 						"Params": {

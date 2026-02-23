@@ -1,6 +1,6 @@
 [package]
 name = "wincode"
-version = "0.4.0"
+version = "0.4.4"
 authors.workspace = true
 description = "Fast bincode de/serialization with placement initialization"
 repository.workspace = true
@@ -29,9 +29,9 @@ uuid-serde-compat = ["uuid"]
 
 [dependencies]
 pastey = "0.2.1"
-solana-short-vec = { version = "3.2.0", optional = true }
+solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
-wincode-derive = { path = "../wincode-derive", version = "0.4.0", optional = true }
+wincode-derive = { path = "../wincode-derive", version = "0.4.2", optional = true }
 uuid = { version = "1.20.0", optional = true, default-features = false }
 
 [dev-dependencies]
@@ -43,6 +43,7 @@ serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.2.0" }
 criterion = { version = "0.7.0", features = ["html_reports"] }
 uuid = { version = "1.20.0", features = ["serde"] }
+wincode = { path = ".", features = ["derive"] }
 
 [build-dependencies]
 proc-macro2.workspace = true

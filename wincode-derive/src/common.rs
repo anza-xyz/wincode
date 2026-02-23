@@ -597,6 +597,8 @@ pub(crate) struct SchemaArgs {
     #[darling(default)]
     pub(crate) no_suppress_unused: bool,
     /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
+    ///
+    /// DEPRECATED; use `#[derive(UninitBuilder)]` instead.
     #[darling(default)]
     pub(crate) struct_extensions: bool,
     /// Specifies the encoding to use for enum discriminants.

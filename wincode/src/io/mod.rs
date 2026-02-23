@@ -77,6 +77,16 @@ pub trait Reader<'a> {
         Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
     }
 
+    /// Return exactly `N` bytes as `[u8; N]` and advance by `N`.
+    ///
+    /// Errors if fewer than `N` bytes are available.
+    #[inline]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let arr = *self.fill_array::<N>()?;
+        unsafe { self.consume_unchecked(N) }
+        Ok(arr)
+    }
+
     /// Zero-copy: return a borrowed slice of exactly `len` bytes and advance by `len`.
     ///
     /// The returned slice is tied to `'a`. Prefer [`Reader::fill_exact`] unless you truly need zero-copy.
@@ -142,6 +152,38 @@ pub trait Reader<'a> {
     #[inline]
     fn peek(&mut self) -> ReadResult<&u8> {
         self.fill_buf(1)?.first().ok_or_else(|| read_size_limit(1))
+    }
+
+    /// Get a mutable reference to the [`Reader`].
+    ///
+    /// Useful in situations where one only has an `impl Reader<'de>` that
+    /// needs to be passed to mulitple functions requiring `impl Reader<'de>`.
+    ///
+    /// Always prefer this over `&mut reader` to avoid recursive borrows.
+    ///
+    /// ```
+    /// # use wincode::{io::Reader, ReadResult, config::Config, SchemaRead};
+    /// # use core::mem::MaybeUninit;
+    /// struct FooBar {
+    ///     foo: u32,
+    ///     bar: u32,
+    /// }
+    ///
+    /// unsafe impl<'de, C: Config> SchemaRead<'de, C> for FooBar {
+    ///     type Dst = Self;
+    ///
+    ///     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self>) -> ReadResult<()> {
+    ///         // `reader.by_ref()`; Good ✅
+    ///         let foo = <u32 as SchemaRead<'de, C>>::get(reader.by_ref())?;
+    ///         let bar = <u32 as SchemaRead<'de, C>>::get(reader)?;
+    ///         dst.write(FooBar { foo, bar });
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Reader<'a> {
+        self
     }
 
     /// Copy and consume exactly `dst.len()` bytes from the [`Reader`] into `dst`.
@@ -219,11 +261,16 @@ pub trait Reader<'a> {
     }
 }
 
-impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
+impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     type Trusted<'b>
         = R::Trusted<'b>
     where
         Self: 'b;
+
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Reader<'a> {
+        &mut **self
+    }
 
     #[inline(always)]
     fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
@@ -238,6 +285,11 @@ impl<'a, R: Reader<'a>> Reader<'a> for &mut R {
     #[inline(always)]
     fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
         (*self).fill_array()
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        (*self).take_array()
     }
 
     #[inline(always)]
@@ -320,6 +372,43 @@ pub trait Writer {
     type Trusted<'a>: Writer
     where
         Self: 'a;
+
+    /// Get a mutable reference to the [`Writer`].
+    ///
+    /// Useful in situations where one has an `impl Writer` that
+    /// needs to be passed to mulitple functions requiring `impl Writer`.
+    ///
+    /// Always prefer this over `&mut writer` to avoid recursive borrows.
+    ///
+    /// ```
+    /// # use wincode::{io::Writer, WriteResult, config::Config, SchemaWrite};
+    /// # use core::mem::MaybeUninit;
+    /// struct FooBar {
+    ///     foo: u32,
+    ///     bar: u32,
+    /// }
+    ///
+    /// unsafe impl<C: Config> SchemaWrite<C> for FooBar {
+    ///     type Src = Self;
+    /// #
+    /// #    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+    /// #        let foo = <u32 as SchemaWrite<C>>::size_of(&src.foo)?;
+    /// #        let bar = <u32 as SchemaWrite<C>>::size_of(&src.bar)?;
+    /// #        Ok(foo + bar)
+    /// #    }
+    ///
+    ///     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+    ///         // `writer.by_ref()`; Good ✅
+    ///         let foo = <u32 as SchemaWrite<C>>::write(writer.by_ref(), &src.foo)?;
+    ///         let bar = <u32 as SchemaWrite<C>>::write(writer, &src.bar)?;
+    ///         Ok(())
+    ///     }
+    /// }
+    /// ```
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Writer {
+        self
+    }
 
     /// Finalize the writer by performing any required cleanup or flushing.
     ///
@@ -414,11 +503,16 @@ pub trait Writer {
     }
 }
 
-impl<W: Writer> Writer for &mut W {
+impl<W: Writer + ?Sized> Writer for &mut W {
     type Trusted<'a>
         = W::Trusted<'a>
     where
         Self: 'a;
+
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl Writer {
+        &mut **self
+    }
 
     #[inline(always)]
     fn finish(&mut self) -> WriteResult<()> {
