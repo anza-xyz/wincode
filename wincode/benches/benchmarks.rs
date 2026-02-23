@@ -997,7 +997,6 @@ criterion_group!(
     bench_btreeset_comparison,
     bench_linkedlist_comparison,
     bench_vecdeque_comparison,
-    bench_short_u16_comparison,
     bench_char_deserialization,
 );
 
