@@ -60,7 +60,7 @@ jobs:
         with:
           cache-on-failure: true
       - name: install cargo-deny
-        run: cargo install cargo-deny --version 0.14.25 --locked
+        run: cargo install cargo-deny --version 0.14.24 --locked
       - name: cargo deny
         run: cargo deny check
 
