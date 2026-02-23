@@ -52,15 +52,15 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.84.1
+          toolchain: 1.88.0
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
       - name: install cargo-deny
-        run: cargo install cargo-deny --version 0.14.24 --locked
+        run: cargo install cargo-deny --version 0.19.0 --locked
       - name: cargo deny
         run: cargo deny check
 
