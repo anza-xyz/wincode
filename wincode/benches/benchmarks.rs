@@ -2,7 +2,10 @@ use {
     criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
     rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, hint::black_box},
+    std::{
+        collections::{BTreeMap, BTreeSet, HashMap, LinkedList, VecDeque},
+        hint::black_box,
+    },
     wincode::{
         config::DefaultConfig, deserialize, serialize, serialize_into, serialized_size, SchemaRead,
         SchemaWrite,
@@ -792,6 +795,114 @@ bench_vec_enum!(
     }
 );
 
+macro_rules! bench_collection {
+    ($fn_name:ident, $group_name:literal, $type:ty, $data_gen:expr) => {
+        fn $fn_name(c: &mut Criterion) {
+            let mut group = c.benchmark_group($group_name);
+
+            for size in [100, 1_000] {
+                let data: $type = $data_gen(size);
+                group.throughput(Throughput::Elements(size));
+
+                let serialized = verify_serialize_into(&data);
+
+                group.bench_with_input(
+                    BenchmarkId::new("wincode/serialize_into", size),
+                    &data,
+                    |b, d| {
+                        let mut buffer = create_bench_buffer(d);
+                        b.iter(|| {
+                            serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
+                                .unwrap()
+                        })
+                    },
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("bincode/serialize_into", size),
+                    &data,
+                    |b, d| {
+                        let mut buffer = create_bench_buffer(d);
+                        b.iter(|| {
+                            bincode::serialize_into(
+                                black_box(&mut buffer.as_mut_slice()),
+                                black_box(d),
+                            )
+                            .unwrap()
+                        })
+                    },
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("wincode/serialize", size),
+                    &data,
+                    |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("bincode/serialize", size),
+                    &data,
+                    |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("wincode/serialized_size", size),
+                    &data,
+                    |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("bincode/serialized_size", size),
+                    &data,
+                    |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("wincode/deserialize", size),
+                    &serialized,
+                    |b, s| b.iter(|| deserialize::<$type>(black_box(s)).unwrap()),
+                );
+
+                group.bench_with_input(
+                    BenchmarkId::new("bincode/deserialize", size),
+                    &serialized,
+                    |b, s| b.iter(|| bincode::deserialize::<$type>(black_box(s)).unwrap()),
+                );
+            }
+
+            group.finish();
+        }
+    };
+}
+
+bench_collection!(
+    bench_btreemap_comparison,
+    "BTreeMap<u64, u64>",
+    BTreeMap<u64, u64>,
+    |size| (0..size).map(|i: u64| (i, i)).collect()
+);
+
+bench_collection!(
+    bench_btreeset_comparison,
+    "BTreeSet<u64>",
+    BTreeSet<u64>,
+    |size| (0..size).collect()
+);
+
+bench_collection!(
+    bench_linkedlist_comparison,
+    "LinkedList<u64>",
+    LinkedList<u64>,
+    |size| (0..size).collect()
+);
+
+bench_collection!(
+    bench_vecdeque_comparison,
+    "VecDeque<u64>",
+    VecDeque<u64>,
+    |size| (0..size).collect()
+);
+
 #[cfg(feature = "solana-short-vec")]
 fn bench_short_u16_comparison(c: &mut Criterion) {
     use {
@@ -882,6 +993,10 @@ criterion_group!(
     bench_vec_unit_enum_comparison,
     bench_vec_same_sized_enum_comparison,
     bench_vec_mixed_sized_enum_comparison,
+    bench_btreemap_comparison,
+    bench_btreeset_comparison,
+    bench_linkedlist_comparison,
+    bench_vecdeque_comparison,
     bench_char_deserialization,
 );
 
