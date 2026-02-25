@@ -47,6 +47,10 @@ where
     Self: Sized,
 {
     fn decode(reader: impl ReaderNonBorrowing) -> Result<Self, ReadError>;
+
+    fn decode_borrowed<'de>(reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError> {
+        Self::decode(reader)
+    }
 }
 pub trait SchemaDecodeBorrowing<'de>
 where
@@ -55,9 +59,12 @@ where
     fn decode_borrowed(reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError>;
 }
 
-impl<'a, T: SchemaDecode> SchemaDecodeBorrowing<'a> for T {
-    fn decode_borrowed(reader: impl ReaderBorrowing<'a>) -> Result<Self, ReadError> {
-        T::decode(reader)
+impl<'de, T> SchemaDecodeBorrowing<'de> for &'de T
+// TODO: constrain T to ZeroCopy
+{
+    fn decode_borrowed(mut reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError> {
+        let bytes = reader.borrow_bytes(size_of::<T>())?;
+        Ok(unsafe { &*(bytes.as_ptr() as *const T) })
     }
 }
 
@@ -146,6 +153,7 @@ impl<'a> ReaderBorrowing<'a> for &'a [u8] {
 }
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub struct Bar {
     pub foo: u32,
     pub waz: [u8; 6],
@@ -184,7 +192,7 @@ impl<'a> SchemaDecodeBorrowing<'a> for BarRef<'a> {
                 ptr_foo = ptr_foo.byte_add(1);
             }
             let ptr_waz = &raw mut (*uninit.as_mut_ptr()).waz;
-            ptr_waz.write(reader.borrow_bytes(6)?.try_into().unwrap());
+            ptr_waz.write(<&'a [u8; 6]>::decode_borrowed(reader)?);
             Ok(uninit.assume_init())
         }
     }
@@ -215,6 +223,9 @@ struct BarBarRef<'a> {
 impl<'a> SchemaDecodeBorrowing<'a> for BarBarRef<'a> {
     fn decode_borrowed(mut reader: impl ReaderBorrowing<'a>) -> Result<BarBarRef<'a>, ReadError> {
         let mut chunks = reader.borrow_chunks(size_of::<Bar>())?;
+        // TODO: this is cheating - we call function with the same name from two different trait
+        // actually SchemaDecodeBorrowing can have blanket impl for T: SchemaDecode, but we already use
+        // blanket for &'a T
         let one = Bar::decode_borrowed(chunks.next().unwrap())?;
         let two = BarRef::decode_borrowed(chunks.next().unwrap())?;
         let three = BarRef::decode_borrowed(chunks.next().unwrap())?;
