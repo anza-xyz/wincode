@@ -106,9 +106,16 @@ impl TypeMeta {
         }
     }
 
-    /// Returns type overriding static type's `zero_copy` to `false` (if `keep_zero_copy == false`)
+    /// Returns this [`TypeMeta`] instance with `zero_copy` masked by `keep_zero_copy`.
     ///
-    /// Note: type is never upgraded to `zero_copy` if it wasn't such before.
+    /// For `TypeMeta::Static`, this preserves `size` and computes:
+    /// `zero_copy = zero_copy && keep_zero_copy`.
+    ///
+    /// For `TypeMeta::Dynamic`, this is a no-op.
+    ///
+    /// This method never upgrades a type to zero-copy.
+    /// - `keep_zero_copy(true)` leaves the flag unchanged.
+    /// - `keep_zero_copy(false)` clears the flag.
     pub const fn keep_zero_copy(self, keep_zero_copy: bool) -> Self {
         match self {
             Self::Static { size, zero_copy } => TypeMeta::Static {
@@ -119,13 +126,54 @@ impl TypeMeta {
         }
     }
 
-    /// Aggregate `types` assuming they are placed in memory and serialized together
+    /// Combines multiple constituent [`TypeMeta`] values into one aggregate.
     ///
-    /// Returns `Static` type if all types are static:
-    /// * with `size` equal to sum of individual sizes and
-    /// * `zero_copy` set to true if all types are zero-copy.
+    /// Intended for composite types whose constituents are serialized sequentially.
     ///
-    /// Returns `Dynamic` type if any of the `types` is dynamic.
+    /// Semantics:
+    /// - If any input is `Dynamic`, returns `Dynamic`.
+    /// - Otherwise returns `Static` with:
+    ///   - `size = sum of all constituent sizes`
+    ///   - `zero_copy = logical AND of all constituent zero_copy flags`
+    ///
+    /// Notes:
+    /// - This function does **not** validate layout/padding; it only combines metadata.
+    /// - For `N = 0`, the result is `TypeMeta::Static { size: 0, zero_copy: true }`.
+    /// - The caller must ensure the summed size is meaningful for the target type.
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: true },
+    ///     TypeMeta::Dynamic,
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Dynamic);
+    /// ```
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: true },
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: true });
+    /// ```
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: false },
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: false });
+    /// ```
     #[expect(clippy::arithmetic_side_effects)]
     pub const fn join_types<const N: usize>(types: [Self; N]) -> Self {
         let mut acc_size = 0;
