@@ -8,7 +8,10 @@ use {
 
 pub trait ReaderNonBorrowing {
     fn read_byte(&mut self) -> Result<u8, ReadError>;
-    fn read_chunks(&mut self, chunk_size: usize) -> Result<impl Iterator<Item = &[u8]>, ReadError>;
+    fn read_chunks(
+        &mut self,
+        chunk_size: usize,
+    ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError>;
 }
 
 impl<T: ReaderNonBorrowing> ReaderNonBorrowing for &mut T {
@@ -16,7 +19,10 @@ impl<T: ReaderNonBorrowing> ReaderNonBorrowing for &mut T {
         (*self).read_byte()
     }
 
-    fn read_chunks(&mut self, chunk_size: usize) -> Result<impl Iterator<Item = &[u8]>, ReadError> {
+    fn read_chunks(
+        &mut self,
+        chunk_size: usize,
+    ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError> {
         (*self).read_chunks(chunk_size)
     }
 }
@@ -26,7 +32,7 @@ pub trait ReaderBorrowing<'de>: ReaderNonBorrowing {
     fn borrow_chunks(
         &mut self,
         chunk_size: usize,
-    ) -> Result<impl Iterator<Item = &'de [u8]>, ReadError>;
+    ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError>;
 }
 
 impl<'de, T: ReaderBorrowing<'de>> ReaderBorrowing<'de> for &mut T {
@@ -37,7 +43,7 @@ impl<'de, T: ReaderBorrowing<'de>> ReaderBorrowing<'de> for &mut T {
     fn borrow_chunks(
         &mut self,
         chunk_size: usize,
-    ) -> Result<impl Iterator<Item = &'de [u8]>, ReadError> {
+    ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError> {
         (*self).borrow_chunks(chunk_size)
     }
 }
@@ -80,7 +86,10 @@ impl<R: std::io::Read> ReaderNonBorrowing for BufReader<R> {
         Ok(buf[0])
     }
 
-    fn read_chunks(&mut self, chunk_size: usize) -> Result<impl Iterator<Item = &[u8]>, ReadError> {
+    fn read_chunks(
+        &mut self,
+        chunk_size: usize,
+    ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError> {
         struct ChunksIter<'a, R> {
             reader: &'a mut BufReader<R>,
             aux: Box<[u8]>,
@@ -128,20 +137,25 @@ impl<R: std::io::Read> ReaderNonBorrowing for BufReader<R> {
 
 impl ReaderNonBorrowing for &[u8] {
     fn read_byte(&mut self) -> Result<u8, ReadError> {
-        let byte = self.first().copied().ok_or(ReadError::ReadSizeLimit(1))?;
-        *self = &self[1..];
-        Ok(byte)
+        let (byte, rest) = self
+            .split_at_checked(1)
+            .ok_or(ReadError::ReadSizeLimit(1))?;
+        *self = rest;
+        Ok(byte[0])
     }
 
-    fn read_chunks(&mut self, chunk_size: usize) -> Result<impl Iterator<Item = &[u8]>, ReadError> {
+    fn read_chunks(
+        &mut self,
+        chunk_size: usize,
+    ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError> {
         let chunks = self.chunks_exact(chunk_size);
         *self = chunks.remainder();
         Ok(chunks)
     }
 }
 
-impl<'a> ReaderBorrowing<'a> for &'a [u8] {
-    fn borrow_bytes(&mut self, size: usize) -> Result<&'a [u8], ReadError> {
+impl<'de> ReaderBorrowing<'de> for &'de [u8] {
+    fn borrow_bytes(&mut self, size: usize) -> Result<&'de [u8], ReadError> {
         let bytes = &self[..size];
         *self = &self[size..];
         Ok(bytes)
@@ -150,7 +164,7 @@ impl<'a> ReaderBorrowing<'a> for &'a [u8] {
     fn borrow_chunks(
         &mut self,
         chunk_size: usize,
-    ) -> Result<impl Iterator<Item = &'a [u8]>, ReadError> {
+    ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError> {
         let chunks = self.chunks_exact(chunk_size);
         *self = chunks.remainder();
         Ok(chunks)
