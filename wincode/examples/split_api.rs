@@ -42,15 +42,11 @@ impl<'de, T: ReaderBorrowing<'de>> ReaderBorrowing<'de> for &mut T {
     }
 }
 
-pub trait SchemaDecode
+pub trait SchemaDecode: for<'a> SchemaDecodeBorrowing<'a>
 where
     Self: Sized,
 {
     fn decode(reader: impl ReaderNonBorrowing) -> Result<Self, ReadError>;
-
-    fn decode_borrowed<'de>(reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError> {
-        Self::decode(reader)
-    }
 }
 pub trait SchemaDecodeBorrowing<'de>
 where
@@ -59,12 +55,21 @@ where
     fn decode_borrowed(reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError>;
 }
 
-impl<'de, T> SchemaDecodeBorrowing<'de> for &'de T
+impl<'a, T: SchemaDecode> SchemaDecodeBorrowing<'a> for T {
+    fn decode_borrowed(reader: impl ReaderBorrowing<'a>) -> Result<Self, ReadError> {
+        Self::decode(reader)
+    }
+}
+
+// Workaround for blanket impl already being used for T: SchemaRead
+struct RefAdapter<'a, T>(&'a T);
+
+impl<'de, T> SchemaDecodeBorrowing<'de> for RefAdapter<'de, T>
 // TODO: constrain T to ZeroCopy
 {
     fn decode_borrowed(mut reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError> {
         let bytes = reader.borrow_bytes(size_of::<T>())?;
-        Ok(unsafe { &*(bytes.as_ptr() as *const T) })
+        Ok(Self(unsafe { &*(bytes.as_ptr() as *const T) }))
     }
 }
 
@@ -192,7 +197,7 @@ impl<'a> SchemaDecodeBorrowing<'a> for BarRef<'a> {
                 ptr_foo = ptr_foo.byte_add(1);
             }
             let ptr_waz = &raw mut (*uninit.as_mut_ptr()).waz;
-            ptr_waz.write(<&'a [u8; 6]>::decode_borrowed(reader)?);
+            ptr_waz.write(<RefAdapter<[u8; 6]>>::decode_borrowed(reader)?.0);
             Ok(uninit.assume_init())
         }
     }
@@ -223,9 +228,6 @@ struct BarBarRef<'a> {
 impl<'a> SchemaDecodeBorrowing<'a> for BarBarRef<'a> {
     fn decode_borrowed(mut reader: impl ReaderBorrowing<'a>) -> Result<BarBarRef<'a>, ReadError> {
         let mut chunks = reader.borrow_chunks(size_of::<Bar>())?;
-        // TODO: this is cheating - we call function with the same name from two different trait
-        // actually SchemaDecodeBorrowing can have blanket impl for T: SchemaDecode, but we already use
-        // blanket for &'a T
         let one = Bar::decode_borrowed(chunks.next().unwrap())?;
         let two = BarRef::decode_borrowed(chunks.next().unwrap())?;
         let three = BarRef::decode_borrowed(chunks.next().unwrap())?;
