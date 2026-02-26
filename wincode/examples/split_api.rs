@@ -12,17 +12,12 @@ pub trait ReaderNonBorrowing {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError>;
-    fn by_ref(&mut self) -> impl ReaderNonBorrowing {
+    fn by_ref(&mut self) -> &mut Self {
         self
     }
 }
 
 impl<T: ReaderNonBorrowing + ?Sized> ReaderNonBorrowing for &mut T {
-    #[inline(always)]
-    fn by_ref(&mut self) -> impl ReaderNonBorrowing {
-        &mut **self
-    }
-
     fn read_byte(&mut self) -> Result<u8, ReadError> {
         (*self).read_byte()
     }
@@ -41,17 +36,9 @@ pub trait ReaderBorrowing<'de>: ReaderNonBorrowing {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError>;
-    fn by_ref(&mut self) -> impl ReaderBorrowing<'de> {
-        self
-    }
 }
 
 impl<'de, T: ReaderBorrowing<'de> + ?Sized> ReaderBorrowing<'de> for &mut T {
-    #[inline(always)]
-    fn by_ref(&mut self) -> impl ReaderBorrowing<'de> {
-        &mut **self
-    }
-
     fn borrow_bytes(&mut self, size: usize) -> Result<&'de [u8], ReadError> {
         (*self).borrow_bytes(size)
     }
@@ -155,9 +142,25 @@ impl ReaderNonBorrowing for &[u8] {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError> {
-        let chunks = self.chunks_exact(chunk_size);
-        *self = chunks.remainder();
-        Ok(chunks)
+        struct ReadChunks<'s, 'b> {
+            slice: &'s mut &'b [u8],
+            chunk_size: usize,
+        }
+        impl<'s, 'b> Iterator for ReadChunks<'s, 'b> {
+            type Item = &'s [u8];
+            fn next(&mut self) -> Option<&'b [u8]> {
+                if self.slice.len() < self.chunk_size {
+                    return None;
+                }
+                let (chunk, rest) = self.slice.split_at(self.chunk_size);
+                *self.slice = rest;
+                Some(chunk)
+            }
+        }
+        Ok(ReadChunks {
+            slice: self,
+            chunk_size,
+        })
     }
 }
 
@@ -172,9 +175,25 @@ impl<'de> ReaderBorrowing<'de> for &'de [u8] {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError> {
-        let chunks = self.chunks_exact(chunk_size);
-        *self = chunks.remainder();
-        Ok(chunks)
+        struct BorrowChunks<'s, 'de> {
+            slice: &'s mut &'de [u8],
+            chunk_size: usize,
+        }
+        impl<'s, 'de> Iterator for BorrowChunks<'s, 'de> {
+            type Item = &'de [u8];
+            fn next(&mut self) -> Option<&'de [u8]> {
+                if self.slice.len() < self.chunk_size {
+                    return None;
+                }
+                let (chunk, rest) = self.slice.split_at(self.chunk_size);
+                *self.slice = rest;
+                Some(chunk)
+            }
+        }
+        Ok(BorrowChunks {
+            slice: self,
+            chunk_size,
+        })
     }
 }
 
@@ -240,7 +259,8 @@ impl SchemaDecode for BarBar {
         let mut chunks = reader.read_chunks(size_of::<Bar>())?;
         let one = Bar::decode(chunks.next().unwrap())?;
         let two = Bar::decode(chunks.next().unwrap())?;
-        let three = Bar::decode(chunks.next().unwrap())?;
+        drop(chunks);
+        let three = Bar::decode(reader.by_ref())?;
         Ok(BarBar { one, two, three })
     }
 }
@@ -256,7 +276,8 @@ impl<'a> SchemaDecodeBorrowing<'a> for BarBarRef<'a> {
         let mut chunks = reader.borrow_chunks(size_of::<Bar>())?;
         let one = Bar::decode_borrowed(chunks.next().unwrap())?;
         let two = BarRef::decode_borrowed(chunks.next().unwrap())?;
-        let three = BarRef::decode_borrowed(chunks.next().unwrap())?;
+        drop(chunks);
+        let three = BarRef::decode_borrowed(reader.by_ref())?;
         Ok(BarBarRef { one, two, three })
     }
 }
