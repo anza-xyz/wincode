@@ -12,9 +12,17 @@ pub trait ReaderNonBorrowing {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderNonBorrowing>, ReadError>;
+    fn by_ref(&mut self) -> impl ReaderNonBorrowing {
+        self
+    }
 }
 
-impl<T: ReaderNonBorrowing> ReaderNonBorrowing for &mut T {
+impl<T: ReaderNonBorrowing + ?Sized> ReaderNonBorrowing for &mut T {
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl ReaderNonBorrowing {
+        &mut **self
+    }
+
     fn read_byte(&mut self) -> Result<u8, ReadError> {
         (*self).read_byte()
     }
@@ -33,9 +41,17 @@ pub trait ReaderBorrowing<'de>: ReaderNonBorrowing {
         &mut self,
         chunk_size: usize,
     ) -> Result<impl Iterator<Item = impl ReaderBorrowing<'de>>, ReadError>;
+    fn by_ref(&mut self) -> impl ReaderBorrowing<'de> {
+        self
+    }
 }
 
-impl<'de, T: ReaderBorrowing<'de>> ReaderBorrowing<'de> for &mut T {
+impl<'de, T: ReaderBorrowing<'de> + ?Sized> ReaderBorrowing<'de> for &mut T {
+    #[inline(always)]
+    fn by_ref(&mut self) -> impl ReaderBorrowing<'de> {
+        &mut **self
+    }
+
     fn borrow_bytes(&mut self, size: usize) -> Result<&'de [u8], ReadError> {
         (*self).borrow_bytes(size)
     }
