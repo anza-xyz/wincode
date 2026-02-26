@@ -48,7 +48,7 @@ impl<'de, T: ReaderBorrowing<'de>> ReaderBorrowing<'de> for &mut T {
     }
 }
 
-pub trait SchemaDecode: for<'a> SchemaDecodeBorrowing<'a>
+pub trait SchemaDecode
 where
     Self: Sized,
 {
@@ -61,21 +61,12 @@ where
     fn decode_borrowed(reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError>;
 }
 
-impl<'a, T: SchemaDecode> SchemaDecodeBorrowing<'a> for T {
-    fn decode_borrowed(reader: impl ReaderBorrowing<'a>) -> Result<Self, ReadError> {
-        Self::decode(reader)
-    }
-}
-
-// Workaround for blanket impl already being used for T: SchemaRead
-struct RefAdapter<'a, T>(&'a T);
-
-impl<'de, T> SchemaDecodeBorrowing<'de> for RefAdapter<'de, T>
+impl<'de, T> SchemaDecodeBorrowing<'de> for &'de T
 // TODO: constrain T to ZeroCopy
 {
     fn decode_borrowed(mut reader: impl ReaderBorrowing<'de>) -> Result<Self, ReadError> {
         let bytes = reader.borrow_bytes(size_of::<T>())?;
-        Ok(Self(unsafe { &*(bytes.as_ptr() as *const T) }))
+        Ok(unsafe { &*(bytes.as_ptr() as *const T) })
     }
 }
 
@@ -195,6 +186,11 @@ impl SchemaDecode for Bar {
         }
     }
 }
+impl<'de> SchemaDecodeBorrowing<'de> for Bar {
+    fn decode_borrowed(reader: impl ReaderBorrowing<'de>) -> Result<Bar, ReadError> {
+        Self::decode(reader)
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct BarRef<'a> {
@@ -211,7 +207,7 @@ impl<'a> SchemaDecodeBorrowing<'a> for BarRef<'a> {
                 ptr_foo = ptr_foo.byte_add(1);
             }
             let ptr_waz = &raw mut (*uninit.as_mut_ptr()).waz;
-            ptr_waz.write(<RefAdapter<[u8; 6]>>::decode_borrowed(reader)?.0);
+            ptr_waz.write(<&[u8; 6]>::decode_borrowed(reader)?);
             Ok(uninit.assume_init())
         }
     }
