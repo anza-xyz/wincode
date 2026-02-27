@@ -648,13 +648,12 @@ where
                 unsafe { writer.write_slice_t(value)? };
             }
             TypeMeta::Static {
-                size,
-                zero_copy: false,
+                zero_copy: false, ..
             } => {
                 // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
                 // `N` writes of `T` will write `size` bytes, fully initializing the trusted window.
-                let chunks = unsafe { writer.chunks_mut(N, size) }?;
-                for (item, chunk) in value.iter().zip(chunks) {
+                let chunks = unsafe { writer.chunks_mut_zip(N, value.iter()) }?;
+                for (item, chunk) in chunks {
                     T::write(chunk, item)?;
                 }
             }
@@ -1107,8 +1106,8 @@ macro_rules! impl_seq_kv {
                     // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
                     C::LengthEncoding::write(writer.by_ref(), len)?;
                     #[expect(clippy::arithmetic_side_effects)]
-                    let chunks = unsafe { writer.chunks_mut((key_size + value_size), len) }?;
-                    for ((k, v), mut chunk) in src.iter().zip(chunks) {
+                    let chunks = unsafe { writer.chunks_mut_zip((key_size + value_size), src.iter()) }?;
+                    for ((k, v), mut chunk) in chunks {
                         $key::write(chunk.by_ref(), k)?;
                         $value::write(chunk, v)?;
                     }

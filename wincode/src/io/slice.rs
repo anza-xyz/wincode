@@ -225,14 +225,13 @@ impl<'a, T> Chunks<'a, T> {
     }
 
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     pub fn from_slice_checked(
         chunk_size: usize,
         n_chunks: usize,
         buf: &mut &'a [T],
     ) -> Result<Self, usize> {
-        let Some(total) = chunk_size.checked_mul(n_chunks) else {
-            return Err(cold(usize::MAX));
-        };
+        let total = chunk_size * n_chunks;
         let Some(window) = advance_slice_checked(buf, total) else {
             return Err(cold(total));
         };
@@ -337,14 +336,13 @@ impl<'a, T> ChunksMut<'a, T> {
     }
 
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     pub fn from_slice_checked(
         chunk_size: usize,
         n_chunks: usize,
         buf: &mut &'a mut [T],
     ) -> Result<Self, usize> {
-        let Some(total) = chunk_size.checked_mul(n_chunks) else {
-            return Err(cold(usize::MAX));
-        };
+        let total = chunk_size * n_chunks;
         let Some(window) = advance_slice_mut_checked(buf, total) else {
             return Err(cold(total));
         };

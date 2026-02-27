@@ -417,8 +417,8 @@ where
         // SAFETY: `needed` is the size of the encoded length plus the size of the items.
         // `Len::write` and len writes of `T::Src` will write `needed` bytes,
         // fully initializing the trusted window.
-        let chunks = unsafe { writer.chunks_mut(size, src.len()) }?;
-        for (item, chunk) in src.zip(chunks) {
+        let chunks = unsafe { writer.chunks_mut_zip(size, src) }?;
+        for (item, chunk) in chunks {
             T::write(chunk, item)?;
         }
         return Ok(());

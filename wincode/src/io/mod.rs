@@ -209,12 +209,28 @@ pub type WriteResult<T> = core::result::Result<T, WriteError>;
 
 /// Trait for structured writing of bytes into a source of potentially uninitialized memory.
 pub trait Writer {
+    /// # Safety
     unsafe fn chunks_mut(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> WriteResult<impl Iterator<Item = impl Writer>>;
 
+    /// # Safety
+    #[inline(always)]
+    unsafe fn chunks_mut_zip<I>(
+        &mut self,
+        chunk_size: usize,
+        iter: I,
+    ) -> WriteResult<impl Iterator<Item = (I::Item, impl Writer)>>
+    where
+        I: ExactSizeIterator,
+    {
+        let mut chunks = unsafe { self.chunks_mut(chunk_size, iter.len()) }?;
+        Ok(iter.map(move |item| (item, unsafe { chunks.next().unwrap_unchecked() })))
+    }
+
+    /// # Safety
     #[inline]
     unsafe fn chunk_mut(&mut self, chunk_size: usize) -> WriteResult<impl Writer> {
         let mut chunks = unsafe { self.chunks_mut(chunk_size, 1) }?;
