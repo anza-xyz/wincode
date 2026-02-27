@@ -50,10 +50,15 @@ impl<'a> Reader<'a> for &'a [u8] {
         chunk_size: usize,
         n_chunks: usize,
     ) -> ReadResult<impl Iterator<Item = impl Reader<'a>>> {
-        match Chunks::from_slice_checked(chunk_size, n_chunks, self) {
-            Ok(chunks) => Ok(chunks.map(|buf| unsafe { SliceUnchecked::new(buf) })),
-            Err(total) => Err(read_size_limit(total)),
-        }
+        let Some(total) = chunk_size.checked_mul(n_chunks) else {
+            return Err(read_size_limit(usize::MAX));
+        };
+        let Some(window) = advance_slice_checked(self, total) else {
+            return Err(read_size_limit(total));
+        };
+        Ok(window
+            .chunks_exact(chunk_size)
+            .map(|buf| unsafe { SliceUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -105,15 +110,17 @@ impl<'a, T> SliceUnchecked<'a, T> {
 
 impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn chunks(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> ReadResult<impl Iterator<Item = impl Reader<'a>>> {
-        Ok(unsafe {
-            Chunks::from_slice_unchecked(chunk_size, n_chunks, &mut self.buf)
-                .map(|buf| SliceUnchecked::new(buf))
-        })
+        let total = chunk_size * n_chunks;
+        let window = advance_slice_unchecked(&mut self.buf, total);
+        Ok(window
+            .chunks_exact(chunk_size)
+            .map(|buf| unsafe { SliceUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -159,15 +166,17 @@ impl<'b, T> SliceScopedUnchecked<'_, 'b, T> {
 
 impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn chunks(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> ReadResult<impl Iterator<Item = impl Reader<'a>>> {
-        Ok(unsafe {
-            Chunks::from_slice_unchecked(chunk_size, n_chunks, &mut self.inner.buf)
-                .map(|buf| SliceScopedUnchecked::new(buf))
-        })
+        let total = chunk_size * n_chunks;
+        let window = advance_slice_unchecked(&mut self.inner.buf, total);
+        Ok(window
+            .chunks_exact(chunk_size)
+            .map(|buf| unsafe { SliceScopedUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -414,15 +423,17 @@ impl<'a, T> SliceMutUnchecked<'a, T> {
 
 impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn chunks(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> ReadResult<impl Iterator<Item = impl Reader<'a>>> {
-        Ok(unsafe {
-            ChunksMut::from_slice_unchecked(chunk_size, n_chunks, &mut self.buf)
-                .map(|buf| SliceMutUnchecked::new(buf))
-        })
+        let total = chunk_size * n_chunks;
+        let window = advance_slice_mut_unchecked(&mut self.buf, total);
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -457,10 +468,15 @@ impl<'a> Reader<'a> for &'a mut [u8] {
         chunk_size: usize,
         n_chunks: usize,
     ) -> ReadResult<impl Iterator<Item = impl Reader<'a>>> {
-        match ChunksMut::from_slice_checked(chunk_size, n_chunks, self) {
-            Ok(chunks) => Ok(chunks.map(|buf| unsafe { SliceMutUnchecked::new(buf) })),
-            Err(total) => Err(read_size_limit(total)),
-        }
+        let Some(total) = chunk_size.checked_mul(n_chunks) else {
+            return Err(read_size_limit(usize::MAX));
+        };
+        let Some(window) = advance_slice_mut_checked(self, total) else {
+            return Err(read_size_limit(total));
+        };
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -499,15 +515,17 @@ impl<'a> Reader<'a> for &'a mut [u8] {
 
 impl Writer for SliceMutUnchecked<'_, u8> {
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn chunks_mut(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> WriteResult<impl Iterator<Item = impl Writer>> {
-        Ok(unsafe {
-            ChunksMut::from_slice_unchecked(chunk_size, n_chunks, &mut self.buf)
-                .map(|buf| SliceMutUnchecked::new(buf))
-        })
+        let total = chunk_size * n_chunks;
+        let window = advance_slice_mut_unchecked(&mut self.buf, total);
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -526,15 +544,17 @@ impl Writer for SliceMutUnchecked<'_, u8> {
 
 impl Writer for SliceMutUnchecked<'_, MaybeUninit<u8>> {
     #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
     unsafe fn chunks_mut(
         &mut self,
         chunk_size: usize,
         n_chunks: usize,
     ) -> WriteResult<impl Iterator<Item = impl Writer>> {
-        Ok(unsafe {
-            ChunksMut::from_slice_unchecked(chunk_size, n_chunks, &mut self.buf)
-                .map(|buf| SliceMutUnchecked::new(buf))
-        })
+        let total = chunk_size * n_chunks;
+        let window = advance_slice_mut_unchecked(&mut self.buf, total);
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -558,10 +578,15 @@ impl Writer for &mut [MaybeUninit<u8>] {
         chunk_size: usize,
         n_chunks: usize,
     ) -> WriteResult<impl Iterator<Item = impl Writer>> {
-        match ChunksMut::from_slice_checked(chunk_size, n_chunks, self) {
-            Ok(chunks) => Ok(chunks.map(|buf| unsafe { SliceMutUnchecked::new(buf) })),
-            Err(total) => Err(write_size_limit(total)),
-        }
+        let Some(total) = chunk_size.checked_mul(n_chunks) else {
+            return Err(write_size_limit(usize::MAX));
+        };
+        let Some(window) = advance_slice_mut_checked(self, total) else {
+            return Err(write_size_limit(total));
+        };
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
@@ -589,10 +614,15 @@ impl Writer for &mut [u8] {
         chunk_size: usize,
         n_chunks: usize,
     ) -> WriteResult<impl Iterator<Item = impl Writer>> {
-        match ChunksMut::from_slice_checked(chunk_size, n_chunks, self) {
-            Ok(chunks) => Ok(chunks.map(|buf| unsafe { SliceMutUnchecked::new(buf) })),
-            Err(total) => Err(write_size_limit(total)),
-        }
+        let Some(total) = chunk_size.checked_mul(n_chunks) else {
+            return Err(write_size_limit(usize::MAX));
+        };
+        let Some(window) = advance_slice_mut_checked(self, total) else {
+            return Err(write_size_limit(total));
+        };
+        Ok(window
+            .chunks_exact_mut(chunk_size)
+            .map(|buf| unsafe { SliceMutUnchecked::new(buf) }))
     }
 
     #[inline(always)]
