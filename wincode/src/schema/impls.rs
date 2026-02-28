@@ -1326,8 +1326,7 @@ mod zero_copy {
     ///
     /// Note we abstract this into a function because it ensures the lifetime of the
     /// returned reference is the same as the input. Otherwise the compiler would
-    /// accept any lifetime as `'de`. We want to preclude usage of something like
-    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    /// accept any lifetime as `'de`.
     ///
     /// # Safety
     /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -1365,8 +1364,7 @@ mod zero_copy {
     ///
     /// Note we abstract this into a function because it ensures the lifetime of the
     /// returned reference is the same as the input. Otherwise the compiler would
-    /// accept any lifetime as `'de`. We want to preclude usage of something like
-    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    /// accept any lifetime as `'de`.
     ///
     /// # Safety
     /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
