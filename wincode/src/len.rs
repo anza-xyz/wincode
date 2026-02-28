@@ -560,11 +560,30 @@ pub mod short_vec {
 
     #[inline]
     fn decode_short_u16_from_reader<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
-        let (len, read) = decode_short_u16(reader.fill_buf(3)?)?;
-        // SAFETY: `read` is the number of bytes visited by `decode_shortu16` to decode the length,
-        // which implies the reader had at least `read` bytes available.
-        unsafe { reader.consume_unchecked(read) };
-        Ok(len)
+        use crate::error::ReadError;
+
+        let b0 = reader.take_byte()?;
+        if b0 < 0x80 {
+            return Ok(b0 as u16);
+        }
+
+        let b1 = reader.take_byte()?;
+        if b1 == 0 {
+            return Err(ReadError::InvalidValue("short u16: non-canonical encoding"));
+        }
+        if b1 < 0x80 {
+            return Ok(((b0 & 0x7f) as u16) | ((b1 as u16) << 7));
+        }
+
+        let b2 = reader.take_byte()?;
+        if b2 == 0 {
+            return Err(ReadError::InvalidValue("short u16: non-canonical encoding"));
+        }
+        if b2 > 3 {
+            return Err(ReadError::LengthEncodingOverflow("u16::MAX"));
+        }
+
+        Ok(((b0 & 0x7f) as u16) | (((b1 & 0x7f) as u16) << 7) | ((b2 as u16) << 14))
     }
 
     unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {

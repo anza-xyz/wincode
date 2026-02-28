@@ -60,7 +60,7 @@ use {
     crate::{
         config::{ConfigCore, ZeroCopy},
         error::{ReadResult, WriteResult},
-        io::{Reader, Writer},
+        io::{Hint, Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
         TypeMeta,
     },
@@ -291,10 +291,9 @@ where
                 zero_copy: false,
             } => {
                 let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                #[allow(clippy::arithmetic_side_effects)]
                 // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                 // will consume `size * len` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+                let mut reader = unsafe { reader.read_hint(size.by(len)) }?;
                 for i in 0..len {
                     T::read(reader.by_ref(), unsafe { &mut *ptr })?;
                     unsafe {
@@ -472,8 +471,7 @@ macro_rules! impl_heap_slice {
 
                         // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
-                        #[allow(clippy::arithmetic_side_effects)]
-                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+                        let mut reader = unsafe { reader.read_hint(size.by(len)) }?;
                         for i in 0..len {
                             // SAFETY:
                             // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
@@ -546,15 +544,17 @@ where
             zero_copy: true,
         } = T::TYPE_META
         {
-            #[allow(clippy::arithmetic_side_effects)]
-            let needed = Len::write_bytes_needed_prealloc_check::<T>(src.len())? + src.len() * size;
+            let len_needed = Len::write_bytes_needed_prealloc_check::<T>(src.len())?;
+
+            let (front, back) = src.as_slices();
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
-            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+            #[expect(clippy::arithmetic_side_effects)]
+            let mut writer =
+                unsafe { writer.write_hint([len_needed, size * front.len(), size * back.len()]) }?;
 
             Len::write(writer.by_ref(), src.len())?;
-            let (front, back) = src.as_slices();
             // SAFETY:
             // - `T` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
             // - `front` and `back` are valid non-overlapping slices.
@@ -562,8 +562,6 @@ where
                 writer.write_slice_t(front)?;
                 writer.write_slice_t(back)?;
             }
-
-            writer.finish()?;
 
             return Ok(());
         }

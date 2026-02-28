@@ -414,11 +414,11 @@ where
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
-        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
+        let len_needed = Len::write_bytes_needed(src.len())?;
         // SAFETY: `needed` is the size of the encoded length plus the size of the items.
         // `Len::write` and len writes of `T::Src` will write `needed` bytes,
         // fully initializing the trusted window.
-        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+        let mut writer = unsafe { writer.write_hint(len_needed.and(size.by(src.len()))) }?;
         Len::write(writer.by_ref(), src.len())?;
         for item in src {
             T::write(writer.by_ref(), item)?;
@@ -464,15 +464,14 @@ where
         zero_copy: true,
     } = T::TYPE_META
     {
-        let needed = Len::write_bytes_needed(src.len())? + src.len() * size;
+        let len_needed = Len::write_bytes_needed(src.len())?;
         // SAFETY: `needed` is the size of the encoded length plus the size of the slice (bytes).
         // `Len::write` and `writer.write(src)` will write `needed` bytes,
         // fully initializing the trusted window.
-        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+        let mut writer = unsafe { writer.write_hint([len_needed, size * src.len()]) }?;
         Len::write(writer.by_ref(), src.len())?;
         // SAFETY: `T::Src` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
         unsafe { writer.write_slice_t(src)? };
-        writer.finish()?;
         return Ok(());
     }
     write_elem_iter::<T, Len, C>(writer, src.iter())
@@ -818,7 +817,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.take_byte()?;
             // This will increment the counter.
             dst.write(DropCounted::new());
             Ok(())
@@ -859,7 +858,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.take_byte()?;
             Err(error::ReadError::PointerSizedReadError)
         }
     }

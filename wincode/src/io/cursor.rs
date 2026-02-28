@@ -1,6 +1,10 @@
-use super::*;
 #[cfg(feature = "alloc")]
-use {alloc::vec::Vec, core::slice::from_raw_parts_mut};
+use alloc::vec::Vec;
+use {
+    super::*,
+    core::ptr::copy_nonoverlapping,
+    slice::{SliceMutUnchecked, SliceScopedUnchecked},
+};
 
 /// `Cursor` wraps an in-memory buffer, providing [`Reader`] and [`Writer`] functionality
 /// for types implementing <code>[AsRef]<\[u8]></code>.
@@ -90,34 +94,38 @@ impl<T> Cursor<T> {
     }
 }
 
+#[inline(always)]
+#[expect(clippy::arithmetic_side_effects)]
+fn advance_slice_checked<'a, T>(buf: &'a [T], pos: &mut usize, len: usize) -> Option<&'a [T]> {
+    let buf_len = buf.len();
+    let buf = buf[(*pos).min(buf_len)..].get(..len)?;
+    *pos += len;
+    Some(buf)
+}
+
+#[inline(always)]
+#[expect(clippy::arithmetic_side_effects)]
+fn advance_slice_mut_checked<'a, T>(
+    buf: &'a mut [T],
+    pos: &mut usize,
+    len: usize,
+) -> Option<&'a mut [T]> {
+    let buf_len = buf.len();
+    let buf = buf[(*pos).min(buf_len)..].get_mut(..len)?;
+    *pos += len;
+    Some(buf)
+}
+
 impl<T> Cursor<T>
 where
     T: AsRef<[u8]>,
 {
-    /// Returns a slice of the remaining bytes in the cursor.
-    #[inline]
-    fn cur_slice(&self) -> &[u8] {
-        let slice = self.inner.as_ref();
-        &slice[self.pos.min(slice.len())..]
-    }
-
-    /// Returns the number of bytes remaining in the cursor.
-    #[inline]
-    fn cur_len(&self) -> usize {
-        self.inner.as_ref().len().saturating_sub(self.pos)
-    }
-
-    /// Split the cursor at `mid` and consume the left slice.
-    #[inline]
-    fn consume_slice_checked(&mut self, mid: usize) -> ReadResult<&[u8]> {
-        let slice = self.inner.as_ref();
-        let cur = &slice[self.pos.min(slice.len())..];
-        let Some(left) = cur.get(..mid) else {
-            return Err(read_size_limit(mid));
+    #[inline(always)]
+    fn advance_slice_checked(&mut self, len: usize) -> ReadResult<&[u8]> {
+        let Some(slice) = advance_slice_checked(self.inner.as_ref(), &mut self.pos, len) else {
+            return Err(read_size_limit(len));
         };
-        // SAFETY: We just created a slice of `pos..pos + mid` bytes from the cursor, so `pos + mid` is valid.
-        self.pos = unsafe { self.pos.unchecked_add(mid) };
-        Ok(left)
+        Ok(slice)
     }
 }
 
@@ -125,143 +133,109 @@ impl<'a, T> Reader<'a> for Cursor<T>
 where
     T: AsRef<[u8]>,
 {
-    type Trusted<'b>
-        = TrustedSliceReader<'a, 'b>
-    where
-        Self: 'b;
-
     #[inline]
-    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        let src = self.cur_slice();
-        Ok(&src[..n_bytes.min(src.len())])
+    #[expect(clippy::arithmetic_side_effects)]
+    fn read(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<usize> {
+        let buf = self.inner.as_ref();
+
+        let src = &buf[self.pos.min(buf.len())..];
+        let len = dst.len().min(src.len());
+
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), len) }
+        self.pos += len;
+        Ok(len)
+    }
+
+    #[inline(always)]
+    unsafe fn read_hint(&mut self, hint: impl Hint) -> ReadResult<impl Reader<'a>> {
+        let size = hint.size();
+        let window = self.advance_slice_checked(size)?;
+        Ok(unsafe { SliceScopedUnchecked::new(window) })
     }
 
     #[inline]
-    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        let Some(src) = self.cur_slice().get(..n_bytes) else {
-            return Err(read_size_limit(n_bytes));
-        };
-        Ok(src)
-    }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        self.pos = unsafe { self.pos.unchecked_add(amt) };
-    }
-
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        if self.cur_len() < amt {
-            return Err(read_size_limit(amt));
-        }
-        // SAFETY: We just checked that `cur_len() >= amt`.
-        unsafe { self.consume_unchecked(amt) };
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        let src = self.advance_slice_checked(dst.len())?;
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), dst.len()) }
         Ok(())
     }
 
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
-        Ok(TrustedSliceReader::new(
-            self.consume_slice_checked(n_bytes)?,
-        ))
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let src = self.advance_slice_checked(N)?;
+        Ok(unsafe { *(src.as_ptr().cast::<[u8; N]>()) })
     }
 }
 
-/// Helper functions for writing to `Cursor<&mut [MaybeUninit<u8>]>` and `Cursor<&mut MaybeUninit<[u8; N]>>`.
-mod uninit_slice {
-    use super::*;
-
-    /// Get a mutable slice of the remaining bytes in the cursor.
-    #[inline]
-    pub(super) fn cur_slice_mut(
-        inner: &mut [MaybeUninit<u8>],
-        pos: usize,
-    ) -> &mut [MaybeUninit<u8>] {
-        let len = inner.len();
-        &mut inner[pos.min(len)..]
-    }
-
-    /// Get a mutable slice of `len` bytes from the cursor at the current position,
-    /// returning an error if the slice does not have at least `len` bytes remaining.
-    #[inline]
-    pub(super) fn get_slice_mut_checked(
-        inner: &mut [MaybeUninit<u8>],
-        pos: usize,
-        len: usize,
-    ) -> WriteResult<&mut [MaybeUninit<u8>]> {
-        let Some(dst) = cur_slice_mut(inner, pos).get_mut(..len) else {
+impl<T> Cursor<&mut [T]> {
+    #[inline(always)]
+    fn advance_slice_mut_checked(&mut self, len: usize) -> WriteResult<&mut [T]> {
+        let Some(slice) = advance_slice_mut_checked(self.inner, &mut self.pos, len) else {
             return Err(write_size_limit(len));
         };
-        Ok(dst)
-    }
-
-    /// Write `src` to the cursor at the current position and advance the position by `src.len()`.
-    pub(super) fn write(
-        inner: &mut [MaybeUninit<u8>],
-        pos: &mut usize,
-        src: &[u8],
-    ) -> WriteResult<()> {
-        let len = src.len();
-        let dst = get_slice_mut_checked(inner, *pos, len)?;
-        // SAFETY: dst is a valid slice of `len` bytes.
-        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), len) };
-        // SAFETY: We just wrote `len` bytes to the slice of `pos..pos + len`, so `pos + len` is valid.
-        *pos = unsafe { pos.unchecked_add(len) };
-        Ok(())
-    }
-
-    #[inline]
-    pub(super) fn as_trusted_for<'a>(
-        inner: &'a mut [MaybeUninit<u8>],
-        pos: &mut usize,
-        n_bytes: usize,
-    ) -> WriteResult<TrustedSliceWriter<'a>> {
-        let dst = get_slice_mut_checked(inner, *pos, n_bytes)?;
-        // SAFETY: We just created a slice of `pos..pos + n_bytes`, so `pos + n_bytes` is valid.
-        *pos = unsafe { pos.unchecked_add(n_bytes) };
-        Ok(TrustedSliceWriter::new(dst))
+        Ok(slice)
     }
 }
 
 impl Writer for Cursor<&mut [MaybeUninit<u8>]> {
-    type Trusted<'b>
-        = TrustedSliceWriter<'b>
-    where
-        Self: 'b;
-
-    #[inline]
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        uninit_slice::write(self.inner, &mut self.pos, src)
+    #[inline(always)]
+    unsafe fn write_hint(&mut self, hint: impl Hint) -> WriteResult<impl Writer> {
+        let size = hint.size();
+        let window = self.advance_slice_mut_checked(size)?;
+        Ok(unsafe { SliceMutUnchecked::new(window) })
     }
 
     #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        uninit_slice::as_trusted_for(self.inner, &mut self.pos, n_bytes)
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        let dst = self.advance_slice_mut_checked(src.len())?;
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) }
+
+        Ok(())
+    }
+}
+
+impl Writer for Cursor<&mut [u8]> {
+    #[inline(always)]
+    unsafe fn write_hint(&mut self, hint: impl Hint) -> WriteResult<impl Writer> {
+        let size = hint.size();
+        let window = self.advance_slice_mut_checked(size)?;
+        Ok(unsafe { SliceMutUnchecked::new(window) })
+    }
+
+    #[inline]
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        let dst = self.advance_slice_mut_checked(src.len())?;
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) }
+
+        Ok(())
     }
 }
 
 impl<const N: usize> Cursor<&mut MaybeUninit<[u8; N]>> {
     #[inline(always)]
-    // `core::mem::transpose` is not yet stabilized.
-    pub(super) const fn transpose(inner: &mut MaybeUninit<[u8; N]>) -> &mut [MaybeUninit<u8>; N] {
-        // SAFETY: MaybeUninit<[u8; N]> is equivalent to [MaybeUninit<u8>; N].
-        unsafe { transmute::<&mut MaybeUninit<[u8; N]>, &mut [MaybeUninit<u8>; N]>(inner) }
+    fn advance_slice_mut_checked(&mut self, len: usize) -> WriteResult<&mut [MaybeUninit<u8>]> {
+        let Some(slice) = advance_slice_mut_checked(transpose(self.inner), &mut self.pos, len)
+        else {
+            return Err(write_size_limit(len));
+        };
+        Ok(slice)
     }
 }
 
 impl<const N: usize> Writer for Cursor<&mut MaybeUninit<[u8; N]>> {
-    type Trusted<'b>
-        = TrustedSliceWriter<'b>
-    where
-        Self: 'b;
-
-    #[inline]
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        uninit_slice::write(Self::transpose(self.inner), &mut self.pos, src)
+    #[inline(always)]
+    unsafe fn write_hint(&mut self, hint: impl Hint) -> WriteResult<impl Writer> {
+        let size = hint.size();
+        let window = self.advance_slice_mut_checked(size)?;
+        Ok(unsafe { SliceMutUnchecked::new(window) })
     }
 
     #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        uninit_slice::as_trusted_for(Self::transpose(self.inner), &mut self.pos, n_bytes)
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        let dst = self.advance_slice_mut_checked(src.len())?;
+        unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) }
+
+        Ok(())
     }
 }
 
@@ -326,24 +300,6 @@ mod vec {
         Ok(())
     }
 
-    /// Advance the position by `n_bytes` and return a [`TrustedSliceWriter`] that can elide bounds
-    /// checking within that `n_bytes` window.
-    #[inline]
-    pub(super) fn as_trusted_for<'a>(
-        inner: &'a mut Vec<u8>,
-        pos: &'a mut usize,
-        n_bytes: usize,
-    ) -> WriteResult<TrustedVecWriter<'a>> {
-        maybe_grow(inner, *pos, n_bytes)?;
-        let buf = unsafe {
-            from_raw_parts_mut(
-                inner.as_mut_ptr().cast::<MaybeUninit<u8>>(),
-                inner.capacity(),
-            )
-        };
-        Ok(TrustedVecWriter::new(buf, pos))
-    }
-
     #[inline]
     pub(super) fn finish(inner: &mut Vec<u8>, pos: usize) {
         if pos > inner.len() {
@@ -352,61 +308,22 @@ mod vec {
             }
         }
     }
-}
 
-/// Trusted writer for `Cursor<&mut Vec<u8>>` or `Cursor<Vec<u8>>` that continues
-/// overwriting the vector's memory.
-///
-/// Generally this should not be constructed directly, but rather by calling [`Writer::as_trusted_for`]
-/// on a trusted [`Writer`]. This will ensure that the safety invariants are upheld.
-///
-/// Note that this does *not* update the length of the vector, as it only contains a reference to the
-/// vector's memory via `&mut [MaybeUninit<u8>]`, but it will update the _position_ of the cursor.
-/// Vec implementations will synchronize the length and position on subsequent writes or when the
-/// writer is finished. Benchmarks showed a roughly 2x performance improvement using this method
-/// rather than taking a `&mut Vec<u8>` directly.
-///
-/// # Safety
-///
-/// - This will _not_ grow the vector, as it assumes the caller has already reserved enough capacity.
-///   The `inner` buffer must have sufficient capacity for all writes. It is UB if this is not upheld.
-#[cfg(feature = "alloc")]
-pub struct TrustedVecWriter<'a> {
-    inner: &'a mut [MaybeUninit<u8>],
-    pos: &'a mut usize,
-}
-
-#[cfg(feature = "alloc")]
-impl<'a> TrustedVecWriter<'a> {
-    pub fn new(inner: &'a mut [MaybeUninit<u8>], pos: &'a mut usize) -> Self {
-        Self { inner, pos }
-    }
-}
-
-#[cfg(feature = "alloc")]
-impl Writer for TrustedVecWriter<'_> {
-    type Trusted<'b>
-        = TrustedVecWriter<'b>
-    where
-        Self: 'b;
-
-    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        // SAFETY: Creator of this writer ensures we have sufficient capacity for all writes.
-        unsafe {
-            ptr::copy_nonoverlapping(
-                src.as_ptr().cast(),
-                self.inner.as_mut_ptr().add(*self.pos),
-                src.len(),
-            )
+    #[inline(always)]
+    #[expect(clippy::arithmetic_side_effects)]
+    pub(super) unsafe fn write_hint<'a>(
+        inner: &'a mut Vec<u8>,
+        pos: &'a mut usize,
+        hint: impl Hint,
+    ) -> WriteResult<impl Writer> {
+        let size = hint.size();
+        maybe_grow(inner, *pos, size)?;
+        let buf = unsafe {
+            from_raw_parts_mut(inner.as_mut_ptr().add(*pos).cast::<MaybeUninit<u8>>(), size)
         };
 
-        *self.pos = unsafe { self.pos.unchecked_add(src.len()) };
-        Ok(())
-    }
-
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, _n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        Ok(TrustedVecWriter::new(self.inner, self.pos))
+        *pos += size;
+        Ok(unsafe { SliceMutUnchecked::new(buf) })
     }
 }
 
@@ -440,10 +357,10 @@ impl Writer for TrustedVecWriter<'_> {
 /// ```
 #[cfg(feature = "alloc")]
 impl Writer for Cursor<&mut Vec<u8>> {
-    type Trusted<'b>
-        = TrustedVecWriter<'b>
-    where
-        Self: 'b;
+    #[inline(always)]
+    unsafe fn write_hint(&mut self, hint: impl Hint) -> WriteResult<impl Writer> {
+        vec::write_hint(self.inner, &mut self.pos, hint)
+    }
 
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
@@ -454,11 +371,6 @@ impl Writer for Cursor<&mut Vec<u8>> {
     fn finish(&mut self) -> WriteResult<()> {
         vec::finish(self.inner, self.pos);
         Ok(())
-    }
-
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        vec::as_trusted_for(self.inner, &mut self.pos, n_bytes)
     }
 }
 
@@ -489,10 +401,10 @@ impl Writer for Cursor<&mut Vec<u8>> {
 /// ```
 #[cfg(feature = "alloc")]
 impl Writer for Cursor<Vec<u8>> {
-    type Trusted<'b>
-        = TrustedVecWriter<'b>
-    where
-        Self: 'b;
+    #[inline(always)]
+    unsafe fn write_hint(&mut self, hint: impl Hint) -> WriteResult<impl Writer> {
+        vec::write_hint(&mut self.inner, &mut self.pos, hint)
+    }
 
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
@@ -503,11 +415,6 @@ impl Writer for Cursor<Vec<u8>> {
     fn finish(&mut self) -> WriteResult<()> {
         vec::finish(&mut self.inner, self.pos);
         Ok(())
-    }
-
-    #[inline]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
-        vec::as_trusted_for(&mut self.inner, &mut self.pos, n_bytes)
     }
 }
 
@@ -522,20 +429,14 @@ mod tests {
         #[test]
         fn cursor_read_no_panic_no_ub_check(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
             let mut cursor = Cursor::new_at(&bytes, pos);
-            let buf = cursor.fill_buf(bytes.len()).unwrap();
-            if pos > bytes.len() {
-                // fill-buf should return an empty slice if the position
-                // is greater than the length of the bytes.
-                prop_assert_eq!(buf, &[]);
-            } else {
-                prop_assert_eq!(buf, &bytes[pos..]);
-            }
 
-            let res = cursor.fill_exact(bytes.len());
+            let mut dst = Vec::with_capacity(bytes.len());
+            let res = cursor.copy_into_slice(dst.spare_capacity_mut());
             if pos > bytes.len() && !bytes.is_empty() {
                 prop_assert!(matches!(res, Err(ReadError::ReadSizeLimit(x)) if x == bytes.len()));
             } else {
-                prop_assert_eq!(res.unwrap(), &bytes[pos.min(bytes.len())..]);
+                unsafe { dst.set_len(bytes.len()) };
+                prop_assert_eq!(&dst, &bytes[pos.min(bytes.len())..]);
             }
         }
 
@@ -544,49 +445,25 @@ mod tests {
             let mut cursor = Cursor::new_at(&bytes, pos);
             let start = cursor.position();
 
-            // fill_exact(0) is always Ok and does not advance.
-            let fe = cursor.fill_exact(0).unwrap();
-            prop_assert_eq!(fe.len(), 0);
+            let mut buf: [MaybeUninit::<u8>; 0] = [];
+            cursor.copy_into_slice(&mut buf).unwrap();
             prop_assert_eq!(cursor.position(), start);
 
-            // consume(0) is always Ok and does not advance.
-            prop_assert!(cursor.consume(0).is_ok());
+            unsafe { <Cursor<_> as Reader>::read_hint(&mut cursor, 0) }.unwrap();
             prop_assert_eq!(cursor.position(), start);
-
-            // as_trusted_for(0) is always Ok and does not advance.
-            let start2 = cursor.position();
-            let mut trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
-            // Trusted reader on a 0-window should behave like EOF for >0, but allow zero-length reads.
-            prop_assert_eq!(trusted.fill_buf(1).unwrap(), &[]);
-            prop_assert_eq!(trusted.fill_exact(0).unwrap().len(), 0);
-            prop_assert_eq!(cursor.position(), start2);
-        }
-
-        #[test]
-        fn cursor_as_trusted_for_remaining_advances_to_len(bytes in any::<Vec<u8>>(), pos in any::<usize>()) {
-            // Clamp pos to be within [0, len] so the request is valid.
-            let len = bytes.len();
-            let pos = if len == 0 { 0 } else { pos % (len + 1) };
-            let mut cursor = Cursor::new_at(&bytes, pos);
-            let remaining = len.saturating_sub(pos);
-
-            let _trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, remaining) }.unwrap();
-            // After consuming the exact remaining, position should be exactly len.
-            prop_assert_eq!(cursor.position(), len);
         }
 
         #[test]
         fn cursor_extremal_pos_max_zero_len_ok(bytes in any::<Vec<u8>>()) {
             let mut cursor = Cursor::new_at(&bytes, usize::MAX);
-            // With extremal position, fill_buf should be empty and peek should error.
-            prop_assert_eq!(cursor.fill_buf(1).unwrap(), &[]);
-            prop_assert!(matches!(cursor.peek(), Err(ReadError::ReadSizeLimit(1))));
 
             // Zero-length ops still succeed and do not advance.
+            let mut buf: [MaybeUninit::<u8>; 0] = [];
             let start = cursor.position();
-            prop_assert!(cursor.fill_exact(0).is_ok());
-            prop_assert!(cursor.consume(0).is_ok());
-            let _trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
+            prop_assert!(cursor.copy_into_slice(&mut buf).is_ok());
+            {
+                let _trusted = unsafe { <Cursor<_> as Reader>::read_hint(&mut cursor, 0) }.unwrap();
+            }
             prop_assert_eq!(cursor.position(), start);
         }
 
@@ -656,7 +533,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len()]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
+            unsafe { <Cursor<_> as Writer>::write_hint(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();
@@ -669,7 +546,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len() / 2]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
+            unsafe { <Cursor<_> as Writer>::write_hint(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();
@@ -682,7 +559,7 @@ mod tests {
             let mut cursor = Cursor::new(vec![1; bytes.len() * 2]);
             let half = bytes.len() - bytes.len() / 2;
             cursor.write(&bytes[..half]).unwrap();
-            unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, bytes.len() - half) }
+            unsafe { <Cursor<_> as Writer>::write_hint(&mut cursor, bytes.len() - half) }
                 .unwrap()
                 .write(&bytes[half..])
                 .unwrap();

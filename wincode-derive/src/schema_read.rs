@@ -144,7 +144,7 @@ fn impl_struct(
                     // of the serialized sizes of the fields.
                     // Calling `read` on each field will consume exactly `size` bytes,
                     // fully consuming the trusted window.
-                    let mut reader = unsafe { reader.as_trusted_for(size) }?;
+                    let mut reader = unsafe { reader.read_hint(size) }?;
                     #init_guard
                     #(#read_impl)*
                     mem::forget(guard);
@@ -232,7 +232,7 @@ fn impl_enum(
                             // which is the serialized size of the variant.
                             // Calling `read` on each field will consume exactly `summed_sizes` bytes,
                             // fully consuming the trusted window.
-                            let mut reader = unsafe { reader.as_trusted_for(summed_sizes) }?;
+                            let mut reader = unsafe { reader.read_hint(summed_sizes) }?;
                             #(#read)*
                             dst.write(#constructor);
                         } else {
