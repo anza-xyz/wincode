@@ -3,7 +3,7 @@ use {
     core::{
         mem::{self, transmute, MaybeUninit},
         ptr,
-        slice::from_raw_parts,
+        slice::{from_raw_parts, from_raw_parts_mut},
     },
     thiserror::Error,
 };
@@ -28,68 +28,39 @@ pub const fn read_size_limit(len: usize) -> ReadError {
     ReadError::ReadSizeLimit(len)
 }
 
+#[inline(always)]
+pub(super) const fn transpose<const N: usize, T>(
+    src: &mut MaybeUninit<[T; N]>,
+) -> &mut [MaybeUninit<T>; N] {
+    unsafe { transmute(src) }
+}
+
 /// Trait for structured reading of bytes from a source into potentially uninitialized memory.
-///
-/// # Advancement semantics
-/// - `fill_*` methods never advance.
-/// - `copy_into_*` and `borrow_*` methods advance by the number of bytes read.
-/// - [`Reader::as_trusted_for`] advances the parent by the number of bytes requested.
 ///
 /// # Zero-copy semantics
 /// Only implement [`Reader::borrow_exact`] for sources where stable borrows into the backing storage are possible.
-/// Callers should prefer [`Reader::fill_exact`] to remain compatible with readers that don’t support zero-copy.
+/// Callers should prefer [`Reader::copy_into_slice`] to remain compatible with readers that don’t support zero-copy.
 /// Returns [`ReadError::UnsupportedZeroCopy`] for readers that do not support zero-copy.
 pub trait Reader<'a> {
-    /// A variant of the [`Reader`] that can elide bounds checking within a given window.
-    ///
-    /// Trusted variants of the [`Reader`] should generally not be constructed directly,
-    /// but rather by calling [`Reader::as_trusted_for`] on a trusted [`Reader`].
-    /// This will ensure that the safety invariants are upheld.
-    type Trusted<'b>: Reader<'a>
-    where
-        Self: 'b;
-
-    /// Return up to `n_bytes` from the internal buffer without advancing. Implementations may
-    /// read more data internally to satisfy future requests. Returns fewer than `n_bytes` at EOF.
-    ///
-    /// This is _not_ required to return exactly `n_bytes`, it is required to return _up to_ `n_bytes`.
-    /// Use [`Reader::fill_exact`] if you need exactly `n_bytes`.
-    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]>;
-
-    /// Return exactly `n_bytes` without advancing.
-    ///
-    /// Errors if the source cannot provide enough bytes.
-    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        let src = self.fill_buf(n_bytes)?;
-        if src.len() != n_bytes {
-            return Err(read_size_limit(n_bytes));
-        }
-        Ok(src)
-    }
-
-    /// Return exactly `N` bytes as `&[u8; N]` without advancing.
-    ///
-    /// Errors if fewer than `N` bytes are available.
-    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        let src = self.fill_exact(N)?;
-        // SAFETY:
-        // - `fill_exact` ensures we read N bytes.
-        Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
-    }
-
     /// Return exactly `N` bytes as `[u8; N]` and advance by `N`.
     ///
     /// Errors if fewer than `N` bytes are available.
-    #[inline]
+    #[inline(always)]
     fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
-        let arr = *self.fill_array::<N>()?;
-        unsafe { self.consume_unchecked(N) }
-        Ok(arr)
+        let mut ar = MaybeUninit::<[u8; N]>::uninit();
+
+        self.copy_into_slice(transpose(&mut ar))?;
+        Ok(unsafe { ar.assume_init() })
+    }
+
+    #[inline(always)]
+    fn take_byte(&mut self) -> ReadResult<u8> {
+        Ok(self.take_array::<1>()?[0])
     }
 
     /// Zero-copy: return a borrowed slice of exactly `len` bytes and advance by `len`.
     ///
-    /// The returned slice is tied to `'a`. Prefer [`Reader::fill_exact`] unless you truly need zero-copy.
+    /// The returned slice is tied to `'a`. Prefer [`Reader::copy_into_slice`] unless you truly need zero-copy.
     /// Errors for readers that don't support zero-copy.
     #[inline]
     fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
@@ -104,18 +75,6 @@ pub trait Reader<'a> {
         Err(ReadError::UnsupportedZeroCopy)
     }
 
-    /// Advance by exactly `amt` bytes without bounds checks.
-    ///
-    /// May panic if fewer than `amt` bytes remain.
-    ///
-    /// # Safety
-    ///
-    /// - `amt` must be less than or equal to the number of bytes remaining in the reader.
-    unsafe fn consume_unchecked(&mut self, amt: usize);
-
-    /// Advance the reader exactly `amt` bytes, returning an error if the source does not have enough bytes.
-    fn consume(&mut self, amt: usize) -> ReadResult<()>;
-
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
     ///
@@ -128,8 +87,6 @@ pub trait Reader<'a> {
     /// Note:
     /// - `as_trusted_for` is intended for callers that know they will operate
     ///   within a fixed-size window and want to avoid intermediate bounds checks.
-    /// - If you simply want to advance the parent by `n_bytes` without using
-    ///   a trusted window, prefer `consume(n_bytes)` instead.
     ///
     /// # Safety
     ///
@@ -139,19 +96,15 @@ pub trait Reader<'a> {
     ///
     /// Concretely:
     /// - The total number of bytes accessed/consumed via the `Trusted` reader
-    ///   (`fill_*`, `copy_into_*`, `consume`, etc.) must be **<= `n_bytes`**.
+    ///   (`copy_into_*`, `take_*`, etc.) must be **<= `n_bytes`**.
     ///
     /// Violating this is undefined behavior, because `Trusted` readers are
     /// permitted to elide bounds checks within the `n_bytes` window; reading past the
     /// `n_bytes` window may read past the end of the underlying buffer.
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>>;
-
-    /// Return a reference to the next byte without advancing.
-    ///
-    /// May buffer more bytes if necessary. Errors if no bytes remain.
-    #[inline]
-    fn peek(&mut self) -> ReadResult<&u8> {
-        self.fill_buf(1)?.first().ok_or_else(|| read_size_limit(1))
+    #[expect(unused_variables)]
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
+        Ok(self)
     }
 
     /// Get a mutable reference to the [`Reader`].
@@ -191,37 +144,7 @@ pub trait Reader<'a> {
     /// # Safety
     ///
     /// - `dst` must not overlap with the internal buffer.
-    #[inline]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
-        let src = self.fill_exact(dst.len())?;
-        // SAFETY:
-        // - `fill_exact` must do the appropriate bounds checking.
-        unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr().cast(), dst.as_mut_ptr(), dst.len());
-            self.consume_unchecked(dst.len());
-        }
-        Ok(())
-    }
-
-    /// Copy and consume exactly `N` bytes from the [`Reader`] into `dst`.
-    ///
-    /// # Safety
-    ///
-    /// - `dst` must not overlap with the internal buffer.
-    #[inline]
-    fn copy_into_array<const N: usize>(
-        &mut self,
-        dst: &mut MaybeUninit<[u8; N]>,
-    ) -> ReadResult<()> {
-        let src = self.fill_array::<N>()?;
-        // SAFETY:
-        // - `fill_array` must do the appropriate bounds checking.
-        unsafe {
-            ptr::copy_nonoverlapping(src, dst.as_mut_ptr(), 1);
-            self.consume_unchecked(N);
-        }
-        Ok(())
-    }
+    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()>;
 
     /// Copy and consume exactly `size_of::<T>()` bytes from the [`Reader`] into `dst`.
     ///
@@ -231,14 +154,10 @@ pub trait Reader<'a> {
     /// - `dst` must not overlap with the internal buffer.
     #[inline]
     unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
-        let src = self.fill_exact(size_of::<T>())?;
-        // SAFETY:
-        // - `fill_exact` must do the appropriate bounds checking.
-        unsafe {
-            ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), size_of::<T>());
-            self.consume_unchecked(size_of::<T>());
-        }
-        Ok(())
+        let dst = unsafe {
+            from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
+        };
+        self.copy_into_slice(dst)
     }
 
     /// Copy and consume exactly `dst.len() * size_of::<T>()` bytes from the [`Reader`] into `dst`.
@@ -250,41 +169,15 @@ pub trait Reader<'a> {
     #[inline]
     unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
         let len = size_of_val(dst);
-        let bytes = self.fill_exact(len)?;
-        // SAFETY:
-        // - `fill_exact` must do the appropriate bounds checking.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), dst.as_mut_ptr().cast(), len);
-            self.consume_unchecked(len);
-        }
-        Ok(())
+        let dst = unsafe { from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), len) };
+        self.copy_into_slice(dst)
     }
 }
 
 impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
-    type Trusted<'b>
-        = R::Trusted<'b>
-    where
-        Self: 'b;
-
     #[inline(always)]
     fn by_ref(&mut self) -> impl Reader<'a> {
         &mut **self
-    }
-
-    #[inline(always)]
-    fn fill_buf(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        (*self).fill_buf(n_bytes)
-    }
-
-    #[inline(always)]
-    fn fill_exact(&mut self, n_bytes: usize) -> ReadResult<&[u8]> {
-        (*self).fill_exact(n_bytes)
-    }
-
-    #[inline(always)]
-    fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        (*self).fill_array()
     }
 
     #[inline(always)]
@@ -303,36 +196,13 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        (*self).consume_unchecked(amt)
-    }
-
-    #[inline(always)]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        (*self).consume(amt)
-    }
-
-    #[inline(always)]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
         (*self).as_trusted_for(n_bytes)
-    }
-
-    #[inline(always)]
-    fn peek(&mut self) -> ReadResult<&u8> {
-        (*self).peek()
     }
 
     #[inline(always)]
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         (*self).copy_into_slice(dst)
-    }
-
-    #[inline(always)]
-    fn copy_into_array<const N: usize>(
-        &mut self,
-        dst: &mut MaybeUninit<[u8; N]>,
-    ) -> ReadResult<()> {
-        (*self).copy_into_array(dst)
     }
 
     #[inline(always)]
@@ -364,15 +234,6 @@ pub type WriteResult<T> = core::result::Result<T, WriteError>;
 
 /// Trait for structured writing of bytes into a source of potentially uninitialized memory.
 pub trait Writer {
-    /// A variant of the [`Writer`] that can elide bounds checking within a given window.
-    ///
-    /// Trusted variants of the [`Writer`] should generally not be constructed directly,
-    /// but rather by calling [`Writer::as_trusted_for`] on a trusted [`Writer`].
-    /// This will ensure that the safety invariants are upheld.
-    type Trusted<'a>: Writer
-    where
-        Self: 'a;
-
     /// Get a mutable reference to the [`Writer`].
     ///
     /// Useful in situations where one has an `impl Writer` that
@@ -475,7 +336,11 @@ pub trait Writer {
     /// - Failing to initialize all `n_bytes` without returning an error may
     ///   leave uninitialized memory in the destination that later safe code
     ///   assumes to be fully initialized.
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>>;
+    #[expect(unused_variables)]
+    #[inline(always)]
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<impl Writer> {
+        Ok(self)
+    }
 
     /// Write `T` as bytes into the source.
     ///
@@ -504,11 +369,6 @@ pub trait Writer {
 }
 
 impl<W: Writer + ?Sized> Writer for &mut W {
-    type Trusted<'a>
-        = W::Trusted<'a>
-    where
-        Self: 'a;
-
     #[inline(always)]
     fn by_ref(&mut self) -> impl Writer {
         &mut **self
@@ -525,7 +385,7 @@ impl<W: Writer + ?Sized> Writer for &mut W {
     }
 
     #[inline(always)]
-    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<Self::Trusted<'_>> {
+    unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<impl Writer> {
         (*self).as_trusted_for(n_bytes)
     }
 
@@ -541,7 +401,7 @@ impl<W: Writer + ?Sized> Writer for &mut W {
 }
 
 mod cursor;
-mod slice;
+pub mod slice;
 #[cfg(feature = "alloc")]
 mod vec;
-pub use {cursor::Cursor, slice::*};
+pub use cursor::Cursor;

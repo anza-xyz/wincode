@@ -356,15 +356,14 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
         fn utf8_error(buf: &[u8]) -> ReadError {
             invalid_utf8_encoding(core::str::from_utf8(buf).unwrap_err())
         }
-        let b0 = *reader.peek()?;
+        let b0 = reader.take_byte()?;
         let code_point = match b0 {
             0x00..=0x7F => {
-                unsafe { reader.consume_unchecked(1) };
                 dst.write(b0 as char);
                 return Ok(());
             }
             0xC2..=0xDF => {
-                let [b0, b1] = reader.take_array()?;
+                let b1 = reader.take_byte()?;
                 // Validate continuation byte (must be 10xxxxxx)
                 if (b1 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1]));
@@ -372,7 +371,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
             }
             0xE0..=0xEF => {
-                let [b0, b1, b2] = reader.take_array()?;
+                let [b1, b2] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1, b2]));
                 }
@@ -383,7 +382,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
             }
             0xF0..=0xF4 => {
-                let [b0, b1, b2, b3] = reader.take_array()?;
+                let [b1, b2, b3] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1, b2, b3]));
                 }
@@ -1327,8 +1326,7 @@ mod zero_copy {
     ///
     /// Note we abstract this into a function because it ensures the lifetime of the
     /// returned reference is the same as the input. Otherwise the compiler would
-    /// accept any lifetime as `'de`. We want to preclude usage of something like
-    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    /// accept any lifetime as `'de`.
     ///
     /// # Safety
     /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -1366,8 +1364,7 @@ mod zero_copy {
     ///
     /// Note we abstract this into a function because it ensures the lifetime of the
     /// returned reference is the same as the input. Otherwise the compiler would
-    /// accept any lifetime as `'de`. We want to preclude usage of something like
-    /// `reader.fill_exact`, as its lifetime does not extend past the reader.
+    /// accept any lifetime as `'de`.
     ///
     /// # Safety
     /// - `T` must be a zero-copy type (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
