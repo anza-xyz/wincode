@@ -13,12 +13,17 @@ bincode_2 = { package = "bincode", version = "2.0", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
+wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
+wincode-derive = { path = "../wincode-derive" }
 
-[dependencies.wincode]
-path = "../wincode"
-features = ["uuid-serde-compat"]
-[dependencies.wincode-derive]
-path = "../wincode-derive"
+solana-address = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-hash = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-fee-calculator = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-message = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-nonce = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-signature = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-transaction = { git = "https://github.com/anza-xyz/solana-sdk.git", features = ["wincode"], rev = "029896d496f3a8c6101cbeed22b72b389a22aab9" }
+solana-entry = { git = "https://github.com/anza-xyz/agave.git", features = ["agave-unstable-api"], rev = "56f8c8c0aa6f48401ef541ebf42d204a09b1f69e" }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
@@ -32,3 +37,14 @@ path = "fuzz_targets/roundtrip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "solana_types"
+path = "fuzz_targets/solana_types.rs"
+test = false
+doc = false
+bench = false
+
+[patch.crates-io]
+wincode = { path = "../wincode" }
+wincode-derive = { path = "../wincode-derive" }
