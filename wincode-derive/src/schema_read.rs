@@ -166,11 +166,19 @@ fn impl_enum(
     enum_ident: &Type,
     variants: &[Variant],
     tag_encoding_override: Option<&Type>,
+    // Changed return type from `(TokenStream, TokenStream)` to `Result<(TokenStream, TokenStream)>`
+    // to allow returning a compile_error! for empty enums via `Err(Error::custom(...))`.
 ) -> (TokenStream, TokenStream) {
+    // Empty enums are uninhabited — no value can ever be constructed or deserialized.
+    // Previously this returned `quote! {Ok(())}` as read_impl which caused a double Ok(())
+    // in the generated read() body — invalid Rust syntax.
+    // Now we emit a runtime error instead, consistent with serde/bincode behavior.
     if variants.is_empty() {
-        return (quote! {Ok(())}, quote! {TypeMeta::Dynamic});
+        return (
+            quote! { return Err(error::invalid_value("cannot deserialize uninhabited enum")); },
+            quote! { TypeMeta::Dynamic },
+        );
     }
-
     let type_meta_impl = variants.type_meta_impl(
         TraitImpl::SchemaRead,
         tag_encoding_override.unwrap_or(&default_tag_encoding()),
