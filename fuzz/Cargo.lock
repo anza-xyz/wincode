@@ -4813,7 +4813,7 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "wincode"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "pastey",
  "proc-macro2",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "darling",
  "proc-macro2",
