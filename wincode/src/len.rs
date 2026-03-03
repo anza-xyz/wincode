@@ -377,14 +377,7 @@ pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_L
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
     pub use solana_short_vec::ShortU16;
-    use {
-        super::*,
-        crate::error::write_length_encoding_overflow,
-        core::{
-            mem::{transmute, MaybeUninit},
-            ptr,
-        },
-    };
+    use {super::*, crate::error::write_length_encoding_overflow, core::mem::MaybeUninit};
 
     unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
         type Dst = Self;
@@ -402,20 +395,16 @@ pub mod short_vec {
     unsafe impl<C: ConfigCore> SchemaWrite<C> for ShortU16 {
         type Src = Self;
 
+        #[inline]
         fn size_of(src: &Self::Src) -> WriteResult<usize> {
             Ok(short_u16_bytes_needed(src.0))
         }
 
+        #[inline]
         fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-            let val = src.0;
-            let needed = short_u16_bytes_needed(val);
             let mut buf = [MaybeUninit::<u8>::uninit(); 3];
-            // SAFETY: short_u16 uses a maximum of 3 bytes, so the buffer is always large enough.
-            unsafe { encode_short_u16(buf.as_mut_ptr().cast::<u8>(), needed, val) };
-            // SAFETY: encode_short_u16 writes exactly `needed` bytes.
-            let buf =
-                unsafe { transmute::<&[MaybeUninit<u8>], &[u8]>(buf.get_unchecked(..needed)) };
-            writer.write(buf)?;
+            let bytes = encode_short_u16(&mut buf, src.0);
+            writer.write(bytes)?;
             Ok(())
         }
     }
@@ -440,13 +429,10 @@ pub mod short_vec {
     /// Encode a short u16 into the given buffer.
     ///
     /// See [`solana_short_vec::ShortU16`] for more details.
-    ///
-    /// # Safety
-    ///
-    /// - `dst` must be a valid for writes.
-    /// - `dst` must be valid for `needed` bytes.
     #[inline(always)]
-    unsafe fn encode_short_u16(dst: *mut u8, needed: usize, len: u16) {
+    fn encode_short_u16(dst: &mut [MaybeUninit<u8>], len: u16) -> &[u8] {
+        use core::slice::from_raw_parts;
+
         // From `solana_short_vec`:
         //
         // u16 serialized with 1 to 3 bytes. If the value is above
@@ -454,19 +440,26 @@ pub mod short_vec {
         // bytes. Each byte follows the same pattern until the 3rd byte. The 3rd
         // byte may only have the 2 least-significant bits set, otherwise the encoded
         // value will overflow the u16.
-        match needed {
-            1 => ptr::write(dst, len as u8),
-            2 => {
-                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(1), (len >> 7) as u8);
+        let written = match len {
+            0..=0x7f => {
+                dst[0].write(len as u8);
+                1
             }
-            3 => {
-                ptr::write(dst, ((len & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(1), (((len >> 7) & 0x7f) as u8) | 0x80);
-                ptr::write(dst.add(2), (len >> 14) as u8);
+            0x80..=0x3fff => {
+                dst[0].write(((len & 0x7f) as u8) | 0x80);
+                dst[1].write((len >> 7) as u8);
+                2
             }
-            _ => unreachable!(),
-        }
+            _ => {
+                dst[0].write(((len & 0x7f) as u8) | 0x80);
+                dst[1].write((((len >> 7) & 0x7f) as u8) | 0x80);
+                dst[2].write((len >> 14) as u8);
+                3
+            }
+        };
+
+        // SAFETY: We wrote exactly `written` bytes.
+        unsafe { from_raw_parts(dst.as_ptr().cast(), written) }
     }
 
     /// Decodes a ShortU16 from a byte slice, returning the decoded u16 and the number of bytes read.
@@ -603,12 +596,10 @@ pub mod short_vec {
         };
 
         fn our_short_u16_encode(len: u16) -> Vec<u8> {
-            let needed = short_u16_bytes_needed(len);
-            let mut buf = Vec::with_capacity(needed);
-            unsafe {
-                encode_short_u16(buf.as_mut_ptr(), needed, len);
-                buf.set_len(needed);
-            }
+            let mut buf = Vec::with_capacity(3);
+            let bytes = encode_short_u16(buf.spare_capacity_mut(), len);
+            let written = bytes.len();
+            unsafe { buf.set_len(written) }
             buf
         }
 
