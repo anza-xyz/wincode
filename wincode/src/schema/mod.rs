@@ -105,6 +105,95 @@ impl TypeMeta {
             _ => panic!("Type is not static"),
         }
     }
+
+    /// Returns this [`TypeMeta`] instance with `zero_copy` masked by `keep_zero_copy`.
+    ///
+    /// For `TypeMeta::Static`, this preserves `size` and computes:
+    /// `zero_copy = zero_copy && keep_zero_copy`.
+    ///
+    /// For `TypeMeta::Dynamic`, this is a no-op.
+    ///
+    /// This method never upgrades a type to zero-copy.
+    /// - `keep_zero_copy(true)` leaves the flag unchanged.
+    /// - `keep_zero_copy(false)` clears the flag.
+    pub const fn keep_zero_copy(self, keep_zero_copy: bool) -> Self {
+        match self {
+            Self::Static { size, zero_copy } => TypeMeta::Static {
+                size,
+                zero_copy: zero_copy && keep_zero_copy,
+            },
+            Self::Dynamic => Self::Dynamic,
+        }
+    }
+
+    /// Combines multiple constituent [`TypeMeta`] values into one aggregate.
+    ///
+    /// Intended for composite types whose constituents are serialized sequentially.
+    ///
+    /// Semantics:
+    /// - If any input is `Dynamic`, returns `Dynamic`.
+    /// - Otherwise returns `Static` with:
+    ///   - `size = sum of all constituent sizes`
+    ///   - `zero_copy = logical AND of all constituent zero_copy flags`
+    ///
+    /// Notes:
+    /// - This function does **not** validate layout/padding; it only combines metadata.
+    /// - For `N = 0`, the result is `TypeMeta::Static { size: 0, zero_copy: true }`.
+    /// - The caller must ensure the summed size is meaningful for the target type.
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: true },
+    ///     TypeMeta::Dynamic,
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Dynamic);
+    /// ```
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: true },
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: true });
+    /// ```
+    ///
+    /// ```
+    /// use wincode::TypeMeta;
+    ///
+    /// let types = [
+    ///     TypeMeta::Static { size: 1, zero_copy: true },
+    ///     TypeMeta::Static { size: 2, zero_copy: false },
+    ///     TypeMeta::Static { size: 3, zero_copy: true },
+    /// ];
+    /// assert_eq!(TypeMeta::join_types(types), TypeMeta::Static { size: 6, zero_copy: false });
+    /// ```
+    #[expect(clippy::arithmetic_side_effects)]
+    pub const fn join_types<const N: usize>(types: [Self; N]) -> Self {
+        let mut acc_size = 0;
+        let mut all_zero_copy = true;
+        let mut i = 0;
+        while i < N {
+            match types[i] {
+                Self::Dynamic => return Self::Dynamic,
+                Self::Static { size, zero_copy } => {
+                    acc_size += size;
+                    all_zero_copy &= zero_copy;
+                }
+            }
+            i += 1;
+        }
+        Self::Static {
+            size: acc_size,
+            zero_copy: all_zero_copy,
+        }
+    }
 }
 
 /// Types that can be written (serialized) to a [`Writer`].

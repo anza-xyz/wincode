@@ -127,7 +127,9 @@ macro_rules! test_config {
         let wr: Result<$type, _> = wincode::config::deserialize($bytes, config);
         if is_preallocation_error(&wr) {
             let limited = opts.with_limit(DEFAULT_PREALLOCATION_SIZE_LIMIT as u64);
+            // Important: use deserialize_from to enforce limits (https://github.com/bincode-org/bincode/issues/299)
             let br: Result<$type, _> = limited.deserialize_from($bytes);
+            // While bincode 1.x is reading up to the size limit, it may observe errors aside from `SizeLimit`, so we allow any error here.
             assert!(br.is_err(),
                 "bincode v1 accepted but wincode rejected due to preallocation limit for {}",
                 stringify!($type));
@@ -144,11 +146,23 @@ macro_rules! test_config {
         let wr: Result<$type, _> = wincode::config::deserialize($bytes, config);
         if is_preallocation_error(&wr) {
             let limited = bc2.with_limit::<{ DEFAULT_PREALLOCATION_SIZE_LIMIT }>();
-            let br: Result<$type, _> =
-                bincode_2::serde::borrow_decode_from_slice($bytes, limited).map(|(v, _)| v);
-            assert!(br.is_err(),
-                "bincode v2 accepted but wincode rejected due to preallocation limit for {}",
-                stringify!($type));
+            let br: Result<($type, usize), _> =
+                bincode_2::serde::borrow_decode_from_slice($bytes, limited);
+            match br {
+                Err(_) => {
+                    // While bincode 2.x is reading up to the size limit, it may observe errors aside from `LimitExceeded`, so we allow any error here.
+                }
+                Ok((_, bytes_read)) => {
+                    // Wincode considers worst-case alloc. size ahead of time, so it may reject e.g. a long `Vec<String>` with many empty strings that end up under the limit.
+                    assert!(
+                    bytes_read <= DEFAULT_PREALLOCATION_SIZE_LIMIT,
+                    "bincode v2 exceeded byte limit while wincode rejected due to preallocation limit for {}: read {} bytes > {}",
+                    stringify!($type),
+                    bytes_read,
+                    DEFAULT_PREALLOCATION_SIZE_LIMIT
+                );
+                }
+            }
         } else {
             let br: Result<$type, _> =
                 bincode_2::serde::borrow_decode_from_slice($bytes, bc2).map(|(v, _)| v);
@@ -166,6 +180,7 @@ macro_rules! test_config {
             let limited = opts.with_limit(DEFAULT_PREALLOCATION_SIZE_LIMIT as u64);
             // Important: use deserialize_from to enforce limits (https://github.com/bincode-org/bincode/issues/299)
             let br: Result<$type, _> = limited.deserialize_from($bytes);
+            // While bincode 1.x is reading up to the size limit, it may observe errors aside from `SizeLimit`, so we allow any error here.
             assert!(br.is_err(),
                 "bincode v1 accepted but wincode rejected due to preallocation limit for {}",
                 stringify!($type));
@@ -183,11 +198,23 @@ macro_rules! test_config {
         let wr: Result<$type, _> = wincode::config::deserialize($bytes, config);
         if is_preallocation_error(&wr) {
             let limited = bc2.with_limit::<{ DEFAULT_PREALLOCATION_SIZE_LIMIT }>();
-            let br: Result<$type, _> =
-                bincode_2::serde::borrow_decode_from_slice($bytes, limited).map(|(v, _)| v);
-            assert!(br.is_err(),
-                "bincode v2 accepted but wincode rejected due to preallocation limit for {}",
-                stringify!($type));
+            let br: Result<($type, usize), _> =
+                bincode_2::serde::borrow_decode_from_slice($bytes, limited);
+            match br {
+                Err(_) => {
+                    // While bincode 2.x is reading up to the size limit, it may observe errors aside from `LimitExceeded`, so we allow any error here.
+                }
+                Ok((_, bytes_read)) => {
+                // Wincode considers worst-case alloc. size ahead of time, so it may reject e.g. a long `Vec<String>` with many empty strings that end up under the limit.
+                assert!(
+                    bytes_read <= DEFAULT_PREALLOCATION_SIZE_LIMIT,
+                    "bincode v2 exceeded byte limit while wincode rejected due to preallocation limit for {}: read {} bytes > {}",
+                    stringify!($type),
+                    bytes_read,
+                    DEFAULT_PREALLOCATION_SIZE_LIMIT
+                );
+            }
+            }
         } else {
             let br: Result<$type, _> =
                 bincode_2::serde::borrow_decode_from_slice($bytes, bc2).map(|(v, _)| v);

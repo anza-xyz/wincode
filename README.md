@@ -34,12 +34,10 @@ cargo bench --features derive
 
 ## Security
 
-Release `v0.1.2` is currently undergoing 3 independent security reviews with the following firms:
-- Neodyme
+Release `v0.1.2` has undergone 3 independent security reviews with the following firms:
+- [Neodyme](audits/wincode_neodyme_0.1.2.pdf)
 - [OtterSec](audits/wincode_ottersec_audit_0.1.2.pdf)
-- Asymmetric Research
-
-Reports will be added to the repo once completed.
+- Asymmetric Research (review without report)
 
 ### Fuzzing
 
