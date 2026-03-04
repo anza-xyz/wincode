@@ -18,5 +18,5 @@ edition = "2021"
 rust-version = "1.84.1"
 
 [workspace.dependencies]
-quote = "1.0.44"
+quote = "1.0.45"
 proc-macro2 = "1.0.106"
