@@ -377,7 +377,11 @@ pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_L
 #[cfg(feature = "solana-short-vec")]
 pub mod short_vec {
     pub use solana_short_vec::ShortU16;
-    use {super::*, crate::error::write_length_encoding_overflow, core::mem::MaybeUninit};
+    use {
+        super::*,
+        crate::error::{write_length_encoding_overflow, ReadError},
+        core::mem::MaybeUninit,
+    };
 
     unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for ShortU16 {
         type Dst = Self;
@@ -462,6 +466,21 @@ pub mod short_vec {
         unsafe { from_raw_parts(dst.as_ptr().cast(), written) }
     }
 
+    #[cold]
+    const fn overflow_err() -> ReadError {
+        ReadError::LengthEncodingOverflow("u16::MAX")
+    }
+
+    #[cold]
+    const fn non_canonical_err() -> ReadError {
+        ReadError::InvalidValue("short u16: non-canonical encoding")
+    }
+
+    #[cold]
+    const fn incomplete_err() -> ReadError {
+        ReadError::InvalidValue("short u16: unexpected end of input")
+    }
+
     /// Decodes a ShortU16 from a byte slice, returning the decoded u16 and the number of bytes read.
     ///
     /// This implementation is bit-for-bit compatible with Solana's encoding rules (strict canonical form,
@@ -497,23 +516,6 @@ pub mod short_vec {
     /// ```
     #[inline]
     pub const fn decode_short_u16(bytes: &[u8]) -> ReadResult<(u16, usize)> {
-        use crate::error::ReadError;
-
-        #[cold]
-        const fn overflow_err() -> ReadError {
-            ReadError::LengthEncodingOverflow("u16::MAX")
-        }
-
-        #[cold]
-        const fn non_canonical_err() -> ReadError {
-            ReadError::InvalidValue("short u16: non-canonical encoding")
-        }
-
-        #[cold]
-        const fn incomplete_err() -> ReadError {
-            ReadError::InvalidValue("short u16: unexpected end of input")
-        }
-
         // Byte 0
         if bytes.is_empty() {
             return Err(incomplete_err());
@@ -553,11 +555,28 @@ pub mod short_vec {
 
     #[inline]
     fn decode_short_u16_from_reader<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
-        let (len, read) = decode_short_u16(reader.fill_buf(3)?)?;
-        // SAFETY: `read` is the number of bytes visited by `decode_shortu16` to decode the length,
-        // which implies the reader had at least `read` bytes available.
-        unsafe { reader.consume_unchecked(read) };
-        Ok(len)
+        let b0 = reader.take_byte()?;
+        if b0 < 0x80 {
+            return Ok(b0 as u16);
+        }
+
+        let b1 = reader.take_byte()?;
+        if b1 == 0 {
+            return Err(non_canonical_err());
+        }
+        if b1 < 0x80 {
+            return Ok(((b0 & 0x7f) as u16) | ((b1 as u16) << 7));
+        }
+
+        let b2 = reader.take_byte()?;
+        if b2 == 0 {
+            return Err(non_canonical_err());
+        }
+        if b2 > 3 {
+            return Err(overflow_err());
+        }
+
+        Ok(((b0 & 0x7f) as u16) | (((b1 & 0x7f) as u16) << 7) | ((b2 as u16) << 14))
     }
 
     unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {
