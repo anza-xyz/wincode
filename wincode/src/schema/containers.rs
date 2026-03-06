@@ -62,9 +62,10 @@ use {
     crate::{
         TypeMeta,
         config::{ConfigCore, ZeroCopy},
+        context,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
-        schema::{SchemaRead, SchemaWrite},
+        schema::{SchemaRead, SchemaReadContext, SchemaWrite},
     },
     core::{
         marker::PhantomData,
@@ -344,14 +345,10 @@ where
 {
     type Dst = vec::Vec<T::Dst>;
 
+    #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-        decode_into_slice_t::<T, C>(reader, &mut vec.spare_capacity_mut()[..len])?;
-        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
-        unsafe { vec.set_len(len) };
-
-        dst.write(vec);
+        <vec::Vec<T>>::read_with_context(context::Len(len), reader, dst)?;
         Ok(())
     }
 }
