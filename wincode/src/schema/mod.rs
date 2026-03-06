@@ -286,6 +286,56 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     }
 }
 
+/// Like [`SchemaRead`], but with a mutable `self` receiver.
+///
+/// Useful in cases where part of the deserialization state required for a
+/// deserializing type already exists in memory.
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `read`.
+pub unsafe trait SchemaReadState<'de, C: ConfigCore> {
+    type Dst;
+
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes read by `read`.
+    /// - If `zero_copy` is `true`, `Dst`'s in-memory representation must
+    ///   correspond exactly to the serialized form, and all byte sequences must
+    ///   be valid in-memory representations of `Dst`.
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    /// Read into `dst` from `reader`.
+    ///
+    /// # Safety
+    ///
+    /// You must initialize `dst` if **and only if** you return `Ok(())`. In the
+    /// `Err(…)` case, initializing `dst` can lead to memory leaks.
+    ///
+    /// It is permissible to not initialize `dst` if `dst` is an inhabited
+    /// zero-sized type.
+    fn read(
+        &mut self,
+        reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()>;
+
+    /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
+    #[inline(always)]
+    fn get(&mut self, reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
+        let mut value = MaybeUninit::uninit();
+        self.read(reader, &mut value)?;
+        // SAFETY: `read` must properly initialize the `Self::Dst`.
+        Ok(unsafe { value.assume_init() })
+    }
+}
+
 /// Marker trait for types that can be deserialized via direct borrows from a [`Reader`]
 /// using the default configuration. See [`config::ZeroCopy`] for configuration
 /// aware methods.
