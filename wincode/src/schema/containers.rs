@@ -73,6 +73,7 @@ use {
         schema::{
             size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice_prealloc_check,
         },
+        SchemaReadState,
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
     core::mem::{self, ManuallyDrop},
@@ -81,6 +82,83 @@ use {
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
 #[cfg(feature = "alloc")]
 pub struct Vec<T, Len>(PhantomData<Len>, PhantomData<T>);
+
+/// A [`Vec`](std::vec::Vec) with a pre-applied length.
+///
+/// # Examples
+///
+/// ```
+/// # use wincode::{
+/// #     SchemaRead, SchemaWrite, SchemaReadState, Deserialize,
+/// #     config::Config, containers::VecState,
+/// #     io::{Writer, Reader}, WriteResult, ReadResult,
+/// # };
+/// # use core::mem::MaybeUninit;
+/// # #[derive(Debug, PartialEq)]
+/// struct Header {
+///     data_len: u8,
+/// }
+///
+/// # #[derive(Debug, PartialEq)]
+/// struct Data {
+///     header: Header,
+///     data: Vec<u8>,
+/// }
+///
+/// unsafe impl<C: Config> SchemaWrite<C> for Data {
+///     type Src = Self;
+///
+///     fn size_of(src: &Self::Src) -> WriteResult<usize> {
+///         Ok(1 + src.data.len())
+///     }
+///
+///     fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+///         writer.write(&[src.header.data_len])?;
+///         writer.write(&src.data)?;
+///         Ok(())
+///     }
+/// }
+///
+/// unsafe impl<'de, C: Config> SchemaRead<'de, C> for Data {
+///     type Dst = Self;
+///
+///     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///         let len = reader.take_byte()?;
+///
+///         let mut v: VecState<u8> = VecState::new(len as usize);
+///         let data = SchemaReadState::<C>::get(&mut v, reader)?;
+///
+///         dst.write(Self {
+///             header: Header { data_len: len },
+///             data,
+///         });
+///
+///         Ok(())
+///     }
+/// }
+///
+/// let data = Data {
+///     header: Header { data_len: 8},
+///     data: vec![0u8; 8],
+/// };
+/// let bytes = wincode::serialize(&data).unwrap();
+/// let deserialized = wincode::deserialize(&bytes).unwrap();
+/// assert_eq!(data, deserialized);
+/// ```
+#[cfg(feature = "alloc")]
+pub struct VecState<T> {
+    len: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<T> VecState<T> {
+    pub fn new(len: usize) -> Self {
+        Self {
+            len,
+            _marker: PhantomData,
+        }
+    }
+}
 
 /// A [`VecDeque`](std::collections::VecDeque) with a customizable length encoding.
 #[cfg(feature = "alloc")]
@@ -265,15 +343,18 @@ where
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
+unsafe impl<'de, T, C: ConfigCore> SchemaReadState<'de, C> for VecState<T>
 where
-    Len: SeqLen<C>,
     T: SchemaRead<'de, C>,
 {
     type Dst = vec::Vec<T::Dst>;
 
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
+    fn read(
+        &mut self,
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let len = self.len;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
 
         match T::TYPE_META {
@@ -320,6 +401,23 @@ where
         }
 
         dst.write(vec);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, T, Len, C: ConfigCore> SchemaRead<'de, C> for Vec<T, Len>
+where
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
+{
+    type Dst = vec::Vec<T::Dst>;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
+        let mut v: VecState<T> = VecState::new(len);
+        v.read(reader, dst)?;
         Ok(())
     }
 }
