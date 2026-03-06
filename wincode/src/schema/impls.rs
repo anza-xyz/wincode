@@ -356,15 +356,14 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
         fn utf8_error(buf: &[u8]) -> ReadError {
             invalid_utf8_encoding(core::str::from_utf8(buf).unwrap_err())
         }
-        let b0 = *reader.peek()?;
+        let b0 = reader.take_byte()?;
         let code_point = match b0 {
             0x00..=0x7F => {
-                unsafe { reader.consume_unchecked(1) };
                 dst.write(b0 as char);
                 return Ok(());
             }
             0xC2..=0xDF => {
-                let [b0, b1] = reader.take_array()?;
+                let b1 = reader.take_byte()?;
                 // Validate continuation byte (must be 10xxxxxx)
                 if (b1 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1]));
@@ -372,7 +371,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
             }
             0xE0..=0xEF => {
-                let [b0, b1, b2] = reader.take_array()?;
+                let [b1, b2] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1, b2]));
                 }
@@ -383,7 +382,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
             }
             0xF0..=0xF4 => {
-                let [b0, b1, b2, b3] = reader.take_array()?;
+                let [b1, b2, b3] = reader.take_array()?;
                 if (b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1, b2, b3]));
                 }
@@ -1028,7 +1027,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read(reader.by_ref())?;
-        let bytes = reader.borrow_exact(len)?;
+        let bytes = reader.take_borrowed(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);
@@ -1482,10 +1481,10 @@ where
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
-        let bytes = reader.borrow_exact(size)?;
+        let bytes = reader.take_borrowed(size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-        // - `bytes.len() == size_of::<T::Dst>()`. `borrow_exact` ensures we read exactly `size` bytes.
+        // - `bytes.len() == size_of::<T::Dst>()`. `take_borrowed` ensures we read exactly `size` bytes.
         let val = unsafe { zero_copy::cast_slice_to_t::<C, T::Dst>(bytes)? };
         dst.write(val);
         Ok(())
@@ -1502,10 +1501,10 @@ where
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
-        let bytes = reader.borrow_exact_mut(size)?;
+        let bytes = reader.take_borrowed_mut(size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-        // - `bytes.len() == size_of::<T::Dst>()`. `borrow_exact_mut` ensures we read exactly `size` bytes.
+        // - `bytes.len() == size_of::<T::Dst>()`. `take_borrowed_mut` ensures we read exactly `size` bytes.
         let val = unsafe { zero_copy::cast_slice_to_t_mut::<C, T::Dst>(bytes)? };
         dst.write(val);
         Ok(())
@@ -1523,10 +1522,10 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader.by_ref(), size)?;
-        let bytes = reader.borrow_exact(total_size)?;
+        let bytes = reader.take_borrowed(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-        // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact` ensures we read exactly `len * size` bytes.
+        // - `bytes.len() == len * size_of::<T::Dst>()`. `take_borrowed` ensures we read exactly `len * size` bytes.
         let slice = unsafe { zero_copy::cast_slice_to_slice_t::<C, T::Dst>(bytes, len)? };
         dst.write(slice);
         Ok(())
@@ -1544,10 +1543,10 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
         let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader.by_ref(), size)?;
-        let bytes = reader.borrow_exact_mut(total_size)?;
+        let bytes = reader.take_borrowed_mut(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-        // - `bytes.len() == len * size_of::<T::Dst>()`.`borrow_exact_mut` ensures we read exactly `len * size` bytes.
+        // - `bytes.len() == len * size_of::<T::Dst>()`. `take_borrowed_mut` ensures we read exactly `len * size` bytes.
         let slice = unsafe { zero_copy::cast_slice_to_slice_t_mut::<C, T::Dst>(bytes, len)? };
         dst.write(slice);
         Ok(())

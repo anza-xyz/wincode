@@ -24,6 +24,20 @@ pub(super) mod trusted_slice {
         unsafe { consume_unchecked(bytes, amt) };
     }
 
+    #[inline(always)]
+    pub(super) fn take_array<const N: usize>(bytes: &mut &[u8]) -> [u8; N] {
+        let (src, rest) = unsafe { bytes.split_at_unchecked(N) };
+        *bytes = rest;
+        unsafe { *(src.as_ptr().cast::<[u8; N]>()) }
+    }
+
+    #[inline]
+    pub(super) fn take_slice<'a>(bytes: &mut &'a [u8], len: usize) -> &'a [u8] {
+        let (src, rest) = unsafe { bytes.split_at_unchecked(len) };
+        *bytes = rest;
+        src
+    }
+
     /// Get a slice of `len` bytes for writing, advancing the writer by `len` bytes.
     #[inline]
     pub(super) fn get_slice_mut<'a>(
@@ -71,10 +85,18 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
     }
 
     #[inline]
-    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
-        let (src, rest) = unsafe { self.cursor.split_at_unchecked(len) };
-        self.cursor = rest;
-        Ok(src)
+    fn take_borrowed(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+        Ok(trusted_slice::take_slice(&mut self.cursor, len))
+    }
+
+    #[inline]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        self.take_borrowed(len)
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        Ok(trusted_slice::take_array(&mut self.cursor))
     }
 
     #[inline]
@@ -90,7 +112,9 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopy<'a> {
 
     #[inline]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
-        Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n_bytes)?))
+        Ok(TrustedSliceReaderZeroCopy::new(
+            self.take_borrowed(n_bytes)?,
+        ))
     }
 }
 
@@ -127,10 +151,24 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
     }
 
     #[inline]
-    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+    fn take_borrowed_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
         let (src, rest) = unsafe { mem::take(&mut self.cursor).split_at_mut_unchecked(len) };
         self.cursor = rest;
         Ok(src)
+    }
+
+    #[inline]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        let (src, rest) = unsafe { mem::take(&mut self.cursor).split_at_mut_unchecked(len) };
+        self.cursor = rest;
+        Ok(src)
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let (src, rest) = unsafe { mem::take(&mut self.cursor).split_at_mut_unchecked(N) };
+        self.cursor = rest;
+        Ok(unsafe { *(src.as_ptr().cast::<[u8; N]>()) })
     }
 
     #[inline]
@@ -139,6 +177,7 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
     }
 
     #[inline]
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         unsafe { Self::consume_unchecked(self, amt) };
         Ok(())
@@ -147,7 +186,7 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
     #[inline]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopyMut::new(
-            self.borrow_exact_mut(n_bytes)?,
+            self.take_borrowed_mut(n_bytes)?,
         ))
     }
 }
@@ -192,6 +231,16 @@ impl<'a> Reader<'a> for TrustedSliceReader<'a, '_> {
         Ok(trusted_slice::fill_exact(self.cursor, n_bytes))
     }
 
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        Ok(trusted_slice::take_array(&mut self.cursor))
+    }
+
+    #[inline]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        Ok(trusted_slice::take_slice(&mut self.cursor, len))
+    }
+
     #[inline]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
         trusted_slice::consume_unchecked(&mut self.cursor, amt);
@@ -231,12 +280,26 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn borrow_exact(&mut self, len: usize) -> ReadResult<&'a [u8]> {
+    fn take_borrowed(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         let Some((src, rest)) = self.split_at_checked(len) else {
             return Err(read_size_limit(len));
         };
         *self = rest;
         Ok(src)
+    }
+
+    #[inline(always)]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        self.take_borrowed(len)
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let Some((src, rest)) = self.split_first_chunk() else {
+            return Err(read_size_limit(N));
+        };
+        *self = rest;
+        Ok(*src)
     }
 
     #[inline]
@@ -245,6 +308,7 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         if self.len() < amt {
             return Err(read_size_limit(amt));
@@ -256,7 +320,7 @@ impl<'a> Reader<'a> for &'a [u8] {
 
     #[inline]
     unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
-        Ok(TrustedSliceReaderZeroCopy::new(self.borrow_exact(n)?))
+        Ok(TrustedSliceReaderZeroCopy::new(self.take_borrowed(n)?))
     }
 }
 
@@ -280,7 +344,7 @@ impl<'a> Reader<'a> for &'a mut [u8] {
     }
 
     #[inline]
-    fn borrow_exact_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
+    fn take_borrowed_mut(&mut self, len: usize) -> ReadResult<&'a mut [u8]> {
         let Some((src, rest)) = mem::take(self).split_at_mut_checked(len) else {
             return Err(read_size_limit(len));
         };
@@ -289,11 +353,30 @@ impl<'a> Reader<'a> for &'a mut [u8] {
     }
 
     #[inline]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        let Some((src, rest)) = mem::take(self).split_at_mut_checked(len) else {
+            return Err(read_size_limit(len));
+        };
+        *self = rest;
+        Ok(src)
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let Some((src, rest)) = mem::take(self).split_first_chunk_mut() else {
+            return Err(read_size_limit(N));
+        };
+        *self = rest;
+        Ok(*src)
+    }
+
+    #[inline]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
         *self = unsafe { mem::take(self).get_unchecked_mut(amt..) };
     }
 
     #[inline]
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         if self.len() < amt {
             return Err(read_size_limit(amt));
@@ -306,7 +389,7 @@ impl<'a> Reader<'a> for &'a mut [u8] {
     #[inline]
     unsafe fn as_trusted_for(&mut self, n: usize) -> ReadResult<Self::Trusted<'_>> {
         Ok(TrustedSliceReaderZeroCopyMut::new(
-            self.borrow_exact_mut(n)?,
+            self.take_borrowed_mut(n)?,
         ))
     }
 }
@@ -423,7 +506,7 @@ impl Writer for &mut [u8] {
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects)]
+    #![allow(clippy::arithmetic_side_effects, deprecated)]
     use {super::*, crate::proptest_config::proptest_cfg, alloc::vec::Vec, proptest::prelude::*};
 
     #[test]

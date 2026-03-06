@@ -145,10 +145,23 @@ where
     }
 
     #[inline]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        self.consume_slice_checked(len)
+    }
+
+    #[inline(always)]
+    fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
+        let src = self.consume_slice_checked(N)?;
+        // SAFETY: `consume_slice_checked` ensures that `src` is exactly `N` bytes.
+        Ok(unsafe { *(src.as_ptr().cast::<[u8; N]>()) })
+    }
+
+    #[inline]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
         self.pos = unsafe { self.pos.unchecked_add(amt) };
     }
 
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         if self.cur_len() < amt {
             return Err(read_size_limit(amt));
@@ -513,7 +526,7 @@ impl Writer for Cursor<Vec<u8>> {
 
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
-    #![allow(clippy::arithmetic_side_effects)]
+    #![allow(clippy::arithmetic_side_effects, deprecated)]
     use {super::*, crate::proptest_config::proptest_cfg, alloc::vec, proptest::prelude::*};
 
     proptest! {

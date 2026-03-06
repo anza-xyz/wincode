@@ -818,7 +818,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.take_byte()?;
             // This will increment the counter.
             dst.write(DropCounted::new());
             Ok(())
@@ -859,7 +859,7 @@ mod tests {
         };
 
         fn read(mut reader: impl Reader<'de>, _dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-            reader.consume(1)?;
+            reader.take_byte()?;
             Err(error::ReadError::PointerSizedReadError)
         }
     }
