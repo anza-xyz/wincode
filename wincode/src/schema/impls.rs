@@ -8,7 +8,7 @@ use std::{
 use {
     crate::{
         config::{Config, ConfigCore, ZeroCopy},
-        containers::SliceDropGuard,
+        containers::decode_into_slice_t,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
             invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
@@ -573,39 +573,11 @@ where
     };
 
     #[inline]
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        if let TypeMeta::Static {
-            zero_copy: true, ..
-        } = T::TYPE_META
-        {
-            // SAFETY: `T::Dst` is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-            unsafe { reader.copy_into_t(dst)? };
-            return Ok(());
-        }
-
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         // SAFETY: MaybeUninit<[T::Dst; N]> trivially converts to [MaybeUninit<T::Dst>; N].
         let dst =
             unsafe { transmute::<&mut MaybeUninit<Self::Dst>, &mut [MaybeUninit<T::Dst>; N]>(dst) };
-        let base = dst.as_mut_ptr();
-        let mut guard = SliceDropGuard::<T::Dst>::new(base);
-        if let TypeMeta::Static { size, .. } = Self::TYPE_META {
-            // SAFETY: `Self::TYPE_META` specifies a static size, which is `N * static_size_of(T)`.
-            // `N` reads of `T` will consume `size` bytes, fully consuming the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size) }?;
-            for i in 0..N {
-                let slot = unsafe { &mut *base.add(i) };
-                T::read(reader.by_ref(), slot)?;
-                guard.inc_len();
-            }
-        } else {
-            for i in 0..N {
-                let slot = unsafe { &mut *base.add(i) };
-                T::read(reader.by_ref(), slot)?;
-                guard.inc_len();
-            }
-        }
-        mem::forget(guard);
-        Ok(())
+        decode_into_slice_t::<T, C>(reader, dst)
     }
 }
 

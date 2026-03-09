@@ -75,7 +75,7 @@ use {
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
-    core::mem::{self, ManuallyDrop},
+    core::mem,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -342,49 +342,9 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-
-        match T::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                let spare_capacity = vec.spare_capacity_mut();
-                // SAFETY: T::Dst is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { reader.copy_into_slice_t(spare_capacity)? };
-                // SAFETY: `copy_into_slice_t` fills the entire spare capacity or errors.
-                unsafe { vec.set_len(len) };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                #[allow(clippy::arithmetic_side_effects)]
-                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                // will consume `size * len` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-            TypeMeta::Dynamic => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-        }
+        decode_into_slice_t::<T, C>(reader, vec.spare_capacity_mut())?;
+        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        unsafe { vec.set_len(len) };
 
         dst.write(vec);
         Ok(())
@@ -462,127 +422,21 @@ macro_rules! impl_heap_slice {
                 mut reader: impl Reader<'de>,
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
-                /// Drop guard for `TypeMeta::Static { zero_copy: true }` types.
-                ///
-                /// In this case we do not need to drop items individually, as
-                /// the container will be initialized by a single memcpy.
-                struct DropGuardRawCopy<T>(*mut [MaybeUninit<T>]);
-                impl<T> Drop for DropGuardRawCopy<T> {
-                    #[inline]
-                    fn drop(&mut self) {
-                        // SAFETY:
-                        // - `self.0` is a valid pointer to the container created
-                        //   by `$target::into_raw`.
-                        // - `drop` is only called in this drop guard, and the drop guard
-                        //   is forgotten if reading succeeds.
-                        let container = unsafe { $target::from_raw(self.0) };
-                        drop(container);
-                    }
-                }
-
-                /// Drop guard for `TypeMeta::Static { zero_copy: false } | TypeMeta::Dynamic` types.
-                ///
-                /// In this case we need to drop items individually, as
-                /// the container will be initialized by a series of reads.
-                struct DropGuardElemCopy<T> {
-                    inner: ManuallyDrop<SliceDropGuard<T>>,
-                    fat: *mut [MaybeUninit<T>],
-                }
-
-                impl<T> DropGuardElemCopy<T> {
-                    #[inline(always)]
-                    fn new(fat: *mut [MaybeUninit<T>], raw: *mut MaybeUninit<T>) -> Self {
-                        Self {
-                            inner: ManuallyDrop::new(SliceDropGuard::new(raw)),
-                            // We need to store the fat pointer to deallocate the container.
-                            fat,
-                        }
-                    }
-                }
-
-                impl<T> Drop for DropGuardElemCopy<T> {
-                    #[inline]
-                    fn drop(&mut self) {
-                        // SAFETY: `ManuallyDrop::drop` is only called in this drop guard.
-                        unsafe {
-                            // Drop the initialized elements first.
-                            ManuallyDrop::drop(&mut self.inner);
-                        }
-
-                        // SAFETY:
-                        // - `self.fat` is a valid pointer to the container created with `$target::into_raw`.
-                        // - `drop` is only called in this drop guard, and the drop guard is forgotten if read succeeds.
-                        let container = unsafe { $target::from_raw(self.fat) };
-                        drop(container);
-                    }
-                }
-
                 let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
                 let mem = $target::<[T::Dst]>::new_uninit_slice(len);
                 let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
 
-                match T::TYPE_META {
-                    TypeMeta::Static {
-                        zero_copy: true, ..
-                    } => {
-                        let guard = DropGuardRawCopy(fat);
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let dst = unsafe { &mut *fat };
-                        // SAFETY: T is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                        unsafe { reader.copy_into_slice_t(dst)? };
-                        mem::forget(guard);
-                    }
-                    TypeMeta::Static {
-                        size,
-                        zero_copy: false,
-                    } => {
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let raw_base = unsafe { (*fat).as_mut_ptr() };
-                        let mut guard: DropGuardElemCopy<T::Dst> =
-                            DropGuardElemCopy::new(fat, raw_base);
-
-                        // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                        // will consume `size * len` bytes, fully consuming the trusted window.
-                        #[allow(clippy::arithmetic_side_effects)]
-                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                        for i in 0..len {
-                            // SAFETY:
-                            // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
-                            // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
-                            //   less than `len`.
-                            let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader.by_ref(), slot)?;
-                            guard.inner.inc_len();
-                        }
-
-                        mem::forget(guard);
-                    }
-                    TypeMeta::Dynamic => {
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let raw_base = unsafe { (*fat).as_mut_ptr() };
-                        let mut guard: DropGuardElemCopy<T::Dst> =
-                            DropGuardElemCopy::new(fat, raw_base);
-
-                        for i in 0..len {
-                            // SAFETY:
-                            // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
-                            // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
-                            //   less than `len`.
-                            let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader.by_ref(), slot)?;
-                            guard.inner.inc_len();
-                        }
-
-                        mem::forget(guard);
-                    }
+                // SAFETY: `fat` is a valid pointer to the uninitialized slice created with `$target::into_raw`.
+                if let Err(e) = decode_into_slice_t::<T, C>(reader, unsafe { &mut *fat }) {
+                    // SAFETY: `fat` is a valid pointer from `$target::into_raw`.
+                    // `decode_into_slice_t` dropped any initialized elements via `SliceDropGuard`.
+                    drop(unsafe { $target::from_raw(fat) });
+                    return Err(e);
                 }
 
-                // SAFETY:
-                // - `fat` is a valid pointer to the container created with `$target::into_raw`.
-                // - the pointer memory is only deallocated in the drop guard, and the drop guard
-                //   is forgotten if reading succeeds.
+                // SAFETY: `fat` is a valid pointer from `$target::into_raw`.
                 let container = unsafe { $target::from_raw(fat) };
-                // SAFETY: `container` is fully initialized if read succeeds.
+                // SAFETY: `decode_into_slice_t` initialized all elements on success.
                 let container = unsafe { container.assume_init() };
 
                 dst.write(container);
@@ -701,4 +555,58 @@ where
         dst.write(collections::BinaryHeap::from(vec));
         Ok(())
     }
+}
+
+/// Decode `len` items of `T` into contiguous uninitialized memory.
+///
+/// On success, all `len` slots are initialized.
+/// On failure, the guard drops any partially-initialized items.
+#[inline]
+pub fn decode_into_slice_t<'de, T, C>(
+    mut reader: impl Reader<'de>,
+    slice: &mut [MaybeUninit<T::Dst>],
+) -> ReadResult<()>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+{
+    let base = slice.as_mut_ptr();
+    let len = slice.len();
+    let mut guard = SliceDropGuard::<T::Dst>::new(base);
+
+    match T::TYPE_META {
+        TypeMeta::Static {
+            zero_copy: true, ..
+        } => {
+            // SAFETY: `zero_copy: true` guarantees `T::Dst` is zero-copy eligible
+            // (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+            unsafe { reader.copy_into_slice_t(slice) }?
+        }
+        TypeMeta::Static {
+            size,
+            zero_copy: false,
+        } => {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            for i in 0..len {
+                // SAFETY: `i < len` and `base` is valid for `len` elements.
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader.by_ref(), slot)?;
+                guard.inc_len();
+            }
+        }
+        TypeMeta::Dynamic => {
+            for i in 0..len {
+                // SAFETY: `i < len` and `base` is valid for `len` elements.
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader.by_ref(), slot)?;
+                guard.inc_len();
+            }
+        }
+    }
+
+    mem::forget(guard);
+    Ok(())
 }
