@@ -340,18 +340,22 @@ impl<T> SliceDropGuard<T> {
     #[inline(always)]
     #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn inc_len(&mut self) {
-        self.initialized_len += 1;
+        if mem::needs_drop::<T>() {
+            self.initialized_len += 1;
+        }
     }
 }
 
 impl<T> Drop for SliceDropGuard<T> {
     #[inline(always)]
     fn drop(&mut self) {
-        unsafe {
-            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
-                self.ptr.cast::<T>(),
-                self.initialized_len,
-            ));
+        if mem::needs_drop::<T>() {
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.ptr.cast::<T>(),
+                    self.initialized_len,
+                ));
+            }
         }
     }
 }
