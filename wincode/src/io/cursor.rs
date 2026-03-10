@@ -161,7 +161,7 @@ where
         self.pos = unsafe { self.pos.unchecked_add(amt) };
     }
 
-    #[expect(deprecated)]
+    #[inline]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         if self.cur_len() < amt {
             return Err(read_size_limit(amt));
