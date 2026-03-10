@@ -59,6 +59,7 @@
 use {
     crate::{
         config::{ConfigCore, ZeroCopy},
+        context,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
@@ -339,54 +340,10 @@ where
 {
     type Dst = vec::Vec<T::Dst>;
 
+    #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-
-        match T::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                let spare_capacity = vec.spare_capacity_mut();
-                // SAFETY: T::Dst is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { reader.copy_into_slice_t(spare_capacity)? };
-                // SAFETY: `copy_into_slice_t` fills the entire spare capacity or errors.
-                unsafe { vec.set_len(len) };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                #[allow(clippy::arithmetic_side_effects)]
-                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                // will consume `size * len` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-            TypeMeta::Dynamic => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-        }
-
-        dst.write(vec);
+        <vec::Vec<T>>::read_with_context(context::Len(len), reader, dst)?;
         Ok(())
     }
 }

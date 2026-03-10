@@ -56,6 +56,7 @@ use {
 };
 
 pub mod containers;
+pub mod context;
 mod external;
 mod impls;
 pub mod int_encoding;
@@ -248,7 +249,7 @@ pub unsafe trait SchemaWrite<C: ConfigCore> {
 ///
 /// Implementors must adhere to the Safety section of the associated constant
 /// `TYPE_META` (or leave it as the default) and the method `read`.
-pub unsafe trait SchemaRead<'de, C: ConfigCore> {
+pub unsafe trait SchemaRead<'de, C: ConfigCore, Ctx = ()> {
     type Dst;
 
     /// Metadata about the type's serialization.
@@ -281,12 +282,37 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
     /// zero-sized type.
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()>;
 
+    /// Read into `dst` from `reader` with context.
+    ///
+    /// You must initialize `dst` if **and only if** you return `Ok(())`. In the
+    /// `Err(…)` case, initializing `dst` can lead to memory leaks.
+    ///
+    /// It is permissible to not initialize `dst` if `dst` is an inhabited
+    /// zero-sized type.
+    #[expect(unused_variables)]
+    fn read_with_context(
+        ctx: Ctx,
+        reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        Self::read(reader, dst)
+    }
+
     /// Read `Self::Dst` from `reader` into a new `Self::Dst`.
     #[inline(always)]
     fn get(reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
+        Ok(unsafe { value.assume_init() })
+    }
+
+    /// Read `Self::Dst` from `reader` into a new `Self::Dst` with context.
+    #[inline(always)]
+    fn get_with_context(ctx: Ctx, reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
+        let mut value = MaybeUninit::uninit();
+        Self::read_with_context(ctx, reader, &mut value)?;
+        // SAFETY: `read_with_context` must properly initialize the `Self::Dst`.
         Ok(unsafe { value.assume_init() })
     }
 }

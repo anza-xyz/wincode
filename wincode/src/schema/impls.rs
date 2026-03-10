@@ -9,6 +9,7 @@ use {
     crate::{
         config::{Config, ConfigCore, ZeroCopy},
         containers::SliceDropGuard,
+        context,
         error::{
             invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
             invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
@@ -498,6 +499,73 @@ where
     #[inline]
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Vec<T, C::LengthEncoding>>::read(reader, dst)
+    }
+}
+#[cfg(feature = "alloc")]
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C, context::Len> for Vec<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Vec<T::Dst>;
+
+    fn read(_: impl Reader<'de>, _: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        Err(crate::ReadError::ExpectedContext("Len(usize)"))
+    }
+
+    fn read_with_context(
+        ctx: context::Len,
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let len = ctx.0;
+        let mut vec: Vec<T::Dst> = Vec::with_capacity(len);
+
+        match T::TYPE_META {
+            TypeMeta::Static {
+                zero_copy: true, ..
+            } => {
+                let spare_capacity = vec.spare_capacity_mut();
+                // SAFETY: T::Dst is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+                unsafe { reader.copy_into_slice_t(spare_capacity)? };
+                // SAFETY: `copy_into_slice_t` fills the entire spare capacity or errors.
+                unsafe { vec.set_len(len) };
+            }
+            TypeMeta::Static {
+                size,
+                zero_copy: false,
+            } => {
+                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
+                #[allow(clippy::arithmetic_side_effects)]
+                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+                // will consume `size * len` bytes, fully consuming the trusted window.
+                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+                for i in 0..len {
+                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
+                    unsafe {
+                        ptr = ptr.add(1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        // i <= len
+                        vec.set_len(i + 1);
+                    }
+                }
+            }
+            TypeMeta::Dynamic => {
+                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
+                for i in 0..len {
+                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
+                    unsafe {
+                        ptr = ptr.add(1);
+                        #[allow(clippy::arithmetic_side_effects)]
+                        // i <= len
+                        vec.set_len(i + 1);
+                    }
+                }
+            }
+        }
+
+        dst.write(vec);
+
+        Ok(())
     }
 }
 
