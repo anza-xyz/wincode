@@ -387,6 +387,37 @@ impl<T> Drop for SliceDropGuard<T> {
     }
 }
 
+/// Returns a mutable reference into the given Arc, without any check.
+///
+/// # Safety
+///
+/// If any other `Arc` or `Weak` pointers to the same allocation exist, then
+/// they must not be dereferenced or have active borrows for the duration
+/// of the returned borrow, and their inner type must be exactly the same as the
+/// inner type of this Arc (including lifetimes). This is trivially the case if no
+/// such pointers exist, for example immediately after `Arc::new`.
+#[inline]
+#[cfg(feature = "alloc")]
+unsafe fn arc_get_mut_unchecked<T: ?Sized>(arc: &mut AllocArc<T>) -> &mut T {
+    unsafe { &mut *AllocArc::as_ptr(arc).cast_mut() }
+}
+
+/// Returns a mutable reference into the given `Rc`,
+/// without any check.
+///
+/// # Safety
+///
+/// If any other `Rc` or `Weak` pointers to the same allocation exist, then
+/// they must not be dereferenced or have active borrows for the duration
+/// of the returned borrow, and their inner type must be exactly the same as the
+/// inner type of this Rc (including lifetimes). This is trivially the case if no
+/// such pointers exist, for example immediately after `Rc::new`.
+#[inline]
+#[cfg(feature = "alloc")]
+unsafe fn rc_get_mut_unchecked<T: ?Sized>(rc: &mut AllocRc<T>) -> &mut T {
+    unsafe { &mut *AllocRc::as_ptr(rc).cast_mut() }
+}
+
 macro_rules! impl_heap_slice {
     ($container:ident => $target:ident, |$uninit:ident| $get_slice:expr) => {
         #[cfg(feature = "alloc")]
@@ -435,8 +466,8 @@ macro_rules! impl_heap_slice {
 }
 
 impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
-impl_heap_slice!(Rc  => AllocRc,  |uninit| AllocRc::get_mut(&mut uninit).unwrap());
-impl_heap_slice!(Arc => AllocArc, |uninit| AllocArc::get_mut(&mut uninit).unwrap());
+impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(&mut uninit) });
+impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(&mut uninit) });
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
