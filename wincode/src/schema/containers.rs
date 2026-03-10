@@ -347,7 +347,7 @@ impl<T> SliceDropGuard<T> {
 }
 
 impl<T> Drop for SliceDropGuard<T> {
-    #[inline(always)]
+    #[cold]
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
             unsafe {
