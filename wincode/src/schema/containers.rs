@@ -388,7 +388,7 @@ impl<T> Drop for SliceDropGuard<T> {
 }
 
 macro_rules! impl_heap_slice {
-    ($container:ident => $target:ident) => {
+    ($container:ident => $target:ident, |$uninit:ident| $get_slice:expr) => {
         #[cfg(feature = "alloc")]
         unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
         where
@@ -423,22 +423,10 @@ macro_rules! impl_heap_slice {
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-                let mem = $target::<[T::Dst]>::new_uninit_slice(len);
-                let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
-
-                // SAFETY: `fat` is a valid pointer to the uninitialized slice created with `$target::into_raw`.
-                if let Err(e) = decode_into_slice_t::<T, C>(reader, unsafe { &mut *fat }) {
-                    // SAFETY: `fat` is a valid pointer from `$target::into_raw`.
-                    // `decode_into_slice_t` dropped any initialized elements via `SliceDropGuard`.
-                    drop(unsafe { $target::from_raw(fat) });
-                    return Err(e);
-                }
-
-                // SAFETY: `fat` is a valid pointer from `$target::into_raw`.
-                let container = unsafe { $target::from_raw(fat) };
+                let mut $uninit = $target::<[T::Dst]>::new_uninit_slice(len);
+                decode_into_slice_t::<T, C>(reader, $get_slice)?;
                 // SAFETY: `decode_into_slice_t` initialized all elements on success.
-                let container = unsafe { container.assume_init() };
-
+                let container = unsafe { $uninit.assume_init() };
                 dst.write(container);
                 Ok(())
             }
@@ -446,9 +434,9 @@ macro_rules! impl_heap_slice {
     };
 }
 
-impl_heap_slice!(Box => AllocBox);
-impl_heap_slice!(Rc => AllocRc);
-impl_heap_slice!(Arc => AllocArc);
+impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
+impl_heap_slice!(Rc  => AllocRc,  |uninit| AllocRc::get_mut(&mut uninit).unwrap());
+impl_heap_slice!(Arc => AllocArc, |uninit| AllocArc::get_mut(&mut uninit).unwrap());
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
