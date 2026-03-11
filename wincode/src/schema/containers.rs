@@ -342,7 +342,7 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-        decode_into_slice_t::<T, C>(reader, vec.spare_capacity_mut())?;
+        decode_into_slice_t::<T, C>(reader, &mut vec.spare_capacity_mut()[..len])?;
         // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
         unsafe { vec.set_len(len) };
 
