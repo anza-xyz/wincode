@@ -16,7 +16,7 @@ uuid = { version = "1.20.0", features = ["serde"] }
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
 wincode-derive = { path = "../wincode-derive" }
 
-solana-address = { version = "2.2.0", features = ["wincode"] }
+solana-address = { version = "2.3.0", features = ["wincode"] }
 solana-hash = { version = "4.2.0", features = ["wincode"] }
 solana-fee-calculator = { version = "3.1.0", features = ["wincode"] }
 solana-message = { version = "4.0.0", features = ["wincode"] }
