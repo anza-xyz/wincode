@@ -576,10 +576,54 @@ where
     }
 }
 
-/// Decode `len` items of `T` into contiguous uninitialized memory.
+/// Decode `slice.len()` items of `T` into contiguous, uninitialized memory.
 ///
-/// On success, all `len` slots are initialized.
-/// On failure, the guard drops any partially-initialized items.
+/// Errors if fewer than `slice.len()` items are available in the [`Reader`]
+/// or any item fails to decode.
+///
+/// On success, every slot in `slice` is initialized.
+/// On error or panic, any elements that were initialized before failure are
+/// dropped, and the remaining slots stay uninitialized.
+///
+/// # Examples
+///
+/// ```
+/// # use wincode::containers::decode_into_slice_t;
+/// # use wincode::config::DefaultConfig;
+/// # type C = DefaultConfig;
+/// let data = [1u64, 2, 3, 4, 5, 6];
+/// let serialized = wincode::serialize(&data).unwrap();
+///
+/// let mut dst: Vec<u64> = Vec::with_capacity(6);
+///
+/// decode_into_slice_t::<u64, C>(
+///     &serialized[..],
+///     &mut dst.spare_capacity_mut()[..6],
+/// )
+/// .unwrap();
+///
+/// unsafe { dst.set_len(6) }
+///
+/// assert_eq!(dst, data);
+/// ```
+///
+/// ```
+/// # use wincode::containers::decode_into_slice_t;
+/// # use wincode::config::DefaultConfig;
+/// # type C = DefaultConfig;
+/// let data = [1u64, 2, 3, 4, 5, 6];
+/// let serialized = wincode::serialize(&data).unwrap();
+///
+/// let mut dst: Vec<u64> = Vec::with_capacity(7);
+///
+/// let result = decode_into_slice_t::<u64, C>(
+///     &serialized[..],
+///     &mut dst.spare_capacity_mut()[..7],
+/// );
+///
+/// // Only 6 elements were serialized.
+/// assert!(result.is_err());
+/// ```
 #[inline]
 pub fn decode_into_slice_t<'de, T, C>(
     mut reader: impl Reader<'de>,
