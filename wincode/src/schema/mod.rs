@@ -440,6 +440,7 @@ where
 }
 
 #[inline(always)]
+#[cfg(feature = "alloc")]
 fn write_elem_iter_prealloc_check<'a, T, Len, C>(
     writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
@@ -484,6 +485,7 @@ where
 }
 
 #[inline(always)]
+#[cfg(feature = "alloc")]
 fn write_elem_slice_prealloc_check<T, Len, C>(
     writer: impl Writer,
     src: &[T::Src],
