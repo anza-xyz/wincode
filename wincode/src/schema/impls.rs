@@ -23,7 +23,7 @@ use {
     },
     core::{
         marker::PhantomData,
-        mem::{self, transmute, MaybeUninit},
+        mem::{transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         num::{
             NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
@@ -49,6 +49,7 @@ use {
         sync::Arc,
         vec::Vec,
     },
+    core::mem,
 };
 
 macro_rules! impl_int_config_dependent {
