@@ -153,6 +153,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
 /// Override the preallocation size limit to 8 bytes.
 ///
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// # use wincode::{containers, len::UseIntLen, SchemaRead, SchemaWrite};
 /// type Max8Bytes = UseIntLen<u32, 8>;
 ///
@@ -170,6 +171,7 @@ pub unsafe trait SeqLen<C: ConfigCore> {
 /// assert!(wincode::serialize(&data_err).is_err());
 /// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// # }
 /// ```
 pub struct UseIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
     PhantomData<T>,
@@ -267,6 +269,7 @@ impl_use_int_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 /// Override the preallocation size limit to 8 bytes.
 ///
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// # use wincode::{containers, len::FixIntLen, SchemaRead, SchemaWrite};
 /// type Max8Bytes = FixIntLen<u32, 8>;
 ///
@@ -284,6 +287,7 @@ impl_use_int_primitive!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
 /// assert!(wincode::serialize(&data_err).is_err());
 /// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// # }
 /// ```
 pub struct FixIntLen<T, const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG>(
     PhantomData<T>,
@@ -353,6 +357,7 @@ impl_fix_int!(i128);
 /// Override the preallocation size limit to 8 bytes.
 ///
 /// ```
+/// # #[cfg(feature = "alloc")] {
 /// # use wincode::{containers, len::BincodeLen, SchemaRead, SchemaWrite};
 /// type Max8Bytes = BincodeLen<8>;
 ///
@@ -370,6 +375,7 @@ impl_fix_int!(i128);
 /// assert!(wincode::serialize(&data_err).is_err());
 /// let serialized = wincode::serialize(&vec![0; 9]).unwrap();
 /// assert!(wincode::deserialize::<OverrideLen>(&serialized).is_err());
+/// # }
 /// ```
 pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG> =
     UseIntLen<u64, PREALLOCATION_SIZE_LIMIT>;
