@@ -1,8 +1,8 @@
 use {
     crate::{
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
         io::{Reader, Writer},
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
     alloc::boxed::Box,
     bytes::{Bytes, BytesMut},

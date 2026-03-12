@@ -1,5 +1,5 @@
 use {
-    criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput},
+    criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
     rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
     std::{
@@ -7,8 +7,8 @@ use {
         hint::black_box,
     },
     wincode::{
-        config::DefaultConfig, deserialize, serialize, serialize_into, serialized_size, SchemaRead,
-        SchemaWrite,
+        SchemaRead, SchemaWrite, config::DefaultConfig, deserialize, serialize, serialize_into,
+        serialized_size,
     },
 };
 

@@ -2,21 +2,21 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
+            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
             default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
-            get_src_dst_fully_qualified, suppress_unused_fields, Field, FieldsExt, SchemaArgs,
-            StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+            get_src_dst_fully_qualified, suppress_unused_fields,
         },
         uninit_builder::impl_uninit_builder,
     },
     darling::{
-        ast::{Data, Fields, Style},
         Error, FromDeriveInput, Result,
+        ast::{Data, Fields, Style},
     },
     proc_macro2::TokenStream,
     quote::{quote, quote_spanned},
     syn::{
-        parse_quote, punctuated::Punctuated, DeriveInput, GenericParam, Generics, PredicateType,
-        Token, Type, WhereClause, WherePredicate,
+        DeriveInput, GenericParam, Generics, PredicateType, Token, Type, WhereClause,
+        WherePredicate, parse_quote, punctuated::Punctuated,
     },
 };
 

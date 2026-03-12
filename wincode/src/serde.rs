@@ -2,11 +2,11 @@
 use alloc::vec::Vec;
 use {
     crate::{
+        SchemaReadOwned,
         config::{self, DefaultConfig},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        SchemaReadOwned,
     },
     core::mem::MaybeUninit,
 };
