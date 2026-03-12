@@ -64,7 +64,11 @@ use {
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    core::{marker::PhantomData, mem::MaybeUninit, ptr},
+    core::{
+        marker::PhantomData,
+        mem::{self, MaybeUninit},
+        ptr,
+    },
 };
 #[cfg(feature = "alloc")]
 use {
@@ -75,7 +79,6 @@ use {
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
-    core::mem,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -367,7 +370,7 @@ impl<T> SliceDropGuard<T> {
     #[inline(always)]
     #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn inc_len(&mut self) {
-        if core::mem::needs_drop::<T>() {
+        if mem::needs_drop::<T>() {
             self.initialized_len += 1;
         }
     }
@@ -376,7 +379,7 @@ impl<T> SliceDropGuard<T> {
 impl<T> Drop for SliceDropGuard<T> {
     #[cold]
     fn drop(&mut self) {
-        if core::mem::needs_drop::<T>() {
+        if mem::needs_drop::<T>() {
             unsafe {
                 ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
                     self.ptr.cast::<T>(),
@@ -670,6 +673,6 @@ where
         }
     }
 
-    core::mem::forget(guard);
+    mem::forget(guard);
     Ok(())
 }
