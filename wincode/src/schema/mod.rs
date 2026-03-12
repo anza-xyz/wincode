@@ -504,6 +504,8 @@ mod tests {
 
     use {
         crate::{
+            Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta, UninitBuilder,
+            WriteResult, ZeroCopy,
             config::{self, Config, Configuration, DefaultConfig},
             containers, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
@@ -511,8 +513,7 @@ mod tests {
             len::{BincodeLen, FixIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
-            serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
-            UninitBuilder, WriteResult, ZeroCopy,
+            serialize,
         },
         bincode::Options,
         core::{marker::PhantomData, ptr},
@@ -525,8 +526,8 @@ mod tests {
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr},
             num::{
-                NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize,
-                NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
+                NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
+                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
             },
             ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,

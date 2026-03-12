@@ -1,23 +1,22 @@
 use {
     darling::{
-        ast::{Data, Fields, NestedMeta, Style},
         FromDeriveInput, FromField, FromMeta, FromVariant, Result,
+        ast::{Data, Fields, NestedMeta, Style},
     },
     proc_macro2::{Span, TokenStream},
-    quote::{quote, ToTokens as _},
+    quote::{ToTokens as _, quote},
     std::{
         borrow::Cow,
         collections::VecDeque,
         fmt::{self, Display},
     },
     syn::{
-        parse_quote,
+        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
+        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
+        Visibility, parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
-        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
-        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
-        Visibility,
     },
 };
 

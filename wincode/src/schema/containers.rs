@@ -58,11 +58,11 @@
 //! ```
 use {
     crate::{
+        TypeMeta,
         config::{ConfigCore, ZeroCopy},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
-        TypeMeta,
     },
     core::{marker::PhantomData, mem::MaybeUninit, ptr},
 };

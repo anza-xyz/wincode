@@ -3,9 +3,9 @@
 use alloc::vec::Vec;
 use {
     crate::{
+        ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         config::{Config, ConfigCore},
         io::{Reader, Writer},
-        ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
     },
     core::mem::MaybeUninit,
 };

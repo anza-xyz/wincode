@@ -9,7 +9,7 @@ use {
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    core::mem::{transmute, MaybeUninit},
+    core::mem::{MaybeUninit, transmute},
     uuid::Uuid,
 };
 
