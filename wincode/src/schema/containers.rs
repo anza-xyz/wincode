@@ -1,6 +1,6 @@
 //! This module provides specialized implementations of standard library collection types that
 //! provide control over the length encoding (see [`SeqLen`](crate::len::SeqLen)), as well
-//! as special case opt-in raw-copy overrides (see [`Pod`]).
+//! as special case opt-in raw-copy overrides (see [`pod_wrapper!`]).
 //!
 //! # Examples
 //! Raw byte vec with solana short vec length encoding:
@@ -75,7 +75,7 @@ use {
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
-    core::mem::{self, ManuallyDrop},
+    core::mem,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -126,23 +126,23 @@ pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
-/// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
+/// Creates a wrapper type for a type that is represented by raw bytes and does not have any invalid
+/// bit patterns.
 ///
-/// By opting into `Pod`, you are telling wincode that it can serialize and deserialize a type
-/// with a single memcpy -- it wont pay attention to things like struct layout, endianness, or anything
-/// else that would require validity or bit pattern checks. This is a very strong claim to make,
-/// so be sure that your type adheres to those requirements.
+/// By using `pod_wrapper!`, you are telling wincode that it can serialize and deserialize a type
+/// with a single memcpy -- it wont pay attention to things like struct layout, endianness, or
+/// anything else that would require validity or bit pattern checks. This is a very strong claim to
+/// make, so be sure that your type adheres to those requirements.
 ///
 /// Composable with sequence [`containers`](self) or compound types (structs, tuples) for
 /// an optimized read/write implementation.
-///
 ///
 /// This can be useful outside of sequences as well, for example on newtype structs
 /// containing byte arrays with `#[repr(transparent)]`.
 ///
 /// ---
-/// 💡 **Note:** as of `wincode` `0.2.0`, `Pod` is no longer needed for types that wincode can determine
-/// are "Pod-safe".
+/// 💡 **Note:** as of `wincode` `0.2.0`, `pod_wrapper!` is no longer needed for types that wincode
+/// can determine are "memcpy-safe".
 ///
 /// This includes:
 /// - [`u8`]
@@ -154,26 +154,27 @@ pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Similarly, using built-in std collections like `Vec<T>` or `Box<[T]>` where `T` is one of the
 /// above will also be automatically optimized.
 ///
-/// You'll really only need to reach for [`Pod`] when dealing with foreign types for which you cannot
-/// derive `SchemaWrite` or `SchemaRead`. Or you're in a controlled scenario where you explicitly
-/// want to avoid endianness or layout checks.
+/// You'll really only need to reach for [`pod_wrapper!`] when dealing with foreign types for which
+/// you cannot derive `SchemaWrite` or `SchemaRead`. Or you're in a controlled scenario where you
+/// explicitly want to avoid endianness or layout checks.
 ///
 /// # Safety
 ///
 /// - The type must allow any bit pattern (e.g., no `bool`s, no `char`s, etc.)
-/// - If used on a compound type like a struct, all fields must be also be `Pod`, its
-///   layout must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`), and the struct
-///   must not have any padding.
+/// - If used on a compound type like a struct, all fields must be also be memcpy-able, its layout
+///   must be guaranteed (via `#[repr(transparent)]` or `#[repr(C)]`), and the struct must not have
+///   any padding.
 /// - Must not contain references or pointers (includes types like `Vec` or `Box`).
-///     - Note, you may use `Pod` *inside* types like `Vec` or `Box`, e.g., `Vec<Pod<T>>` or `Box<[Pod<T>]>`,
-///       but specifying `Pod` on the outer type is invalid.
+///     - Note, you may use `pod_wrapper!` created types *inside* types like `Vec` or `Box`, e.g.,
+///       `Vec<PodT>` or `Box<[PodT]>`, but using `pod_wrapper!` on the outer type is invalid.
 ///
 /// # Examples
 ///
-/// A repr-transparent newtype struct containing a byte array where you cannot derive `SchemaWrite` or `SchemaRead`:
+/// A repr-transparent newtype struct containing a byte array where you cannot derive `SchemaWrite`
+/// or `SchemaRead`:
 /// ```
 /// # #[cfg(all(feature = "alloc", feature = "derive"))] {
-/// # use wincode::{containers::{self, Pod}};
+/// # use wincode::containers;
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// # use serde::{Serialize, Deserialize};
 /// # use std::array;
@@ -181,9 +182,13 @@ pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// #[repr(transparent)]
 /// struct Address([u8; 32]);
 ///
+/// wincode::pod_wrapper! {
+///     unsafe struct PodAddress(Address);
+/// }
+///
 /// #[derive(Serialize, Deserialize, SchemaWrite, SchemaRead)]
 /// struct MyStruct {
-///     #[wincode(with = "Pod<_>")]
+///     #[wincode(with = "PodAddress")]
 ///     address: Address
 /// }
 ///
@@ -195,6 +200,65 @@ pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// assert_eq!(wincode_bytes, bincode_bytes);
 /// # }
 /// ```
+#[macro_export]
+macro_rules! pod_wrapper {
+    ($(unsafe struct $name:ident($type:ty);)*) => {$(
+        struct $name where $type: Copy + 'static;
+
+        // SAFETY:
+        // - By using `pod_wrapper`, user asserts that the type is zero-copy, given the contract of
+        //   pod_wrapper:
+        //   - The type's in‑memory representation is exactly its serialized bytes.
+        //   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
+        //   - Does not contain references or pointers.
+        unsafe impl<C: $crate::config::ConfigCore> $crate::config::ZeroCopy<C> for $name {}
+
+        unsafe impl<C: $crate::config::ConfigCore> $crate::SchemaWrite<C> for $name {
+            type Src = $type;
+
+            const TYPE_META: $crate::TypeMeta = $crate::TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: true,
+            };
+
+            #[inline]
+            fn size_of(_: &$type) -> $crate::WriteResult<usize> {
+                Ok(size_of::<$type>())
+            }
+
+            #[inline]
+            fn write(mut writer: impl $crate::io::Writer, src: &$type) -> $crate::WriteResult<()> {
+                unsafe {
+                    Ok(writer.write_t(src)?)
+                }
+            }
+        }
+
+        unsafe impl<'de, C: $crate::config::ConfigCore> $crate::SchemaRead<'de, C> for $name {
+            type Dst = $type;
+
+            const TYPE_META: $crate::TypeMeta = $crate::TypeMeta::Static {
+                size: size_of::<$type>(),
+                zero_copy: true,
+            };
+
+            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<$type>) -> $crate::ReadResult<()> {
+                unsafe {
+                    Ok(reader.copy_into_t(dst)?)
+                }
+            }
+        }
+    )*}
+}
+pub use pod_wrapper;
+
+/// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
+///
+/// Prefer [`pod_wrapper!`] instead.
+#[deprecated(
+    since = "0.4.6",
+    note = "This unsound type has been replaced by the `pod_wrapper!` macro."
+)]
 pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 
 // SAFETY:
@@ -202,8 +266,10 @@ pub struct Pod<T: Copy + 'static>(PhantomData<T>);
 //   - The type's in‑memory representation is exactly its serialized bytes.
 //   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
 //   - Does not contain references or pointers.
+#[allow(deprecated)]
 unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
 
+#[allow(deprecated)]
 unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
 where
     T: Copy + 'static,
@@ -227,6 +293,7 @@ where
     }
 }
 
+#[allow(deprecated)]
 unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
 where
     T: Copy + 'static,
@@ -275,49 +342,9 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-
-        match T::TYPE_META {
-            TypeMeta::Static {
-                zero_copy: true, ..
-            } => {
-                let spare_capacity = vec.spare_capacity_mut();
-                // SAFETY: T::Dst is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                unsafe { reader.copy_into_slice_t(spare_capacity)? };
-                // SAFETY: `copy_into_slice_t` fills the entire spare capacity or errors.
-                unsafe { vec.set_len(len) };
-            }
-            TypeMeta::Static {
-                size,
-                zero_copy: false,
-            } => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                #[allow(clippy::arithmetic_side_effects)]
-                // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                // will consume `size * len` bytes, fully consuming the trusted window.
-                let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-            TypeMeta::Dynamic => {
-                let mut ptr = vec.as_mut_ptr().cast::<MaybeUninit<T::Dst>>();
-                for i in 0..len {
-                    T::read(reader.by_ref(), unsafe { &mut *ptr })?;
-                    unsafe {
-                        ptr = ptr.add(1);
-                        #[allow(clippy::arithmetic_side_effects)]
-                        // i <= len
-                        vec.set_len(i + 1);
-                    }
-                }
-            }
-        }
+        decode_into_slice_t::<T, C>(reader, &mut vec.spare_capacity_mut()[..len])?;
+        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        unsafe { vec.set_len(len) };
 
         dst.write(vec);
         Ok(())
@@ -340,24 +367,59 @@ impl<T> SliceDropGuard<T> {
     #[inline(always)]
     #[allow(clippy::arithmetic_side_effects)]
     pub(crate) fn inc_len(&mut self) {
-        self.initialized_len += 1;
-    }
-}
-
-impl<T> Drop for SliceDropGuard<T> {
-    #[inline(always)]
-    fn drop(&mut self) {
-        unsafe {
-            ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
-                self.ptr.cast::<T>(),
-                self.initialized_len,
-            ));
+        if mem::needs_drop::<T>() {
+            self.initialized_len += 1;
         }
     }
 }
 
+impl<T> Drop for SliceDropGuard<T> {
+    #[cold]
+    fn drop(&mut self) {
+        if mem::needs_drop::<T>() {
+            unsafe {
+                ptr::drop_in_place(ptr::slice_from_raw_parts_mut(
+                    self.ptr.cast::<T>(),
+                    self.initialized_len,
+                ));
+            }
+        }
+    }
+}
+
+/// Returns a mutable reference into the given Arc, without any check.
+///
+/// # Safety
+///
+/// If any other `Arc` or `Weak` pointers to the same allocation exist, then
+/// they must not be dereferenced or have active borrows for the duration
+/// of the returned borrow, and their inner type must be exactly the same as the
+/// inner type of this Arc (including lifetimes). This is trivially the case if no
+/// such pointers exist, for example immediately after `Arc::new`.
+#[inline]
+#[cfg(feature = "alloc")]
+unsafe fn arc_get_mut_unchecked<T: ?Sized>(arc: &mut AllocArc<T>) -> &mut T {
+    unsafe { &mut *AllocArc::as_ptr(arc).cast_mut() }
+}
+
+/// Returns a mutable reference into the given `Rc`,
+/// without any check.
+///
+/// # Safety
+///
+/// If any other `Rc` or `Weak` pointers to the same allocation exist, then
+/// they must not be dereferenced or have active borrows for the duration
+/// of the returned borrow, and their inner type must be exactly the same as the
+/// inner type of this Rc (including lifetimes). This is trivially the case if no
+/// such pointers exist, for example immediately after `Rc::new`.
+#[inline]
+#[cfg(feature = "alloc")]
+unsafe fn rc_get_mut_unchecked<T: ?Sized>(rc: &mut AllocRc<T>) -> &mut T {
+    unsafe { &mut *AllocRc::as_ptr(rc).cast_mut() }
+}
+
 macro_rules! impl_heap_slice {
-    ($container:ident => $target:ident) => {
+    ($container:ident => $target:ident, |$uninit:ident| $get_slice:expr) => {
         #[cfg(feature = "alloc")]
         unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for $container<[T], Len>
         where
@@ -391,129 +453,11 @@ macro_rules! impl_heap_slice {
                 mut reader: impl Reader<'de>,
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
-                /// Drop guard for `TypeMeta::Static { zero_copy: true }` types.
-                ///
-                /// In this case we do not need to drop items individually, as
-                /// the container will be initialized by a single memcpy.
-                struct DropGuardRawCopy<T>(*mut [MaybeUninit<T>]);
-                impl<T> Drop for DropGuardRawCopy<T> {
-                    #[inline]
-                    fn drop(&mut self) {
-                        // SAFETY:
-                        // - `self.0` is a valid pointer to the container created
-                        //   by `$target::into_raw`.
-                        // - `drop` is only called in this drop guard, and the drop guard
-                        //   is forgotten if reading succeeds.
-                        let container = unsafe { $target::from_raw(self.0) };
-                        drop(container);
-                    }
-                }
-
-                /// Drop guard for `TypeMeta::Static { zero_copy: false } | TypeMeta::Dynamic` types.
-                ///
-                /// In this case we need to drop items individually, as
-                /// the container will be initialized by a series of reads.
-                struct DropGuardElemCopy<T> {
-                    inner: ManuallyDrop<SliceDropGuard<T>>,
-                    fat: *mut [MaybeUninit<T>],
-                }
-
-                impl<T> DropGuardElemCopy<T> {
-                    #[inline(always)]
-                    fn new(fat: *mut [MaybeUninit<T>], raw: *mut MaybeUninit<T>) -> Self {
-                        Self {
-                            inner: ManuallyDrop::new(SliceDropGuard::new(raw)),
-                            // We need to store the fat pointer to deallocate the container.
-                            fat,
-                        }
-                    }
-                }
-
-                impl<T> Drop for DropGuardElemCopy<T> {
-                    #[inline]
-                    fn drop(&mut self) {
-                        // SAFETY: `ManuallyDrop::drop` is only called in this drop guard.
-                        unsafe {
-                            // Drop the initialized elements first.
-                            ManuallyDrop::drop(&mut self.inner);
-                        }
-
-                        // SAFETY:
-                        // - `self.fat` is a valid pointer to the container created with `$target::into_raw`.
-                        // - `drop` is only called in this drop guard, and the drop guard is forgotten if read succeeds.
-                        let container = unsafe { $target::from_raw(self.fat) };
-                        drop(container);
-                    }
-                }
-
                 let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-                let mem = $target::<[T::Dst]>::new_uninit_slice(len);
-                let fat = $target::into_raw(mem) as *mut [MaybeUninit<T::Dst>];
-
-                match T::TYPE_META {
-                    TypeMeta::Static {
-                        zero_copy: true, ..
-                    } => {
-                        let guard = DropGuardRawCopy(fat);
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let dst = unsafe { &mut *fat };
-                        // SAFETY: T is zero-copy eligible (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
-                        unsafe { reader.copy_into_slice_t(dst)? };
-                        mem::forget(guard);
-                    }
-                    TypeMeta::Static {
-                        size,
-                        zero_copy: false,
-                    } => {
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let raw_base = unsafe { (*fat).as_mut_ptr() };
-                        let mut guard: DropGuardElemCopy<T::Dst> =
-                            DropGuardElemCopy::new(fat, raw_base);
-
-                        // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                        // will consume `size * len` bytes, fully consuming the trusted window.
-                        #[allow(clippy::arithmetic_side_effects)]
-                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-                        for i in 0..len {
-                            // SAFETY:
-                            // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
-                            // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
-                            //   less than `len`.
-                            let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader.by_ref(), slot)?;
-                            guard.inner.inc_len();
-                        }
-
-                        mem::forget(guard);
-                    }
-                    TypeMeta::Dynamic => {
-                        // SAFETY: `fat` is a valid pointer to the container created with `$target::into_raw`.
-                        let raw_base = unsafe { (*fat).as_mut_ptr() };
-                        let mut guard: DropGuardElemCopy<T::Dst> =
-                            DropGuardElemCopy::new(fat, raw_base);
-
-                        for i in 0..len {
-                            // SAFETY:
-                            // - `raw_base` is a valid pointer to the container created with `$target::into_raw`.
-                            // - The container is initialized with capacity for `len` elements, and `i` is guaranteed to be
-                            //   less than `len`.
-                            let slot = unsafe { &mut *raw_base.add(i) };
-                            T::read(reader.by_ref(), slot)?;
-                            guard.inner.inc_len();
-                        }
-
-                        mem::forget(guard);
-                    }
-                }
-
-                // SAFETY:
-                // - `fat` is a valid pointer to the container created with `$target::into_raw`.
-                // - the pointer memory is only deallocated in the drop guard, and the drop guard
-                //   is forgotten if reading succeeds.
-                let container = unsafe { $target::from_raw(fat) };
-                // SAFETY: `container` is fully initialized if read succeeds.
-                let container = unsafe { container.assume_init() };
-
+                let mut $uninit = $target::<[T::Dst]>::new_uninit_slice(len);
+                decode_into_slice_t::<T, C>(reader, $get_slice)?;
+                // SAFETY: `decode_into_slice_t` initialized all elements on success.
+                let container = unsafe { $uninit.assume_init() };
                 dst.write(container);
                 Ok(())
             }
@@ -521,9 +465,9 @@ macro_rules! impl_heap_slice {
     };
 }
 
-impl_heap_slice!(Box => AllocBox);
-impl_heap_slice!(Rc => AllocRc);
-impl_heap_slice!(Arc => AllocArc);
+impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
+impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(&mut uninit) });
+impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(&mut uninit) });
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
@@ -630,4 +574,102 @@ where
         dst.write(collections::BinaryHeap::from(vec));
         Ok(())
     }
+}
+
+/// Decode `slice.len()` items of `T` into contiguous, uninitialized memory.
+///
+/// Errors if fewer than `slice.len()` items are available in the [`Reader`]
+/// or any item fails to decode.
+///
+/// On success, every slot in `slice` is initialized.
+/// On error or panic, any elements that were initialized before failure are
+/// dropped, and the remaining slots stay uninitialized.
+///
+/// # Examples
+///
+/// ```
+/// # use wincode::containers::decode_into_slice_t;
+/// # use wincode::config::DefaultConfig;
+/// # type C = DefaultConfig;
+/// let data = [1u64, 2, 3, 4, 5, 6];
+/// let serialized = wincode::serialize(&data).unwrap();
+///
+/// let mut dst: Vec<u64> = Vec::with_capacity(6);
+///
+/// decode_into_slice_t::<u64, C>(
+///     &serialized[..],
+///     &mut dst.spare_capacity_mut()[..6],
+/// )
+/// .unwrap();
+///
+/// unsafe { dst.set_len(6) }
+///
+/// assert_eq!(dst, data);
+/// ```
+///
+/// ```
+/// # use wincode::containers::decode_into_slice_t;
+/// # use wincode::config::DefaultConfig;
+/// # type C = DefaultConfig;
+/// let data = [1u64, 2, 3, 4, 5, 6];
+/// let serialized = wincode::serialize(&data).unwrap();
+///
+/// let mut dst: Vec<u64> = Vec::with_capacity(7);
+///
+/// let result = decode_into_slice_t::<u64, C>(
+///     &serialized[..],
+///     &mut dst.spare_capacity_mut()[..7],
+/// );
+///
+/// // Only 6 elements were serialized.
+/// assert!(result.is_err());
+/// ```
+#[inline]
+pub fn decode_into_slice_t<'de, T, C>(
+    mut reader: impl Reader<'de>,
+    slice: &mut [MaybeUninit<T::Dst>],
+) -> ReadResult<()>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+{
+    let base = slice.as_mut_ptr();
+    let len = slice.len();
+    let mut guard = SliceDropGuard::<T::Dst>::new(base);
+
+    match T::TYPE_META {
+        TypeMeta::Static {
+            zero_copy: true, ..
+        } => {
+            // SAFETY: `zero_copy: true` guarantees `T::Dst` is zero-copy eligible
+            // (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
+            unsafe { reader.copy_into_slice_t(slice) }?
+        }
+        TypeMeta::Static {
+            size,
+            zero_copy: false,
+        } => {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            for i in 0..len {
+                // SAFETY: `i < len` and `base` is valid for `len` elements.
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader.by_ref(), slot)?;
+                guard.inc_len();
+            }
+        }
+        TypeMeta::Dynamic => {
+            for i in 0..len {
+                // SAFETY: `i < len` and `base` is valid for `len` elements.
+                let slot = unsafe { &mut *base.add(i) };
+                T::read(reader.by_ref(), slot)?;
+                guard.inc_len();
+            }
+        }
+    }
+
+    mem::forget(guard);
+    Ok(())
 }

@@ -37,6 +37,18 @@ for target in "${targets[@]}"; do
     fi
 done
 
+# Copy coverage binaries to bundle
+RUSTFLAGS="-C instrument-coverage --cfg fuzzing" cargo +nightly fuzz build
+for target in "${targets[@]}"; do
+    binary_src="./fuzz/target/x86_64-unknown-linux-gnu/release/$target"
+    if [ -f "$binary_src" ]; then
+        cp "$binary_src" "$BUNDLE_DIR/${target}_cov"
+        echo "  Copied: ${target}_cov"
+    else
+        echo "  Warning: Binary not found: $binary_src" >&2
+    fi
+done
+
 # Generate manifest.fc.json
 MANIFEST_FILE="$BUNDLE_DIR/manifest.fc.json"
 echo "Generating $MANIFEST_FILE..."
@@ -60,6 +72,7 @@ for target in "${targets[@]}"; do
     
     # Binary path in bundle (just the filename since it's in the same directory)
     binary_path="./$target"
+	coverage_binary_path="./${target}_cov"
     
     # Add comma for all but the last item
     if [ $count -lt $total ]; then
@@ -78,7 +91,10 @@ for target in "${targets[@]}"; do
 					"Driver": {
 						"Type": "libfuzzer",
 						"Params": {
-							"BinaryPathInBundle": "$binary_path"
+							"BinaryPathInBundle": "$binary_path",
+							"CoverageBinaryPathInBundle": "$coverage_binary_path",
+							"SourcesPathInBundle": "./src/",
+							"SourcesOriginalPath": "$(pwd)"
 						}
 					},
 					"Architecture": {
@@ -96,6 +112,11 @@ cat <<EOF >> "$MANIFEST_FILE"
 	]
 }
 EOF
+
+# Copy source for coverage reports
+mkdir -p "$BUNDLE_DIR/src"
+find . -type f -name '*.rs' ! -path '*/bundle/*' ! -path '*/target/*' |
+  rsync -R --files-from=- . "$BUNDLE_DIR/src/"
 
 echo "Done! Bundle created at $BUNDLE_DIR"
 echo "Contents:"

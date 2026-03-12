@@ -5,7 +5,7 @@
 //! ```
 //! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
 //! # use rand::random;
-//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers::{self, Pod}};
+//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
 //! # use std::array;
 //!
@@ -18,12 +18,17 @@
 //! #[derive(Clone, Copy)]
 //! struct Address([u8; 32]);
 //!
+//! wincode::pod_wrapper! {
+//!     unsafe struct PodSignature(Signature);
+//!     unsafe struct PodAddress(Address);
+//! }
+//!
 //! # #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
 //! struct MyStruct {
-//!     #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
+//!     #[wincode(with = "containers::Vec<PodSignature, BincodeLen>")]
 //!     signature: Vec<Signature>,
 //!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Pod<_>, ShortU16>")]
+//!     #[wincode(with = "containers::Vec<PodAddress, ShortU16>")]
 //!     address: Vec<Address>,
 //! }
 //!
@@ -500,11 +505,11 @@ mod tests {
     use {
         crate::{
             config::{self, Config, Configuration, DefaultConfig},
-            containers::{self, Pod},
-            deserialize, deserialize_mut,
+            containers, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer},
             len::{BincodeLen, FixIntLen},
+            pod_wrapper,
             proptest_config::proptest_cfg,
             serialize, Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta,
             UninitBuilder, WriteResult, ZeroCopy,
@@ -1393,9 +1398,8 @@ mod tests {
         #[derive(UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
         struct Test {
-            #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")]
+            #[wincode(with = "containers::Vec<_, BincodeLen>")]
             a: Vec<u8>,
-            #[wincode(with = "containers::Pod<_>")]
             b: [u8; 32],
             c: u64,
         }
@@ -1458,8 +1462,8 @@ mod tests {
         #[wincode(internal, from = "Test")]
         #[allow(unused)]
         struct TestMapped {
-            a: containers::Vec<containers::Pod<u8>, BincodeLen>,
-            b: containers::Pod<[u8; 32]>,
+            a: containers::Vec<u8, BincodeLen>,
+            b: [u8; 32],
             c: u64,
         }
 
@@ -1776,14 +1780,8 @@ mod tests {
         )]
         #[wincode(internal)]
         enum Enum {
-            A {
-                name: String,
-                id: u64,
-            },
-            B(
-                String,
-                #[wincode(with = "containers::Vec<Pod<_>, BincodeLen>")] Vec<u8>,
-            ),
+            A { name: String, id: u64 },
+            B(String, Vec<u8>),
             C,
         }
 
@@ -2363,7 +2361,11 @@ mod tests {
         #[allow(dead_code)]
         struct Signature([u8; 64]);
 
-        type Target = containers::Box<[Pod<Signature>], BincodeLen>;
+        pod_wrapper! {
+            unsafe struct PodSignature(Signature);
+        }
+
+        type Target = containers::Box<[PodSignature], BincodeLen>;
         proptest!(proptest_cfg(), |(slice in proptest::collection::vec(any::<Signature>(), 1..=32).prop_map(|vec| vec.into_boxed_slice()))| {
             let serialized = Target::serialize(&slice).unwrap();
             // Deliberately trigger the drop with a failed deserialization
@@ -2829,7 +2831,7 @@ mod tests {
         #[test]
         fn test_option_container(option in proptest::option::of(any::<[u8; 32]>())) {
             let bincode_serialized = bincode::serialize(&option).unwrap();
-            type Target = Option<Pod<[u8; 32]>>;
+            type Target = Option<[u8; 32]>;
             let schema_serialized = Target::serialize(&option).unwrap();
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
             let bincode_deserialized: Option<[u8; 32]> = bincode::deserialize(&bincode_serialized).unwrap();
@@ -3009,7 +3011,7 @@ mod tests {
         ) {
             let bincode_serialized = bincode::serialize(&tuple).unwrap();
             type BincodeTarget = (StructNonStatic, [u8; 32], Vec<StructStatic>);
-            type Target = (StructNonStatic, Pod<[u8; 32]>, Vec<StructStatic>);
+            type Target = (StructNonStatic, [u8; 32], Vec<StructStatic>);
             let schema_serialized = Target::serialize(&tuple).unwrap();
 
             prop_assert_eq!(&bincode_serialized, &schema_serialized);
@@ -3230,11 +3232,15 @@ mod tests {
         #[repr(transparent)]
         struct Address([u8; 64]);
 
+        pod_wrapper! {
+            unsafe struct PodAddress(Address);
+        }
+
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
         #[repr(C)]
         struct MyStruct {
-            #[wincode(with = "Pod<_>")]
+            #[wincode(with = "PodAddress")]
             address: Address,
         }
 
@@ -3262,17 +3268,21 @@ mod tests {
         #[repr(transparent)]
         struct Address([u8; 64]);
 
+        pod_wrapper! {
+            unsafe struct PodAddress(Address);
+        }
+
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
         struct MyStructRef<'a> {
-            #[wincode(with = "&'a Pod<Address>")]
+            #[wincode(with = "&'a PodAddress")]
             address: &'a Address,
         }
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
         struct MyStruct {
-            #[wincode(with = "Pod<_>")]
+            #[wincode(with = "PodAddress")]
             address: Address,
         }
 
