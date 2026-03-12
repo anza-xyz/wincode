@@ -64,7 +64,11 @@ use {
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
-    core::{marker::PhantomData, mem::MaybeUninit, ptr},
+    core::{
+        marker::PhantomData,
+        mem::{self, MaybeUninit},
+        ptr,
+    },
 };
 #[cfg(feature = "alloc")]
 use {
@@ -75,7 +79,6 @@ use {
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
-    core::mem,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
