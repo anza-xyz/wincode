@@ -115,11 +115,10 @@ impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
     }
 
     #[inline]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+    fn consume(&mut self, amt: usize) {
         // SAFETY: by constructing `SliceUnchecked`, caller guarantees
         // they will read and consume within the bounds of the slice.
         unsafe { self.consume_unchecked(amt) }
-        Ok(())
     }
 
     #[inline]
@@ -220,11 +219,10 @@ impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
     }
 
     #[inline]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+    fn consume(&mut self, amt: usize) {
         // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
         // they will read within the bounds of the slice.
         unsafe { self.consume_unchecked(amt) }
-        Ok(())
     }
 
     #[inline]
@@ -283,7 +281,7 @@ impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     }
 
     #[inline(always)]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+    fn consume(&mut self, amt: usize) {
         self.inner.consume(amt)
     }
 
@@ -335,13 +333,8 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        if self.len() < amt {
-            return Err(read_size_limit(amt));
-        }
-        // SAFETY: we just checked that self.len() >= amt.
-        unsafe { self.consume_unchecked(amt) };
-        Ok(())
+    fn consume(&mut self, amt: usize) {
+        *self = &self[amt.min(self.len())..];
     }
 
     #[inline]
@@ -417,13 +410,10 @@ impl<'a> Reader<'a> for &'a mut [u8] {
     }
 
     #[inline]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        if self.len() < amt {
-            return Err(read_size_limit(amt));
-        }
-        // SAFETY: we just checked that self.len() >= amt.
-        unsafe { self.consume_unchecked(amt) };
-        Ok(())
+    fn consume(&mut self, amt: usize) {
+        let this = mem::take(self);
+        let len = this.len();
+        *self = &mut this[amt.min(len)..];
     }
 
     #[inline]
@@ -662,7 +652,7 @@ mod tests {
         #[test]
         fn test_reader_consume(bytes in any::<Vec<u8>>()) {
             with_untrusted_readers!(&bytes, |reader| {
-                reader.consume(bytes.len()).unwrap();
+                reader.consume(bytes.len());
                 prop_assert!(matches!(reader.peek_byte(), Err(ReadError::ReadSizeLimit(1))));
             });
         }

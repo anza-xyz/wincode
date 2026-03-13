@@ -127,12 +127,6 @@ where
         &slice[self.pos.min(slice.len())..]
     }
 
-    /// Returns the number of bytes remaining in the cursor.
-    #[inline]
-    fn cur_len(&self) -> usize {
-        self.inner.as_ref().len().saturating_sub(self.pos)
-    }
-
     /// Split the cursor at `len` and consume the left slice.
     #[inline(always)]
     fn advance_slice_checked(&mut self, len: usize) -> ReadResult<&[u8]> {
@@ -184,13 +178,8 @@ where
     }
 
     #[inline]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
-        if self.cur_len() < amt {
-            return Err(read_size_limit(amt));
-        }
-        // SAFETY: We just checked that `cur_len() >= amt`.
-        unsafe { self.consume_unchecked(amt) };
-        Ok(())
+    fn consume(&mut self, amt: usize) {
+        self.pos = (self.pos.saturating_add(amt)).min(self.inner.as_ref().len());
     }
 
     #[inline(always)]
