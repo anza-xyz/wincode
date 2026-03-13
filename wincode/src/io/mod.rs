@@ -156,8 +156,17 @@ pub trait Reader<'a> {
     /// - `amt` must be less than or equal to the number of bytes remaining in the reader.
     unsafe fn consume_unchecked(&mut self, amt: usize);
 
-    /// Advance the reader exactly `amt` bytes, returning an error if the source does not have enough bytes.
-    fn consume(&mut self, amt: usize) -> ReadResult<()>;
+    /// Advance the reader by `amt` bytes.
+    ///
+    /// This method must be safe for any `amt`.
+    /// If `amt` exceeds the bytes currently available or remaining, implementations
+    /// may handle the over-consumption in an implementation-defined way, such as
+    /// clamping to exhaustion or advancing according to the reader's underlying
+    /// model. Callers must not rely on a specific outcome in that case.
+    ///
+    /// Unlike [`Reader::consume_unchecked`], this method must not invoke undefined
+    /// behavior when `amt` exceeds the reader's available bytes.
+    fn consume(&mut self, amt: usize);
 
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
@@ -292,7 +301,7 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
-    fn consume(&mut self, amt: usize) -> ReadResult<()> {
+    fn consume(&mut self, amt: usize) {
         (*self).consume(amt)
     }
 
