@@ -56,7 +56,7 @@
 //! assert_eq!(wincode_bytes, bincode_bytes);
 //! # }
 //! ```
-#[cfg(feature = "sync")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
     crate::{
@@ -402,7 +402,7 @@ impl<T> Drop for SliceDropGuard<T> {
 /// inner type of this Arc (including lifetimes). This is trivially the case if no
 /// such pointers exist, for example immediately after `Arc::new`.
 #[inline]
-#[cfg(feature = "sync")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 unsafe fn arc_get_mut_unchecked<T: ?Sized>(arc: &mut AllocArc<T>) -> &mut T {
     unsafe { &mut *AllocArc::as_ptr(arc).cast_mut() }
 }
@@ -472,7 +472,7 @@ macro_rules! impl_heap_slice {
 
 impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
 impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(&mut uninit) });
-#[cfg(feature = "sync")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(&mut uninit) });
 
 #[cfg(feature = "alloc")]
