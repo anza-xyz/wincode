@@ -8,7 +8,8 @@ use {
     thiserror::Error,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum BorrowKind {
     /// Borrowed from the call site, not extending past it.
     CallSite,
@@ -16,6 +17,13 @@ pub enum BorrowKind {
     Backing,
     /// Mutably borrowed from the backing store, extending past the call site.
     BackingMut,
+}
+
+impl BorrowKind {
+    #[inline]
+    pub const fn mask(self) -> u8 {
+        1u8 << (self as u8)
+    }
 }
 
 impl core::fmt::Display for BorrowKind {
@@ -62,6 +70,35 @@ pub(super) const fn transpose<const N: usize, T>(
 ///   compatible with readers that don't support borrowing, if possible.
 /// - Returns [`ReadError::UnsupportedBorrow`] for readers that do not support borrowing.
 pub trait Reader<'a> {
+    /// Borrow capabilities of this reader.
+    ///
+    /// A bitmask of [`BorrowKind`] values indicating which kinds of borrows are supported.
+    ///
+    /// Users of [`Reader`] can call [`Reader::supports_borrow`] to check if a borrow kind
+    /// is supported.
+    const BORROW_KINDS: u8 = 0;
+
+    /// Checks if this reader supports the given borrow kind.
+    ///
+    /// # Examples
+    /// ```
+    /// # use wincode::io::{Reader, BorrowKind, Cursor};
+    /// #
+    /// let reader = [1, 2, 3, 4, 5];
+    /// assert!(reader.as_slice().supports_borrow(BorrowKind::Backing));
+    ///
+    /// let mut reader = [1, 2, 3, 4, 5];
+    /// assert!(reader.as_mut_slice().supports_borrow(BorrowKind::BackingMut));
+    ///
+    /// let reader = Cursor::new([1, 2, 3, 4, 5]);
+    /// assert!(reader.supports_borrow(BorrowKind::CallSite));
+    /// assert!(!reader.supports_borrow(BorrowKind::Backing));
+    /// ```
+    #[inline]
+    fn supports_borrow(&self, kind: BorrowKind) -> bool {
+        Self::BORROW_KINDS & kind.mask() != 0
+    }
+
     /// Return exactly `N` bytes as `&[u8; N]` without advancing.
     ///
     /// Errors if fewer than `N` bytes are available.
@@ -270,6 +307,8 @@ pub trait Reader<'a> {
 }
 
 impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
+    const BORROW_KINDS: u8 = R::BORROW_KINDS;
+
     #[inline(always)]
     fn by_ref(&mut self) -> impl Reader<'a> {
         &mut **self

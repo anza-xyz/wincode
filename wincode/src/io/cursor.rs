@@ -141,6 +141,8 @@ impl<'a, T> Reader<'a> for Cursor<T>
 where
     T: AsRef<[u8]>,
 {
+    const BORROW_KINDS: u8 = BorrowKind::CallSite.mask();
+
     #[inline]
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         let src = self.advance_slice_checked(dst.len())?;

@@ -71,6 +71,8 @@ impl<'a, T> SliceUnchecked<'a, T> {
 }
 
 impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
+    const BORROW_KINDS: u8 = BorrowKind::Backing.mask() | BorrowKind::CallSite.mask();
+
     #[inline]
     fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         // SAFETY: by constructing `SliceUnchecked`, caller guarantees
@@ -171,6 +173,9 @@ impl<'a, T> SliceMutUnchecked<'a, T> {
 }
 
 impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
+    const BORROW_KINDS: u8 =
+        BorrowKind::Backing.mask() | BorrowKind::BackingMut.mask() | BorrowKind::CallSite.mask();
+
     #[inline]
     fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
@@ -260,6 +265,8 @@ impl<'b, T> SliceScopedUnchecked<'_, 'b, T> {
 }
 
 impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
+    const BORROW_KINDS: u8 = BorrowKind::CallSite.mask();
+
     #[inline(always)]
     fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         self.inner.copy_into_slice(buf)
@@ -292,6 +299,8 @@ impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
 }
 
 impl<'a> Reader<'a> for &'a [u8] {
+    const BORROW_KINDS: u8 = BorrowKind::Backing.mask() | BorrowKind::CallSite.mask();
+
     #[inline]
     fn take_borrowed(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         let Some(src) = advance_slice_checked(self, len) else {
@@ -357,6 +366,9 @@ impl<'a> Reader<'a> for &'a [u8] {
 }
 
 impl<'a> Reader<'a> for &'a mut [u8] {
+    const BORROW_KINDS: u8 =
+        BorrowKind::Backing.mask() | BorrowKind::BackingMut.mask() | BorrowKind::CallSite.mask();
+
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
         let Some(window) = advance_slice_mut_checked(self, n_bytes) else {
