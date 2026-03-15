@@ -56,6 +56,8 @@
 //! assert_eq!(wincode_bytes, bincode_bytes);
 //! # }
 //! ```
+#[cfg(feature = "sync")]
+use alloc::sync::Arc as AllocArc;
 use {
     crate::{
         TypeMeta,
@@ -78,7 +80,7 @@ use {
             size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice_prealloc_check,
         },
     },
-    alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, sync::Arc as AllocArc, vec},
+    alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -400,7 +402,7 @@ impl<T> Drop for SliceDropGuard<T> {
 /// inner type of this Arc (including lifetimes). This is trivially the case if no
 /// such pointers exist, for example immediately after `Arc::new`.
 #[inline]
-#[cfg(feature = "alloc")]
+#[cfg(feature = "sync")]
 unsafe fn arc_get_mut_unchecked<T: ?Sized>(arc: &mut AllocArc<T>) -> &mut T {
     unsafe { &mut *AllocArc::as_ptr(arc).cast_mut() }
 }
@@ -470,6 +472,7 @@ macro_rules! impl_heap_slice {
 
 impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
 impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(&mut uninit) });
+#[cfg(feature = "sync")]
 impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(&mut uninit) });
 
 #[cfg(feature = "alloc")]
