@@ -127,7 +127,7 @@ pub struct Box<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 /// Like [`Box`], for [`Rc`].
 pub struct Rc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 /// Like [`Box`], for [`Arc`].
 pub struct Arc<T: ?Sized, Len>(PhantomData<T>, PhantomData<Len>);
 
