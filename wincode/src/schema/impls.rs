@@ -1,4 +1,6 @@
 //! Blanket implementations for std types.
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
+use alloc::sync::Arc;
 #[cfg(feature = "std")]
 use std::{
     collections::{HashMap, HashSet},
@@ -46,7 +48,6 @@ use {
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
         string::String,
-        sync::Arc,
         vec::Vec,
     },
     core::mem,
@@ -862,6 +863,7 @@ macro_rules! impl_heap_container {
 
 impl_heap_container!(Box);
 impl_heap_container!(Rc);
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 impl_heap_container!(Arc);
 
 #[cfg(feature = "alloc")]
@@ -902,7 +904,7 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 unsafe impl<T, C: Config> SchemaWrite<C> for Arc<[T]>
 where
     T: SchemaWrite<C>,
@@ -947,7 +949,7 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for Arc<[T]>
 where
     T: SchemaRead<'de, C>,
