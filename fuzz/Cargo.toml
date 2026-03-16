@@ -23,7 +23,8 @@ solana-message = { version = "4.0.0", features = ["wincode"] }
 solana-nonce = { version = "3.1.0", features = ["wincode"] }
 solana-signature = { version = "3.3.0", features = ["wincode"] }
 solana-transaction = { version = "4.0.0", features = ["wincode"] }
-solana-entry = { version = "4.0.0-beta.2", features = ["agave-unstable-api"] }
+solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "08b606ca461e4ec4afe34a40993080131d20dbe8", features = ["agave-unstable-api"] }
+agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "08b606ca461e4ec4afe34a40993080131d20dbe8", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
@@ -48,3 +49,10 @@ bench = false
 [patch.crates-io]
 wincode = { path = "../wincode" }
 wincode-derive = { path = "../wincode-derive" }
+solana-message = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-address = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-hash = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-instruction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-signature = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-transaction = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-transaction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }

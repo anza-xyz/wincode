@@ -1,14 +1,14 @@
 #![no_main]
 
 use {
+    agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
     libfuzzer_sys::fuzz_target,
     solana_address::Address,
     solana_entry::{
         block_component::{
             BlockComponent, BlockFooterV1, BlockHeaderV1, BlockMarkerV1, FinalCertificate,
-            GenesisCertificate, NotarRewardCertificate, SkipRewardCertificate, UpdateParentV1,
-            VersionedBlockFooter, VersionedBlockHeader, VersionedBlockMarker,
-            VersionedUpdateParent, VotesAggregate,
+            GenesisCertificate, UpdateParentV1, VersionedBlockFooter, VersionedBlockHeader,
+            VersionedBlockMarker, VersionedUpdateParent, VotesAggregate,
         },
         entry::Entry,
     },
