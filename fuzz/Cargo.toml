@@ -23,7 +23,7 @@ solana-message = { version = "4.0.0", features = ["wincode"] }
 solana-nonce = { version = "3.1.0", features = ["wincode"] }
 solana-signature = { version = "3.3.0", features = ["wincode"] }
 solana-transaction = { version = "4.0.0", features = ["wincode"] }
-solana-entry = { version = "4.0.0-beta.1", features = ["agave-unstable-api"] }
+solana-entry = { version = "4.0.0-beta.2", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
