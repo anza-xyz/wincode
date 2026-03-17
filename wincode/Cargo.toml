@@ -28,9 +28,11 @@ uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
 bytes = ["alloc", "dep:bytes"]
 bytes-extra-platforms = ["bytes", "bytes/extra-platforms"]
+ecow = ["alloc", "dep:ecow"]
 
 [dependencies]
 bytes = { version = "1.11.1", optional = true, default-features = false }
+ecow = { version = "0.2.6", optional = true, default-features = false }
 pastey = "0.2.1"
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
@@ -45,6 +47,7 @@ rand = { version = "0.9.2" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.2.0" }
 criterion = { version = "0.7.0", features = ["html_reports"] }
+ecow = { version = "0.2.6", features = ["serde"], default-features = false }
 uuid = { version = "1.20.0", features = ["serde"] }
 wincode = { path = ".", features = ["derive"] }
 
