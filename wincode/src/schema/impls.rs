@@ -44,6 +44,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
     },
     alloc::{
+        borrow::Cow,
         boxed::Box,
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
@@ -1014,6 +1015,22 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
 }
 
 #[cfg(feature = "alloc")]
+unsafe impl<'a, C: Config> SchemaWrite<C> for Cow<'a, str> {
+    type Src = Self;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <str as SchemaWrite<C>>::size_of(src.as_ref())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::prealloc_check::<u8>(src.len())?;
+        <str as SchemaWrite<C>>::write(writer, src.as_ref())
+    }
+}
+
+#[cfg(feature = "alloc")]
 unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
     type Dst = String;
 
@@ -1030,6 +1047,34 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
                 Ok(())
             }
             Err(e) => Err(invalid_utf8_encoding(e.utf8_error())),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for Cow<'de, str> {
+    type Dst = Cow<'de, str>;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
+        match reader.take_borrowed(len) {
+            Ok(bytes) => {
+                let string = core::str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+                dst.write(Cow::Borrowed(string));
+                Ok(())
+            }
+            Err(crate::io::ReadError::UnsupportedBorrow(_)) => {
+                let mut bytes = Vec::with_capacity(len);
+                reader.copy_into_slice(bytes.spare_capacity_mut())?;
+                // SAFETY: `copy_into_slice` ensures we fill the entire `bytes.spare_capacity_mut()` slice.
+                unsafe { bytes.set_len(len) };
+                let string = String::from_utf8(bytes)
+                    .map_err(|err| invalid_utf8_encoding(err.utf8_error()))?;
+                dst.write(Cow::Owned(string));
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
         }
     }
 }
