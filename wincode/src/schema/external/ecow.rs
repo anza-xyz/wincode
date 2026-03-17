@@ -34,13 +34,11 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
         let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
 
         match reader.take_scoped(len) {
-            Ok(bytes) => match str::from_utf8(bytes) {
-                Ok(s) => {
-                    dst.write(EcoString::from(s));
-                    Ok(())
-                }
-                Err(err) => Err(invalid_utf8_encoding(err)),
-            },
+            Ok(bytes) => {
+                let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+                dst.write(EcoString::from(string));
+                Ok(())
+            }
             Err(IoReadError::UnsupportedZeroCopy) => {
                 if len <= EcoString::INLINE_LIMIT {
                     let mut buf = [MaybeUninit::uninit(); EcoString::INLINE_LIMIT];
@@ -57,9 +55,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
                     // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
                     unsafe { bytes.set_len(len) };
                     let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
-                    let mut eco = EcoString::with_capacity(string.len());
-                    eco.push_str(string);
-                    dst.write(eco);
+                    dst.write(EcoString::from(string));
                     Ok(())
                 }
             }
