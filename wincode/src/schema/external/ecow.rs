@@ -42,18 +42,25 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
                 Err(err) => Err(invalid_utf8_encoding(err)),
             },
             Err(IoReadError::UnsupportedZeroCopy) => {
-                let mut bytes = Vec::with_capacity(len);
-                reader.copy_into_slice(bytes.spare_capacity_mut())?;
-                // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
-                unsafe { bytes.set_len(len) };
-                match str::from_utf8(&bytes) {
-                    Ok(string) => {
-                        let mut eco = EcoString::with_capacity(string.len());
-                        eco.push_str(string);
-                        dst.write(eco);
-                        Ok(())
-                    }
-                    Err(err) => Err(invalid_utf8_encoding(err)),
+                if len <= EcoString::INLINE_LIMIT {
+                    let mut buf = [MaybeUninit::uninit(); EcoString::INLINE_LIMIT];
+                    reader.copy_into_slice(&mut buf[..len])?;
+                    // SAFETY: `copy_into_slice` initialized the first `len` bytes of `buf`.
+                    let bytes =
+                        unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
+                    let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+                    dst.write(EcoString::from(string));
+                    Ok(())
+                } else {
+                    let mut bytes = Vec::with_capacity(len);
+                    reader.copy_into_slice(bytes.spare_capacity_mut())?;
+                    // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
+                    unsafe { bytes.set_len(len) };
+                    let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
+                    let mut eco = EcoString::with_capacity(string.len());
+                    eco.push_str(string);
+                    dst.write(eco);
+                    Ok(())
                 }
             }
             Err(err) => Err(err.into()),
