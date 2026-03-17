@@ -281,6 +281,11 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
+    fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
+        (*self).take_scoped(len)
+    }
+
+    #[inline(always)]
     fn take_borrowed(&mut self, len: usize) -> ReadResult<&'a [u8]> {
         (*self).take_borrowed(len)
     }
