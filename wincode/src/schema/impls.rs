@@ -44,6 +44,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
     },
     alloc::{
+        borrow::Cow,
         boxed::Box,
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
@@ -1030,6 +1031,47 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
                 Ok(())
             }
             Err(e) => Err(invalid_utf8_encoding(e.utf8_error())),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'a, C: Config> SchemaWrite<C> for Cow<'a, [u8]> {
+    type Src = Self;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <[u8] as SchemaWrite<C>>::size_of(src.as_ref())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::prealloc_check::<u8>(src.len())?;
+        <[u8] as SchemaWrite<C>>::write(writer, src.as_ref())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for Cow<'de, [u8]> {
+    type Dst = Cow<'de, [u8]>;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
+        match reader.take_borrowed(len) {
+            Ok(bytes) => {
+                dst.write(Cow::Borrowed(bytes));
+                Ok(())
+            }
+            Err(crate::io::ReadError::UnsupportedBorrow(_)) => {
+                let mut bytes = Vec::with_capacity(len);
+                reader.copy_into_slice(bytes.spare_capacity_mut())?;
+                // SAFETY: `copy_into_slice` ensures we fill the entire `bytes.spare_capacity_mut()` slice.
+                unsafe { bytes.set_len(len) };
+                dst.write(Cow::Owned(bytes));
+                Ok(())
+            }
+            Err(err) => Err(err.into()),
         }
     }
 }

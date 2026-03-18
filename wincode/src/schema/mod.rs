@@ -511,7 +511,7 @@ mod tests {
             config::{self, Config, Configuration, DefaultConfig},
             containers, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer},
+            io::{BorrowKind, Reader, Writer},
             len::{BincodeLen, FixIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
@@ -522,6 +522,7 @@ mod tests {
         proptest::prelude::*,
         std::{
             alloc::Layout,
+            borrow::Cow,
             cell::Cell,
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
@@ -2355,6 +2356,88 @@ mod tests {
             let schema_deserialized: BorrowedBytes = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&val, &bincode_deserialized);
             prop_assert_eq!(val, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_bytes() {
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 0..=100))| {
+            let cow = Cow::<[u8]>::Owned(bytes.clone());
+            let bincode_serialized = bincode::serialize(&cow).unwrap();
+            let schema_serialized = serialize(&cow).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: Cow<'_, [u8]> = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: Cow<'_, [u8]> = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(&cow, &bincode_deserialized);
+            prop_assert_eq!(&cow, &schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_bytes_prefers_borrowed_when_supported() {
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 0..=100))| {
+            let cow = Cow::<[u8]>::Owned(bytes.clone());
+            let serialized = serialize(&cow).unwrap();
+            let deserialized: Cow<'_, [u8]> = deserialize(&serialized).unwrap();
+
+            prop_assert!(matches!(deserialized, Cow::Borrowed(_)));
+            prop_assert_eq!(deserialized.as_ref(), bytes.as_slice());
+        });
+    }
+
+    #[test]
+    fn test_cow_bytes_falls_back_to_owned_when_borrow_is_unsupported() {
+        struct NoBorrowReader<'a> {
+            inner: &'a [u8],
+        }
+
+        impl<'a> Reader<'a> for NoBorrowReader<'a> {
+            fn peek_array<const N: usize>(&mut self) -> crate::io::ReadResult<&[u8; N]> {
+                let Some(src) = self.inner.get(..N) else {
+                    return Err(crate::io::read_size_limit(N));
+                };
+                // SAFETY: `src` is exactly `N` bytes.
+                Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
+            }
+
+            fn copy_into_slice(
+                &mut self,
+                dst: &mut [MaybeUninit<u8>],
+            ) -> crate::io::ReadResult<()> {
+                let len = dst.len();
+                let Some(src) = self.inner.get(..len) else {
+                    return Err(crate::io::read_size_limit(len));
+                };
+                // SAFETY: `dst` points to `len` writable bytes and does not overlap `src`.
+                unsafe {
+                    ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), len)
+                };
+                self.inner = &self.inner[len..];
+                Ok(())
+            }
+
+            fn take_borrowed(&mut self, _len: usize) -> crate::io::ReadResult<&'a [u8]> {
+                Err(crate::io::ReadError::UnsupportedBorrow(BorrowKind::Backing))
+            }
+
+            unsafe fn consume_unchecked(&mut self, amt: usize) {
+                self.inner = unsafe { self.inner.get_unchecked(amt..) };
+            }
+
+            fn consume(&mut self, amt: usize) {
+                self.inner = self.inner.get(amt..).unwrap_or_default();
+            }
+        }
+
+        proptest!(proptest_cfg(), |(bytes in proptest::collection::vec(any::<u8>(), 0..=100))| {
+            let cow = Cow::<[u8]>::Owned(bytes.clone());
+            let serialized = serialize(&cow).unwrap();
+            let reader = NoBorrowReader { inner: &serialized };
+            let deserialized = <Cow<'_, [u8]> as SchemaRead<DefaultConfig>>::get(reader).unwrap();
+
+            prop_assert!(matches!(deserialized, Cow::Owned(_)));
+            prop_assert_eq!(deserialized.as_ref(), bytes.as_slice());
         });
     }
 
