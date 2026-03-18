@@ -87,6 +87,69 @@ use {
 #[cfg(feature = "alloc")]
 pub struct Vec<T, Len>(PhantomData<Len>, PhantomData<T>);
 
+#[cfg(feature = "alloc")]
+impl<'de, T, Len> Vec<T, Len> {
+    /// Decode exactly `len` items of `T` from `reader` into a freshly allocated [`Vec`](vec::Vec).
+    ///
+    /// Errors if the prealloc check for `len` fails, fewer than `len` items are available,
+    /// or any item fails to decode.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "alloc")] {
+    /// # use wincode::containers;
+    /// # use wincode::config::DefaultConfig;
+    /// # use wincode::len::BincodeLen;
+    /// # type C = DefaultConfig;
+    /// let data = [1u8, 2, 3, 4];
+    /// let serialized = wincode::serialize(&data).unwrap();
+    ///
+    /// let decoded = containers::Vec::<u8, BincodeLen>::decode_body_with_len::<C>(
+    ///     &serialized[..],
+    ///     data.len(),
+    /// )
+    /// .unwrap();
+    ///
+    /// assert_eq!(decoded.as_slice(), data.as_slice());
+    /// # }
+    /// ```
+    ///
+    /// ```
+    /// # #[cfg(feature = "alloc")] {
+    /// # use wincode::containers;
+    /// # use wincode::config::DefaultConfig;
+    /// # use wincode::len::BincodeLen;
+    /// # type C = DefaultConfig;
+    /// let data = [1u8, 2, 3, 4];
+    /// let serialized = wincode::serialize(&data).unwrap();
+    ///
+    /// // Requesting more elements than were serialized returns an error.
+    /// let result = containers::Vec::<u8, BincodeLen>::decode_body_with_len::<C>(
+    ///     &serialized[..],
+    ///     data.len() + 1,
+    /// );
+    ///
+    /// assert!(result.is_err());
+    /// # }
+    /// ```
+    pub fn decode_body_with_len<C: ConfigCore>(
+        reader: impl Reader<'de>,
+        len: usize,
+    ) -> ReadResult<vec::Vec<T::Dst>>
+    where
+        Len: SeqLen<C>,
+        T: SchemaRead<'de, C>,
+    {
+        Len::prealloc_check::<T::Dst>(len)?;
+        let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
+        decode_into_slice_t::<T, C>(reader, &mut vec.spare_capacity_mut()[..len])?;
+        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        unsafe { vec.set_len(len) };
+        Ok(vec)
+    }
+}
+
 /// A [`VecDeque`](std::collections::VecDeque) with a customizable length encoding.
 #[cfg(feature = "alloc")]
 pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
@@ -345,12 +408,8 @@ where
     type Dst = vec::Vec<T::Dst>;
 
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let mut vec: vec::Vec<T::Dst> = vec::Vec::with_capacity(len);
-        decode_into_slice_t::<T, C>(reader, &mut vec.spare_capacity_mut()[..len])?;
-        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
-        unsafe { vec.set_len(len) };
-
+        let len = Len::read(reader.by_ref())?;
+        let vec = Self::decode_body_with_len(reader, len)?;
         dst.write(vec);
         Ok(())
     }

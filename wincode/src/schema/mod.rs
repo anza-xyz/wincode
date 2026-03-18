@@ -2473,6 +2473,15 @@ mod tests {
         }
 
         #[test]
+        fn test_vec_body(array in any::<[StructStatic; 32]>()) {
+            let schema_serialized = serialize(&array).unwrap();
+            let schema_deserialized =
+                containers::Vec::<StructStatic, BincodeLen>::decode_body_with_len::<DefaultConfig>(
+                    &schema_serialized[..], array.len()).unwrap();
+            prop_assert_eq!(array.as_slice(), schema_deserialized.as_slice());
+        }
+
+        #[test]
         fn test_serialize_slice(slice in proptest::collection::vec(any::<StructStatic>(), 0..=100)) {
             let bincode_serialized = bincode::serialize(slice.as_slice()).unwrap();
             let schema_serialized = serialize(slice.as_slice()).unwrap();
