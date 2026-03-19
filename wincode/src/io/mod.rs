@@ -503,7 +503,57 @@ pub trait Writer {
     #[expect(unused_variables)]
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<impl Writer> {
-        Ok(self)
+        /// Default trusted [`Writer`] wrapper used when an implementation does
+        /// not provide a specialized [`Writer::as_trusted_for`].
+        ///
+        /// This wrapper intentionally does not implement [`Writer::finish`].
+        /// The documentation for [`Writer::finish`] and the safety contract of
+        /// [`Writer::as_trusted_for`] tell callers to call `finish` on trusted
+        /// writers before using the parent writer again. Returning `Ok(self)`
+        /// directly would make the trusted writer identical to the parent
+        /// writer, so those callers would end up calling `finish` on the parent
+        /// before they are done using it.
+        ///
+        /// Keeping `finish` on the wrapper as a no-op preserves the expectation
+        /// that trusted writers are finalized after use without forcing an early
+        /// `finish` call on the underlying parent writer.
+        struct TrustedDefault<'a, W: ?Sized> {
+            inner: &'a mut W,
+        }
+
+        impl<W: Writer + ?Sized> Writer for TrustedDefault<'_, W> {
+            #[inline(always)]
+            fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+                self.inner.write(src)
+            }
+
+            #[inline(always)]
+            unsafe fn write_slice_t<T>(&mut self, src: &[T]) -> WriteResult<()> {
+                unsafe { self.inner.write_slice_t(src) }
+            }
+
+            #[inline(always)]
+            unsafe fn write_t<T: ?Sized>(&mut self, src: &T) -> WriteResult<()> {
+                unsafe { self.inner.write_t(src) }
+            }
+
+            #[inline(always)]
+            fn by_ref(&mut self) -> impl Writer {
+                TrustedDefault { inner: self.inner }
+            }
+
+            #[inline(always)]
+            unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<impl Writer> {
+                Ok(TrustedDefault { inner: self.inner })
+            }
+
+            #[inline(always)]
+            fn finish(&mut self) -> WriteResult<()> {
+                Ok(())
+            }
+        }
+
+        Ok(TrustedDefault { inner: self })
     }
 
     /// Write `T` as bytes into the source.
