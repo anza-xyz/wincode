@@ -44,6 +44,7 @@ use {
         schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
     },
     alloc::{
+        borrow::Cow,
         boxed::Box,
         collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
@@ -2024,6 +2025,47 @@ where
                 dst.write(RangeInclusive::new(start, end));
             }
         };
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<T: ?Sized, C: ConfigCore> SchemaWrite<C> for Cow<'_, T>
+where
+    T: ToOwned,
+    T: SchemaWrite<C, Src = T>,
+{
+    type Src = Self;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        T::size_of(src.as_ref())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        T::write(writer, src.as_ref())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, T: ?Sized, C: ConfigCore> SchemaRead<'de, C> for Cow<'de, T>
+where
+    T: ToOwned,
+    &'de T: SchemaRead<'de, C, Dst = &'de T>,
+    T::Owned: SchemaRead<'de, C, Dst = T::Owned>,
+{
+    type Dst = Self;
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        use crate::io::BorrowKind;
+        let cow = if reader.supports_borrow(BorrowKind::Backing) {
+            Cow::Borrowed(<&T as SchemaRead<C>>::get(reader)?)
+        } else {
+            Cow::Owned(<T::Owned as SchemaRead<C>>::get(reader)?)
+        };
+        dst.write(cow);
         Ok(())
     }
 }

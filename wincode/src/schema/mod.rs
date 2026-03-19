@@ -511,7 +511,7 @@ mod tests {
             config::{self, Config, Configuration, DefaultConfig},
             containers, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer},
+            io::{Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
@@ -522,6 +522,7 @@ mod tests {
         proptest::prelude::*,
         std::{
             alloc::Layout,
+            borrow::Cow,
             cell::Cell,
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
@@ -4395,5 +4396,59 @@ mod tests {
         let bincode_deserialized: Value = bincode::deserialize(&bincode_serialized).unwrap();
         assert_eq!(&val, &bincode_deserialized);
         assert_eq!(val, deserialized);
+    }
+
+    #[test]
+    fn test_cow_str() {
+        proptest!(proptest_cfg(), |(value: Cow<str>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: Cow<str> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Cow<str> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_bytes() {
+        proptest!(proptest_cfg(), |(value: Cow<[u8]>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: Cow<[u8]> = deserialize(&serialized).unwrap();
+            let bincode_deserialized: Cow<[u8]> = bincode::deserialize(&bincode_serialized).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_bytes_owned() {
+        proptest!(proptest_cfg(), |(value: Cow<[u8]>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized = <Cow<[u8]> as SchemaRead<DefaultConfig>>
+                ::get(NoBorrowReader::new(&serialized)).unwrap();
+            let bincode_deserialized: Cow<[u8]> = bincode::deserialize_from(bincode_serialized.as_slice()).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_str_owned() {
+        proptest!(proptest_cfg(), |(value: Cow<str>)| {
+            let serialized = serialize(&value).unwrap();
+            let bincode_serialized = bincode::serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized = <Cow<str> as SchemaRead<DefaultConfig>>
+                ::get(NoBorrowReader::new(&serialized)).unwrap();
+            let bincode_deserialized: Cow<str> = bincode::deserialize_from(bincode_serialized.as_slice()).unwrap();
+            prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
     }
 }
