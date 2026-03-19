@@ -3,7 +3,7 @@ use {
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
         error::invalid_utf8_encoding,
-        io::{ReadError as IoReadError, Reader, Writer},
+        io::{BorrowKind, Reader, Writer},
         len::SeqLen,
     },
     alloc::vec::Vec,
@@ -33,33 +33,31 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
 
-        match reader.take_scoped(len) {
-            Ok(bytes) => {
-                let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
-                dst.write(EcoString::from(string));
-                Ok(())
-            }
-            Err(IoReadError::UnsupportedZeroCopy) => {
-                if len <= EcoString::INLINE_LIMIT {
-                    let mut buf = [MaybeUninit::uninit(); EcoString::INLINE_LIMIT];
-                    reader.copy_into_slice(&mut buf[..len])?;
-                    // SAFETY: `copy_into_slice` initialized the first `len` bytes of `buf`.
-                    let bytes =
-                        unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
-                    let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
-                    dst.write(EcoString::from(string));
-                    Ok(())
-                } else {
-                    let mut bytes = Vec::with_capacity(len);
-                    reader.copy_into_slice(bytes.spare_capacity_mut())?;
-                    // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
-                    unsafe { bytes.set_len(len) };
-                    let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
-                    dst.write(EcoString::from(string));
-                    Ok(())
-                }
-            }
-            Err(err) => Err(err.into()),
+        if reader.supports_borrow(BorrowKind::CallSite) {
+            let bytes = reader
+                .take_scoped(len)
+                .map_err(crate::error::ReadError::from)?;
+            let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+            dst.write(EcoString::from(string));
+            return Ok(());
+        }
+
+        if len <= EcoString::INLINE_LIMIT {
+            let mut buf = [MaybeUninit::uninit(); EcoString::INLINE_LIMIT];
+            reader.copy_into_slice(&mut buf[..len])?;
+            // SAFETY: `copy_into_slice` initialized the first `len` bytes of `buf`.
+            let bytes = unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
+            let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+            dst.write(EcoString::from(string));
+            Ok(())
+        } else {
+            let mut bytes = Vec::with_capacity(len);
+            reader.copy_into_slice(bytes.spare_capacity_mut())?;
+            // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
+            unsafe { bytes.set_len(len) };
+            let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
+            dst.write(EcoString::from(string));
+            Ok(())
         }
     }
 }
@@ -68,12 +66,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
 mod tests {
     use {
         super::*,
-        crate::{
-            deserialize,
-            io::{ReadError as IoReadError, Reader},
-            proptest_config::proptest_cfg,
-            serialize,
-        },
+        crate::{deserialize, io::Reader, proptest_config::proptest_cfg, serialize},
         proptest::prelude::*,
     };
 
@@ -88,20 +81,14 @@ mod tests {
     }
 
     impl<'a> Reader<'a> for NoScopedReader<'a> {
-        type Trusted<'b>
-            = Self
-        where
-            Self: 'b;
+        const BORROW_KINDS: u8 = 0;
 
-        fn fill_buf(&mut self, n_bytes: usize) -> crate::io::ReadResult<&[u8]> {
-            Ok(&self.inner[..n_bytes.min(self.inner.len())])
-        }
-
-        fn fill_exact(&mut self, n_bytes: usize) -> crate::io::ReadResult<&[u8]> {
-            let Some(src) = self.inner.get(..n_bytes) else {
-                return Err(crate::io::read_size_limit(n_bytes));
+        fn peek_array<const N: usize>(&mut self) -> crate::io::ReadResult<&[u8; N]> {
+            let Some(src) = self.inner.get(..N) else {
+                return Err(crate::io::read_size_limit(N));
             };
-            Ok(src)
+            // SAFETY: `src` is exactly `N` bytes.
+            Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
         }
 
         fn copy_into_slice(
@@ -120,39 +107,12 @@ mod tests {
             Ok(())
         }
 
-        fn take_array<const N: usize>(&mut self) -> crate::io::ReadResult<[u8; N]> {
-            let Some((src, rest)) = self.inner.split_first_chunk() else {
-                return Err(crate::io::read_size_limit(N));
-            };
-            self.inner = rest;
-            Ok(*src)
-        }
-
-        fn take_scoped(&mut self, _len: usize) -> crate::io::ReadResult<&[u8]> {
-            Err(IoReadError::UnsupportedZeroCopy)
-        }
-
         unsafe fn consume_unchecked(&mut self, amt: usize) {
             self.inner = unsafe { self.inner.get_unchecked(amt..) };
         }
 
-        fn consume(&mut self, amt: usize) -> crate::io::ReadResult<()> {
-            if self.inner.len() < amt {
-                return Err(crate::io::read_size_limit(amt));
-            }
-            self.inner = &self.inner[amt..];
-            Ok(())
-        }
-
-        unsafe fn as_trusted_for(
-            &mut self,
-            n_bytes: usize,
-        ) -> crate::io::ReadResult<Self::Trusted<'_>> {
-            let Some((src, rest)) = self.inner.split_at_checked(n_bytes) else {
-                return Err(crate::io::read_size_limit(n_bytes));
-            };
-            self.inner = rest;
-            Ok(Self::new(src))
+        fn consume(&mut self, amt: usize) {
+            self.inner = self.inner.get(amt..).unwrap_or_default();
         }
     }
 
