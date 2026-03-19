@@ -1018,12 +1018,8 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
     type Dst = String;
 
     #[inline]
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
-        let mut bytes: Vec<u8> = Vec::with_capacity(len);
-        reader.copy_into_slice(bytes.spare_capacity_mut())?;
-        // SAFETY: `copy_into_slice` ensures we fill the entire `bytes.spare_capacity_mut()` slice.
-        unsafe { bytes.set_len(len) };
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let bytes = <Vec<u8> as SchemaRead<C>>::get(reader)?;
         match String::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);
