@@ -64,40 +64,11 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
 mod tests {
     use {
         super::*,
-        crate::{deserialize, io::Reader, proptest_config::proptest_cfg, serialize},
+        crate::{
+            deserialize, io::test_util::NoBorrowReader, proptest_config::proptest_cfg, serialize,
+        },
         proptest::prelude::*,
     };
-
-    struct NoScopedReader<'a> {
-        inner: &'a [u8],
-    }
-
-    impl<'a> NoScopedReader<'a> {
-        fn new(inner: &'a [u8]) -> Self {
-            Self { inner }
-        }
-    }
-
-    impl<'a> Reader<'a> for NoScopedReader<'a> {
-        fn peek_array<const N: usize>(&mut self) -> crate::io::ReadResult<&[u8; N]> {
-            self.inner.peek_array()
-        }
-
-        fn copy_into_slice(
-            &mut self,
-            dst: &mut [core::mem::MaybeUninit<u8>],
-        ) -> crate::io::ReadResult<()> {
-            self.inner.copy_into_slice(dst)
-        }
-
-        unsafe fn consume_unchecked(&mut self, amt: usize) {
-            unsafe { self.inner.consume_unchecked(amt) };
-        }
-
-        fn consume(&mut self, amt: usize) {
-            self.inner.consume(amt);
-        }
-    }
 
     #[test]
     fn test_small_string_roundtrip() {
@@ -140,7 +111,7 @@ mod tests {
         proptest!(proptest_cfg(), |(value: String)| {
             let eco = EcoString::from(value.as_str());
             let serialized = serialize(&eco).unwrap();
-            let reader = NoScopedReader::new(&serialized);
+            let reader = NoBorrowReader::new(&serialized);
             let deserialized: EcoString = crate::deserialize_from(reader).unwrap();
             prop_assert_eq!(deserialized, eco);
         });
