@@ -23,8 +23,8 @@ solana-message = { version = "4.0.0", features = ["wincode"] }
 solana-nonce = { version = "3.1.0", features = ["wincode"] }
 solana-signature = { version = "3.3.0", features = ["wincode"] }
 solana-transaction = { version = "4.0.0", features = ["wincode"] }
-solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "08b606ca461e4ec4afe34a40993080131d20dbe8", features = ["agave-unstable-api"] }
-agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "08b606ca461e4ec4afe34a40993080131d20dbe8", features = ["agave-unstable-api"] }
+solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "e33a858d174e20de14acd1d0d4d014315a963401", features = ["agave-unstable-api"] }
+agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "e33a858d174e20de14acd1d0d4d014315a963401", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
