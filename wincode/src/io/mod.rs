@@ -617,6 +617,8 @@ impl<W: Writer + ?Sized> Writer for &mut W {
 mod cursor;
 pub mod slice;
 #[cfg(feature = "std")]
+pub mod std_read;
+#[cfg(feature = "std")]
 pub mod std_write;
 #[cfg(feature = "alloc")]
 mod vec;
