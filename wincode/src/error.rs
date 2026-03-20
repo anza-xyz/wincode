@@ -59,6 +59,8 @@ pub enum ReadError {
     UnalignedPointerRead,
     #[error("Tag value would overflow tag encoding scheme: {0}")]
     TagEncodingOverflow(&'static str),
+    #[error("Expected context: {0}")]
+    ExpectedContext(&'static str),
 }
 
 pub struct PreallocationError {

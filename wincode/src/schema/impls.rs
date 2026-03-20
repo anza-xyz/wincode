@@ -14,6 +14,7 @@ use {
         TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::decode_into_slice_t,
+        context,
         error::{
             ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
             invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
@@ -22,7 +23,9 @@ use {
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{SchemaRead, SchemaWrite, size_of_elem_slice, write_elem_slice},
+        schema::{
+            SchemaRead, SchemaReadContext, SchemaWrite, size_of_elem_slice, write_elem_slice,
+        },
         tag_encoding::TagEncoding,
     },
     core::{
@@ -503,6 +506,29 @@ where
     #[inline]
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         <containers::Vec<T, C::LengthEncoding>>::read(reader, dst)
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, T, C: ConfigCore> SchemaReadContext<'de, C, context::Len> for Vec<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Vec<T::Dst>;
+
+    #[inline]
+    fn read_with_context(
+        ctx: context::Len,
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let len = ctx.0;
+        let mut vec = Vec::with_capacity(len);
+        decode_into_slice_t::<T, C>(reader.by_ref(), &mut vec.spare_capacity_mut()[..len])?;
+        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        unsafe { vec.set_len(len) };
+        dst.write(vec);
+        Ok(())
     }
 }
 
