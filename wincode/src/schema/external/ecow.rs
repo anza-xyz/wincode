@@ -34,9 +34,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
         let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
 
         if reader.supports_borrow(BorrowKind::CallSite) {
-            let bytes = reader
-                .take_scoped(len)
-                .map_err(crate::error::ReadError::from)?;
+            let bytes = reader.take_scoped(len)?;
             let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
             dst.write(EcoString::from(string));
             return Ok(());
@@ -52,7 +50,7 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
             Ok(())
         } else {
             let mut bytes = Vec::with_capacity(len);
-            reader.copy_into_slice(bytes.spare_capacity_mut())?;
+            reader.copy_into_slice(&mut bytes.spare_capacity_mut()[..len])?;
             // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
             unsafe { bytes.set_len(len) };
             let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
@@ -81,38 +79,23 @@ mod tests {
     }
 
     impl<'a> Reader<'a> for NoScopedReader<'a> {
-        const BORROW_KINDS: u8 = 0;
-
         fn peek_array<const N: usize>(&mut self) -> crate::io::ReadResult<&[u8; N]> {
-            let Some(src) = self.inner.get(..N) else {
-                return Err(crate::io::read_size_limit(N));
-            };
-            // SAFETY: `src` is exactly `N` bytes.
-            Ok(unsafe { &*src.as_ptr().cast::<[u8; N]>() })
+            self.inner.peek_array()
         }
 
         fn copy_into_slice(
             &mut self,
             dst: &mut [core::mem::MaybeUninit<u8>],
         ) -> crate::io::ReadResult<()> {
-            let len = dst.len();
-            let Some(src) = self.inner.get(..len) else {
-                return Err(crate::io::read_size_limit(len));
-            };
-            // SAFETY: `dst` points to `len` writable bytes and does not overlap `src`.
-            unsafe {
-                core::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), len)
-            };
-            self.inner = &self.inner[len..];
-            Ok(())
+            self.inner.copy_into_slice(dst)
         }
 
         unsafe fn consume_unchecked(&mut self, amt: usize) {
-            self.inner = unsafe { self.inner.get_unchecked(amt..) };
+            unsafe { self.inner.consume_unchecked(amt) };
         }
 
         fn consume(&mut self, amt: usize) {
-            self.inner = self.inner.get(amt..).unwrap_or_default();
+            self.inner.consume(amt);
         }
     }
 
@@ -158,7 +141,7 @@ mod tests {
             let eco = EcoString::from(value.as_str());
             let serialized = serialize(&eco).unwrap();
             let reader = NoScopedReader::new(&serialized);
-            let deserialized = <EcoString as SchemaRead<'_, crate::config::DefaultConfig>>::get(reader).unwrap();
+            let deserialized: EcoString = crate::deserialize_from(reader).unwrap();
             prop_assert_eq!(deserialized, eco);
         });
     }
