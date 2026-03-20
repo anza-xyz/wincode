@@ -1,4 +1,6 @@
 //! Blanket implementations for std types.
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
 #[cfg(feature = "std")]
