@@ -61,7 +61,7 @@ use alloc::sync::Arc as AllocArc;
 use {
     crate::{
         TypeMeta,
-        config::{ConfigCore, ZeroCopy},
+        config::ConfigCore,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
@@ -256,65 +256,6 @@ macro_rules! pod_wrapper {
     )*}
 }
 pub use pod_wrapper;
-
-/// Indicates that the type is represented by raw bytes and does not have any invalid bit patterns.
-///
-/// Prefer [`pod_wrapper!`] instead.
-#[deprecated(
-    since = "0.4.6",
-    note = "This unsound type has been replaced by the `pod_wrapper!` macro."
-)]
-pub struct Pod<T: Copy + 'static>(PhantomData<T>);
-
-// SAFETY:
-// - By using `Pod`, user asserts that the type is zero-copy, given the contract of Pod:
-//   - The type's in‑memory representation is exactly its serialized bytes.
-//   - It can be safely initialized by memcpy (no validation, no endianness/layout work).
-//   - Does not contain references or pointers.
-#[allow(deprecated)]
-unsafe impl<T, C: ConfigCore> ZeroCopy<C> for Pod<T> where T: Copy + 'static {}
-
-#[allow(deprecated)]
-unsafe impl<T, C: ConfigCore> SchemaWrite<C> for Pod<T>
-where
-    T: Copy + 'static,
-{
-    type Src = T;
-
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: true,
-    };
-
-    #[inline]
-    fn size_of(_src: &Self::Src) -> WriteResult<usize> {
-        Ok(size_of::<T>())
-    }
-
-    #[inline]
-    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-        // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(writer.write_t(src)?) }
-    }
-}
-
-#[allow(deprecated)]
-unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for Pod<T>
-where
-    T: Copy + 'static,
-{
-    type Dst = T;
-
-    const TYPE_META: TypeMeta = TypeMeta::Static {
-        size: size_of::<T>(),
-        zero_copy: true,
-    };
-
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        // SAFETY: `T` is plain ol' data.
-        unsafe { Ok(reader.copy_into_t(dst)?) }
-    }
-}
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for Vec<T, Len>
