@@ -509,7 +509,7 @@ mod tests {
             Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta, UninitBuilder,
             WriteResult, ZeroCopy,
             config::{self, Config, Configuration, DefaultConfig},
-            containers, deserialize, deserialize_mut,
+            containers, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen},
@@ -3654,6 +3654,30 @@ mod tests {
 
         let before_epoch = UNIX_EPOCH.checked_sub(Duration::from_secs(1)).unwrap();
         assert!(serialize(&before_epoch).is_err());
+    }
+
+    #[test]
+    fn test_deserialize_exact_accepts_exact_input() {
+        let bytes = serialize(&123u64).unwrap();
+        let value: u64 = deserialize_exact(&bytes).unwrap();
+        assert_eq!(value, 123);
+    }
+
+    #[test]
+    fn test_deserialize_exact_rejects_trailing_bytes() {
+        let mut bytes = serialize(&123u64).unwrap();
+        bytes.push(0xAA);
+        let err = deserialize_exact::<u64>(&bytes).unwrap_err();
+        assert!(matches!(err, error::ReadError::TrailingBytes));
+    }
+
+    #[test]
+    fn test_config_deserialize_exact_rejects_trailing_bytes() {
+        let config = Configuration::default();
+        let mut bytes = config::serialize(&123u64, config).unwrap();
+        bytes.push(0xAA);
+        let err = config::deserialize_exact::<u64, _>(&bytes, config).unwrap_err();
+        assert!(matches!(err, error::ReadError::TrailingBytes));
     }
 
     #[test]
