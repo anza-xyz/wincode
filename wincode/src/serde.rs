@@ -4,7 +4,7 @@ use {
     crate::{
         SchemaReadOwned,
         config::{self, DefaultConfig},
-        error::{ReadResult, WriteResult},
+        error::{ReadError, ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
@@ -155,6 +155,20 @@ where
     T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
     T::deserialize(src)
+}
+
+#[inline]
+pub fn deserialize_exact<'de, T>(src: &'de [u8]) -> ReadResult<T>
+where
+    T: SchemaRead<'de, DefaultConfig, Dst = T>,
+{
+    let mut reader = src;
+    let value = <T as SchemaRead<'de, DefaultConfig>>::get(Reader::by_ref(&mut reader))?;
+    if reader.is_empty() {
+        Ok(value)
+    } else {
+        Err(ReadError::TrailingBytes)
+    }
 }
 
 /// Deserialize a type from the given bytes, with the ability
