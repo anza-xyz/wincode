@@ -3,10 +3,11 @@
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
+#[cfg(feature = "indexmap")]
+use indexmap::{IndexMap, IndexSet};
 #[cfg(feature = "std")]
 use std::{
     collections::{HashMap, HashSet},
-    hash::{BuildHasher, Hash},
     time::{SystemTime, UNIX_EPOCH},
 };
 use {
@@ -26,6 +27,7 @@ use {
         tag_encoding::TagEncoding,
     },
     core::{
+        hash::{BuildHasher, Hash},
         marker::PhantomData,
         mem::{MaybeUninit, transmute},
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -1209,8 +1211,10 @@ macro_rules! impl_seq_v {
 
 impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
 impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher }
+impl_seq_kv! { "indexmap", IndexMap<K: Hash | Eq, V, S: BuildHasher | Default>, IndexMap::with_capacity_and_hasher }
 impl_seq_v! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
 impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert }
+impl_seq_v! { "indexmap", IndexSet<K: Hash | Eq, S: BuildHasher | Default>, IndexSet::with_capacity_and_hasher, insert }
 impl_seq_v! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
