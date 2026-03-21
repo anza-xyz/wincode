@@ -385,7 +385,10 @@ pub mod short_vec {
     pub use solana_short_vec::ShortU16;
     use {
         super::*,
-        crate::error::{ReadError, write_length_encoding_overflow},
+        crate::{
+            SchemaReadContext,
+            error::{ReadError, write_length_encoding_overflow},
+        },
         core::mem::MaybeUninit,
     };
 
@@ -398,6 +401,82 @@ pub mod short_vec {
             // SAFETY: `dst` is a valid pointer to a `MaybeUninit<ShortU16>`.
             let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast::<MaybeUninit<u16>>() };
             slot.write(len);
+            Ok(())
+        }
+    }
+
+    /// Decode a `ShortU16` from a prefetched byte prefix and a [`Reader`].
+    ///
+    /// Bytes are taken from `ctx` first. If the prefix does not contain a complete
+    /// `ShortU16`, decoding continues by consuming the remaining bytes from `reader`.
+    /// The reader is left untouched when `ctx` already contains a valid encoding.
+    #[inline]
+    pub fn decode_short_u16_with_ctx<'de, const N: usize>(
+        ctx: [u8; N],
+        reader: impl Reader<'de>,
+    ) -> ReadResult<u16> {
+        /// Hybrid reader that combines a context array and a reader.
+        ///
+        /// This reader first reads from the context array, then falls back to the reader
+        /// once indices exceed the context array size.
+        struct Read<const N: usize, R> {
+            ctx: [u8; N],
+            reader: R,
+        }
+
+        impl<'a, const N: usize, R> Read<N, R>
+        where
+            R: Reader<'a>,
+        {
+            /// Copy a byte from the context array at `I` if `I < N`, otherwise consume
+            /// from the reader.
+            #[inline(always)]
+            fn take_byte<const I: usize>(&mut self) -> ReadResult<u8> {
+                if I < N {
+                    Ok(self.ctx[I])
+                } else {
+                    Ok(self.reader.take_byte()?)
+                }
+            }
+        }
+
+        let mut reader = Read { ctx, reader };
+
+        let b0 = reader.take_byte::<0>()?;
+        if b0 < 0x80 {
+            return Ok(b0 as u16);
+        }
+
+        let b1 = reader.take_byte::<1>()?;
+        if b1 == 0 {
+            return Err(non_canonical_err());
+        }
+        if b1 < 0x80 {
+            return Ok(((b0 & 0x7f) as u16) | ((b1 as u16) << 7));
+        }
+
+        let b2 = reader.take_byte::<2>()?;
+        if b2 == 0 {
+            return Err(non_canonical_err());
+        }
+        if b2 > 3 {
+            return Err(overflow_err());
+        }
+
+        Ok(((b0 & 0x7f) as u16) | (((b1 & 0x7f) as u16) << 7) | ((b2 as u16) << 14))
+    }
+
+    unsafe impl<'de, const N: usize, C: ConfigCore> SchemaReadContext<'de, C, [u8; N]> for ShortU16 {
+        type Dst = Self;
+
+        #[inline]
+        fn read_with_context(
+            ctx: [u8; N],
+            reader: impl Reader<'de>,
+            dst: &mut MaybeUninit<Self::Dst>,
+        ) -> ReadResult<()> {
+            let len = decode_short_u16_with_ctx(ctx, reader)?;
+            dst.write(ShortU16(len));
             Ok(())
         }
     }
@@ -559,30 +638,9 @@ pub mod short_vec {
         Ok((val, 3))
     }
 
-    #[inline]
-    fn decode_short_u16_from_reader<'de>(mut reader: impl Reader<'de>) -> ReadResult<u16> {
-        let b0 = reader.take_byte()?;
-        if b0 < 0x80 {
-            return Ok(b0 as u16);
-        }
-
-        let b1 = reader.take_byte()?;
-        if b1 == 0 {
-            return Err(non_canonical_err());
-        }
-        if b1 < 0x80 {
-            return Ok(((b0 & 0x7f) as u16) | ((b1 as u16) << 7));
-        }
-
-        let b2 = reader.take_byte()?;
-        if b2 == 0 {
-            return Err(non_canonical_err());
-        }
-        if b2 > 3 {
-            return Err(overflow_err());
-        }
-
-        Ok(((b0 & 0x7f) as u16) | (((b1 & 0x7f) as u16) << 7) | ((b2 as u16) << 14))
+    #[inline(always)]
+    fn decode_short_u16_from_reader<'de>(reader: impl Reader<'de>) -> ReadResult<u16> {
+        decode_short_u16_with_ctx([], reader)
     }
 
     unsafe impl<C: ConfigCore> SeqLen<C> for ShortU16 {
@@ -610,7 +668,7 @@ pub mod short_vec {
     mod tests {
         use {
             super::*,
-            crate::{containers, proptest_config::proptest_cfg},
+            crate::{containers, io::Cursor, proptest_config::proptest_cfg},
             alloc::vec::Vec,
             proptest::prelude::*,
             solana_short_vec::ShortU16,
@@ -650,6 +708,131 @@ pub mod short_vec {
                 proptest::collection::vec(any::<[u8; 32]>(), 0..=16),
             )
                 .prop_map(|(bytes, ar)| ShortVecStruct { bytes, ar })
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_uses_only_ctx_when_complete() {
+            let mut reader = Cursor::new(&[0xff][..]);
+
+            let decoded = decode_short_u16_with_ctx([0x80, 0x80, 0x01], &mut reader).unwrap();
+
+            assert_eq!(decoded, 0x4000);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_uses_only_ctx_for_one_byte_encoding() {
+            let mut reader = Cursor::new(&[0xff][..]);
+
+            let decoded = decode_short_u16_with_ctx([0x7f], &mut reader).unwrap();
+
+            assert_eq!(decoded, 0x7f);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_uses_only_ctx_for_two_byte_encoding() {
+            let mut reader = Cursor::new(&[0xff][..]);
+
+            let decoded = decode_short_u16_with_ctx([0x80, 0x01], &mut reader).unwrap();
+
+            assert_eq!(decoded, 0x80);
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_stops_after_second_byte_from_reader() {
+            let mut reader = Cursor::new(&[0x01, 0xff][..]);
+
+            let decoded = decode_short_u16_with_ctx([0x80], &mut reader).unwrap();
+
+            assert_eq!(decoded, 0x80);
+            assert_eq!(reader.position(), 1);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_reads_remaining_bytes_from_reader() {
+            let mut reader = Cursor::new(&[0x80, 0x01, 0xff][..]);
+
+            let decoded = decode_short_u16_with_ctx([0x80], &mut reader).unwrap();
+
+            assert_eq!(decoded, 0x4000);
+            assert_eq!(reader.position(), 2);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_non_canonical_second_byte_from_reader() {
+            let mut reader = Cursor::new(&[0x00][..]);
+
+            let err = decode_short_u16_with_ctx([0x80], &mut reader).unwrap_err();
+
+            assert!(matches!(
+                err,
+                ReadError::InvalidValue("short u16: non-canonical encoding")
+            ));
+            assert_eq!(reader.position(), 1);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_incomplete_second_byte_from_reader() {
+            let mut reader = Cursor::new(&[][..]);
+
+            let err = decode_short_u16_with_ctx([0x80], &mut reader).unwrap_err();
+
+            assert!(matches!(
+                err,
+                ReadError::Io(crate::io::ReadError::ReadSizeLimit(1))
+            ));
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_non_canonical_third_byte_from_reader() {
+            let mut reader = Cursor::new(&[0x00][..]);
+
+            let err = decode_short_u16_with_ctx([0x80, 0x80], &mut reader).unwrap_err();
+
+            assert!(matches!(
+                err,
+                ReadError::InvalidValue("short u16: non-canonical encoding")
+            ));
+            assert_eq!(reader.position(), 1);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_incomplete_third_byte_from_reader() {
+            let mut reader = Cursor::new(&[][..]);
+
+            let err = decode_short_u16_with_ctx([0x80, 0x80], &mut reader).unwrap_err();
+
+            assert!(matches!(
+                err,
+                ReadError::Io(crate::io::ReadError::ReadSizeLimit(1))
+            ));
+            assert_eq!(reader.position(), 0);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_overflow_third_byte_from_reader() {
+            let mut reader = Cursor::new(&[0x04][..]);
+
+            let err = decode_short_u16_with_ctx([0x80, 0x80], &mut reader).unwrap_err();
+
+            assert!(matches!(err, ReadError::LengthEncodingOverflow("u16::MAX")));
+            assert_eq!(reader.position(), 1);
+        }
+
+        #[test]
+        fn decode_short_u16_with_ctx_non_canonical_second_byte_in_ctx() {
+            let mut reader = Cursor::new(&[0xff][..]);
+
+            let err = decode_short_u16_with_ctx([0x80, 0x00], &mut reader).unwrap_err();
+
+            assert!(matches!(
+                err,
+                ReadError::InvalidValue("short u16: non-canonical encoding")
+            ));
+            assert_eq!(reader.position(), 0);
         }
 
         proptest! {
