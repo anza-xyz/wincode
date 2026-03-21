@@ -5,6 +5,7 @@ use {
     crate::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         config::{Config, ConfigCore},
+        error::ReadError,
         io::{Reader, Writer},
     },
     core::mem::MaybeUninit,
@@ -151,6 +152,20 @@ where
     T: SchemaRead<'de, C, Dst = T>,
 {
     T::deserialize(src, config)
+}
+
+#[inline]
+pub fn deserialize_exact<'de, T, C: Config>(src: &'de [u8], _config: C) -> ReadResult<T>
+where
+    T: SchemaRead<'de, C, Dst = T>,
+{
+    let mut reader = src;
+    let value = <T as SchemaRead<'de, C>>::get(Reader::by_ref(&mut reader))?;
+    if reader.is_empty() {
+        Ok(value)
+    } else {
+        Err(ReadError::TrailingBytes)
+    }
 }
 
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
