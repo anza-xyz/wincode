@@ -26,7 +26,7 @@ use {
     core::{
         marker::PhantomData,
         mem::{MaybeUninit, transmute},
-        net::{IpAddr, Ipv4Addr, Ipv6Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         num::{
             NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
             NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
@@ -1738,6 +1738,138 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for IpAddr {
             1 => {
                 let addr = <Ipv6Addr as SchemaRead<'de, C>>::get(reader)?;
                 dst.write(IpAddr::V6(addr));
+                Ok(())
+            }
+            _ => Err(invalid_tag_encoding(tag as usize)),
+        }
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for SocketAddrV4 {
+    type Src = Self;
+
+    const TYPE_META: TypeMeta = TypeMeta::join_types([
+        <Ipv4Addr as SchemaWrite<C>>::TYPE_META,
+        <u16 as SchemaWrite<C>>::TYPE_META,
+    ]);
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(4 + <u16 as SchemaWrite<C>>::size_of(&src.port())?)
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <Ipv4Addr as SchemaWrite<C>>::write(writer.by_ref(), src.ip())?;
+        <u16 as SchemaWrite<C>>::write(writer, &src.port())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SocketAddrV4 {
+    type Dst = Self;
+
+    const TYPE_META: TypeMeta = TypeMeta::join_types([
+        <Ipv4Addr as SchemaRead<C>>::TYPE_META,
+        <u16 as SchemaRead<C>>::TYPE_META,
+    ]);
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let ip = <Ipv4Addr as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let port = <u16 as SchemaRead<'de, C>>::get(reader)?;
+        dst.write(Self::Dst::new(ip, port));
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore> SchemaWrite<C> for SocketAddrV6 {
+    type Src = Self;
+
+    const TYPE_META: TypeMeta = TypeMeta::join_types([
+        <Ipv6Addr as SchemaWrite<C>>::TYPE_META,
+        <u16 as SchemaWrite<C>>::TYPE_META,
+    ]);
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(16 + <u16 as SchemaWrite<C>>::size_of(&src.port())?)
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <Ipv6Addr as SchemaWrite<C>>::write(writer.by_ref(), src.ip())?;
+        <u16 as SchemaWrite<C>>::write(writer, &src.port())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for SocketAddrV6 {
+    type Dst = Self;
+
+    const TYPE_META: TypeMeta = TypeMeta::join_types([
+        <Ipv6Addr as SchemaRead<C>>::TYPE_META,
+        <u16 as SchemaRead<C>>::TYPE_META,
+    ]);
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let ip = <Ipv6Addr as SchemaRead<'de, C>>::get(reader.by_ref())?;
+        let port = <u16 as SchemaRead<'de, C>>::get(reader)?;
+        // serde and thus bincode doesn't encode flowinfo and scope_id
+        dst.write(SocketAddrV6::new(ip, port, 0, 0));
+        Ok(())
+    }
+}
+
+unsafe impl<C: Config> SchemaWrite<C> for SocketAddr {
+    type Src = Self;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        Ok(match src {
+            Self::V4(v4) => {
+                C::TagEncoding::size_of_from_u32(0)?
+                    + <SocketAddrV4 as SchemaWrite<C>>::size_of(v4)?
+            }
+            Self::V6(v6) => {
+                C::TagEncoding::size_of_from_u32(1)?
+                    + <SocketAddrV6 as SchemaWrite<C>>::size_of(v6)?
+            }
+        })
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        match src {
+            Self::V4(addr) => {
+                C::TagEncoding::write_from_u32(writer.by_ref(), 0)?;
+                <SocketAddrV4 as SchemaWrite<C>>::write(writer, addr)
+            }
+            Self::V6(addr) => {
+                C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
+                <SocketAddrV6 as SchemaWrite<C>>::write(writer, addr)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, C: Config> SchemaRead<'de, C> for SocketAddr {
+    type Dst = Self;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let tag = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader.by_ref())?)?;
+        match tag {
+            0 => {
+                let addr = <SocketAddrV4 as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(Self::V4(addr));
+                Ok(())
+            }
+            1 => {
+                let addr = <SocketAddrV6 as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(Self::V6(addr));
                 Ok(())
             }
             _ => Err(invalid_tag_encoding(tag as usize)),

@@ -527,7 +527,7 @@ mod tests {
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
-            net::{IpAddr, Ipv4Addr, Ipv6Addr},
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
             num::{
                 NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                 NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
@@ -3624,6 +3624,50 @@ mod tests {
             let schema_deserialized: IpAddr = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(addr, bincode_deserialized);
             prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr_v4() {
+        proptest!(proptest_cfg(), |(addr: SocketAddrV4)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddrV4 = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddrV4 = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(addr, bincode_deserialized);
+            prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr_v6() {
+        // serde drops flowinfo and scope_id for SocketAddrV6, so we only verify
+        // byte compatibility and that both impls deserialize identically.
+        proptest!(proptest_cfg(), |(addr: SocketAddrV6)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddrV6 = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddrV6 = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr() {
+        // serde drops flowinfo and scope_id for SocketAddrV6 variants, so we only
+        // verify byte compatibility and that both impls deserialize identically.
+        proptest!(proptest_cfg(), |(addr: SocketAddr)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddr = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddr = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
         });
     }
 
