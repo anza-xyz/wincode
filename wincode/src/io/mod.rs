@@ -102,7 +102,9 @@ pub trait Reader<'a> {
     /// Return exactly `N` bytes as `&[u8; N]` without advancing.
     ///
     /// Errors if fewer than `N` bytes are available.
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]>;
+    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
+        unimplemented!()
+    }
 
     /// Get the next byte without advancing.
     ///
@@ -191,7 +193,9 @@ pub trait Reader<'a> {
     /// # Safety
     ///
     /// - `amt` must be less than or equal to the number of bytes remaining in the reader.
-    unsafe fn consume_unchecked(&mut self, amt: usize);
+    unsafe fn consume_unchecked(&mut self, amt: usize) {
+        unimplemented!()
+    }
 
     /// Advance the reader by `amt` bytes.
     ///
@@ -203,7 +207,9 @@ pub trait Reader<'a> {
     ///
     /// Unlike [`Reader::consume_unchecked`], this method must not invoke undefined
     /// behavior when `amt` exceeds the reader's available bytes.
-    fn consume(&mut self, amt: usize);
+    fn consume(&mut self, amt: usize) {
+        unimplemented!()
+    }
 
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
@@ -623,5 +629,7 @@ pub mod std_write;
 #[cfg(feature = "alloc")]
 mod vec;
 pub use cursor::Cursor;
+#[cfg(feature = "std")]
+pub mod std_read_direct;
 #[cfg(test)]
 pub(crate) mod test_util;
