@@ -4080,7 +4080,7 @@ mod tests {
 
             let serialized = serialize(&value).unwrap();
             let bincode_serialized = bincode::serialize(&value).unwrap();
-            prop_assert_eq!(&serialized, &serialized);
+            prop_assert_eq!(&serialized, &bincode_serialized);
 
             let deserialized: RefCell<u64> = deserialize(&serialized).unwrap();
             let bincode_deserialized: RefCell<u64> = bincode::deserialize(&bincode_serialized).unwrap();
