@@ -90,7 +90,10 @@ pub trait Reader<'a> {
     /// Return exactly `N` bytes as `&[u8; N]` without advancing.
     ///
     /// Errors if fewer than `N` bytes are available.
-    #[deprecated(since = "0.4.6", note = "use `peek_array`.")]
+    #[deprecated(
+        since = "0.4.6",
+        note = "peek and consume APIs will be removed in 0.5."
+    )]
     #[expect(deprecated)]
     fn fill_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
         let src = self.fill_exact(N)?;
@@ -103,6 +106,10 @@ pub trait Reader<'a> {
     ///
     /// Errors if fewer than `N` bytes are available.
     #[inline]
+    #[deprecated(
+        since = "0.4.9",
+        note = "peek and consume APIs will be removed in 0.5."
+    )]
     #[expect(deprecated)]
     fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
         let src = self.fill_exact(N)?;
@@ -214,9 +221,17 @@ pub trait Reader<'a> {
     /// # Safety
     ///
     /// - `amt` must be less than or equal to the number of bytes remaining in the reader.
+    #[deprecated(
+        since = "0.4.9",
+        note = "peek and consume APIs will be removed in 0.5."
+    )]
     unsafe fn consume_unchecked(&mut self, amt: usize);
 
     /// Advance the reader exactly `amt` bytes, returning an error if the source does not have enough bytes.
+    #[deprecated(
+        since = "0.4.9",
+        note = "peek and consume APIs will be removed in 0.5."
+    )]
     fn consume(&mut self, amt: usize) -> ReadResult<()>;
 
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
@@ -263,6 +278,11 @@ pub trait Reader<'a> {
     ///
     /// Errors if no bytes remain.
     #[inline]
+    #[expect(deprecated)]
+    #[deprecated(
+        since = "0.4.9",
+        note = "peek and consume APIs will be removed in 0.5."
+    )]
     fn peek_byte(&mut self) -> ReadResult<u8> {
         Ok(self.peek_array::<1>()?[0])
     }
@@ -399,6 +419,7 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
+    #[expect(deprecated)]
     fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
         (*self).peek_array()
     }
@@ -441,11 +462,13 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
+    #[expect(deprecated)]
     unsafe fn consume_unchecked(&mut self, amt: usize) {
         (*self).consume_unchecked(amt)
     }
 
     #[inline(always)]
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         (*self).consume(amt)
     }
@@ -462,6 +485,7 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
+    #[expect(deprecated)]
     fn peek_byte(&mut self) -> ReadResult<u8> {
         (*self).peek_byte()
     }
