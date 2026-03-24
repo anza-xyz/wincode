@@ -177,6 +177,7 @@ impl<'a> Reader<'a> for TrustedSliceReaderZeroCopyMut<'a> {
     }
 
     #[inline]
+    #[expect(deprecated)]
     fn consume(&mut self, amt: usize) -> ReadResult<()> {
         unsafe { Self::consume_unchecked(self, amt) };
         Ok(())
@@ -312,7 +313,10 @@ impl<'a> Reader<'a> for &'a [u8] {
             return Err(read_size_limit(amt));
         }
         // SAFETY: we just checked that self.len() >= amt.
-        unsafe { self.consume_unchecked(amt) };
+        #[expect(deprecated)]
+        unsafe {
+            self.consume_unchecked(amt)
+        };
         Ok(())
     }
 
@@ -379,7 +383,10 @@ impl<'a> Reader<'a> for &'a mut [u8] {
             return Err(read_size_limit(amt));
         }
         // SAFETY: we just checked that self.len() >= amt.
-        unsafe { self.consume_unchecked(amt) };
+        #[expect(deprecated)]
+        unsafe {
+            self.consume_unchecked(amt)
+        };
         Ok(())
     }
 

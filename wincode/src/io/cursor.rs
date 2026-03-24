@@ -167,7 +167,10 @@ where
             return Err(read_size_limit(amt));
         }
         // SAFETY: We just checked that `cur_len() >= amt`.
-        unsafe { self.consume_unchecked(amt) };
+        #[expect(deprecated)]
+        unsafe {
+            self.consume_unchecked(amt)
+        };
         Ok(())
     }
 
