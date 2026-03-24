@@ -14,7 +14,6 @@ use {
         TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::decode_into_slice_t,
-        context,
         error::{
             ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
             invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
@@ -23,9 +22,7 @@ use {
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{
-            SchemaRead, SchemaReadContext, SchemaWrite, size_of_elem_slice, write_elem_slice,
-        },
+        schema::{SchemaRead, SchemaWrite, size_of_elem_slice, write_elem_slice},
         tag_encoding::TagEncoding,
     },
     core::{
@@ -45,8 +42,9 @@ use {
 use {
     crate::{
         containers::{self},
+        context,
         error::WriteError,
-        schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
+        schema::{SchemaReadContext, size_of_elem_iter, write_elem_iter_prealloc_check},
     },
     alloc::{
         borrow::Cow,

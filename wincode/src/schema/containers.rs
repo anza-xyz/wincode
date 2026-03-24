@@ -62,10 +62,9 @@ use {
     crate::{
         TypeMeta,
         config::{ConfigCore, ZeroCopy},
-        context,
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
-        schema::{SchemaRead, SchemaReadContext, SchemaWrite},
+        schema::{SchemaRead, SchemaWrite},
     },
     core::{
         marker::PhantomData,
@@ -76,9 +75,11 @@ use {
 #[cfg(feature = "alloc")]
 use {
     crate::{
+        context,
         len::SeqLen,
         schema::{
-            size_of_elem_iter, size_of_elem_slice, write_elem_iter, write_elem_slice_prealloc_check,
+            SchemaReadContext, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
+            write_elem_slice_prealloc_check,
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
