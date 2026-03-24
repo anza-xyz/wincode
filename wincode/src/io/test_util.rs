@@ -18,18 +18,6 @@ impl<'a> NoBorrowReader<'a> {
 }
 
 impl Reader<'_> for NoBorrowReader<'_> {
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        self.inner.peek_array()
-    }
-
-    fn consume(&mut self, amt: usize) {
-        self.inner.consume(amt)
-    }
-
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        unsafe { self.inner.consume_unchecked(amt) }
-    }
-
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         self.inner.copy_into_slice(dst)
     }

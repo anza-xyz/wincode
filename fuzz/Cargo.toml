@@ -49,10 +49,10 @@ bench = false
 [patch.crates-io]
 wincode = { path = "../wincode" }
 wincode-derive = { path = "../wincode-derive" }
-solana-message = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-address = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-hash = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-instruction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-signature = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-transaction = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
-solana-transaction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "7ae7377dd4f3a141ae838203f67404c5a3a85159" }
+solana-message = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-address = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-hash = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-instruction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-signature = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-transaction = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
+solana-transaction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }

@@ -99,19 +99,6 @@ pub trait Reader<'a> {
         Self::BORROW_KINDS & kind.mask() != 0
     }
 
-    /// Return exactly `N` bytes as `&[u8; N]` without advancing.
-    ///
-    /// Errors if fewer than `N` bytes are available.
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]>;
-
-    /// Get the next byte without advancing.
-    ///
-    /// Errors if no bytes remain.
-    #[inline]
-    fn peek_byte(&mut self) -> ReadResult<u8> {
-        Ok(self.peek_array::<1>()?[0])
-    }
-
     /// Return exactly `N` bytes as `[u8; N]` and advance by `N`.
     ///
     /// Errors if fewer than `N` bytes are available.
@@ -183,27 +170,6 @@ pub trait Reader<'a> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         Err(ReadError::UnsupportedBorrow(BorrowKind::CallSite))
     }
-
-    /// Advance by exactly `amt` bytes without bounds checks.
-    ///
-    /// May panic if fewer than `amt` bytes remain.
-    ///
-    /// # Safety
-    ///
-    /// - `amt` must be less than or equal to the number of bytes remaining in the reader.
-    unsafe fn consume_unchecked(&mut self, amt: usize);
-
-    /// Advance the reader by `amt` bytes.
-    ///
-    /// This method must be safe for any `amt`.
-    /// If `amt` exceeds the bytes currently available or remaining, implementations
-    /// may handle the over-consumption in an implementation-defined way, such as
-    /// clamping to exhaustion or advancing according to the reader's underlying
-    /// model. Callers must not rely on a specific outcome in that case.
-    ///
-    /// Unlike [`Reader::consume_unchecked`], this method must not invoke undefined
-    /// behavior when `amt` exceeds the reader's available bytes.
-    fn consume(&mut self, amt: usize);
 
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
@@ -340,28 +306,8 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        unsafe { (*self).consume_unchecked(amt) }
-    }
-
-    #[inline(always)]
-    fn consume(&mut self, amt: usize) {
-        (*self).consume(amt)
-    }
-
-    #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
         unsafe { (*self).as_trusted_for(n_bytes) }
-    }
-
-    #[inline(always)]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        (*self).peek_array()
-    }
-
-    #[inline(always)]
-    fn peek_byte(&mut self) -> ReadResult<u8> {
-        (*self).peek_byte()
     }
 
     #[inline(always)]
