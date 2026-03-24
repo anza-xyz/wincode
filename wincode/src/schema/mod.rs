@@ -56,6 +56,7 @@ use {
 };
 
 pub mod containers;
+pub mod context;
 mod external;
 mod impls;
 pub mod int_encoding;
@@ -287,6 +288,51 @@ pub unsafe trait SchemaRead<'de, C: ConfigCore> {
         let mut value = MaybeUninit::uninit();
         Self::read(reader, &mut value)?;
         // SAFETY: `read` must properly initialize the `Self::Dst`.
+        Ok(unsafe { value.assume_init() })
+    }
+}
+
+/// Types that can be read (deserialized) from a [`Reader`] with an additional context parameter.
+///
+/// # Safety
+///
+/// Implementors must adhere to the Safety section of the associated constant
+/// `TYPE_META` (or leave it as the default) and the method `read`.
+pub unsafe trait SchemaReadContext<'de, C: ConfigCore, Ctx> {
+    type Dst;
+
+    /// Metadata about the type's serialization.
+    ///
+    /// # Safety
+    ///
+    /// It is always safe to leave this as the default `TypeMeta::Dynamic`. If
+    /// you set it to `TypeMeta::Static { size, zero_copy }`, you have to ensure
+    /// the following two points:
+    /// - `size` must always correspond to the number of bytes read by `read`.
+    /// - If `zero_copy` is `true`, `Dst`'s in-memory representation must
+    ///   correspond exactly to the serialized form, and all byte sequences must
+    ///   be valid in-memory representations of `Dst`.
+    const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+
+    /// Read into `dst` from `reader` with context.
+    ///
+    /// You must initialize `dst` if **and only if** you return `Ok(())`. In the
+    /// `Err(…)` case, initializing `dst` can lead to memory leaks.
+    ///
+    /// It is permissible to not initialize `dst` if `dst` is an inhabited
+    /// zero-sized type.
+    fn read_with_context(
+        ctx: Ctx,
+        reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()>;
+
+    /// Read `Self::Dst` from `reader` into a new `Self::Dst` with context.
+    #[inline(always)]
+    fn get_with_context(ctx: Ctx, reader: impl Reader<'de>) -> ReadResult<Self::Dst> {
+        let mut value = MaybeUninit::uninit();
+        Self::read_with_context(ctx, reader, &mut value)?;
+        // SAFETY: `read_with_context` must properly initialize the `Self::Dst`.
         Ok(unsafe { value.assume_init() })
     }
 }
@@ -527,7 +573,7 @@ mod tests {
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
-            net::{IpAddr, Ipv4Addr, Ipv6Addr},
+            net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
             num::{
                 NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                 NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
@@ -3624,6 +3670,50 @@ mod tests {
             let schema_deserialized: IpAddr = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(addr, bincode_deserialized);
             prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr_v4() {
+        proptest!(proptest_cfg(), |(addr: SocketAddrV4)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddrV4 = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddrV4 = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(addr, bincode_deserialized);
+            prop_assert_eq!(addr, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr_v6() {
+        // serde drops flowinfo and scope_id for SocketAddrV6, so we only verify
+        // byte compatibility and that both impls deserialize identically.
+        proptest!(proptest_cfg(), |(addr: SocketAddrV6)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddrV6 = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddrV6 = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
+        });
+    }
+
+    #[test]
+    fn test_socket_addr() {
+        // serde drops flowinfo and scope_id for SocketAddrV6 variants, so we only
+        // verify byte compatibility and that both impls deserialize identically.
+        proptest!(proptest_cfg(), |(addr: SocketAddr)| {
+            let bincode_serialized = bincode::serialize(&addr).unwrap();
+            let schema_serialized = serialize(&addr).unwrap();
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+
+            let bincode_deserialized: SocketAddr = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: SocketAddr = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(bincode_deserialized, schema_deserialized);
         });
     }
 
