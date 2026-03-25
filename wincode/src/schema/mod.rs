@@ -422,7 +422,7 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-pub(crate) fn size_of_elem_iter<'a, T, Len, C>(
+fn size_of_elem_iter<'a, T, Len, C>(
     value: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<usize>
 where
@@ -487,7 +487,7 @@ where
 
 #[inline(always)]
 #[cfg(feature = "alloc")]
-pub(crate) fn write_elem_iter_prealloc_check<'a, T, Len, C>(
+fn write_elem_iter_prealloc_check<'a, T, Len, C>(
     writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
