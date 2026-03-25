@@ -422,7 +422,7 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-fn size_of_elem_iter<'a, T, Len, C>(
+pub(crate) fn size_of_elem_iter<'a, T, Len, C>(
     value: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<usize>
 where
@@ -487,7 +487,7 @@ where
 
 #[inline(always)]
 #[cfg(feature = "alloc")]
-fn write_elem_iter_prealloc_check<'a, T, Len, C>(
+pub(crate) fn write_elem_iter_prealloc_check<'a, T, Len, C>(
     writer: impl Writer,
     src: impl ExactSizeIterator<Item = &'a T::Src>,
 ) -> WriteResult<()>
@@ -550,8 +550,6 @@ where
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
 
-    #[cfg(feature = "indexmap")]
-    use indexmap::{IndexMap, IndexSet};
     use {
         crate::{
             Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta, UninitBuilder,
@@ -573,7 +571,7 @@ mod tests {
             borrow::Cow,
             cell::Cell,
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
-            hash::{BuildHasher, Hasher, RandomState},
+            hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
             num::{
@@ -587,11 +585,6 @@ mod tests {
             time::{Duration, SystemTime, UNIX_EPOCH},
         },
     };
-
-    #[cfg(feature = "indexmap")]
-    type TestIndexMap<K, V> = IndexMap<K, V, RandomState>;
-    #[cfg(feature = "indexmap")]
-    type TestIndexSet<T> = IndexSet<T, RandomState>;
 
     #[cfg(target_endian = "little")]
     #[derive(
@@ -1032,32 +1025,6 @@ mod tests {
                 prop_assert_eq!(could_leak, deserialized);
             }
         });
-    }
-
-    #[cfg(feature = "indexmap")]
-    #[test]
-    fn test_index_map_insertion_order_roundtrip() {
-        let map: TestIndexMap<u8, u8> = IndexMap::from_iter([(3u8, 30u8), (1, 10), (2, 20)]);
-        let serialized = serialize(&map).unwrap();
-        let deserialized: TestIndexMap<u8, u8> = deserialize(&serialized).unwrap();
-        assert_eq!(
-            deserialized.keys().copied().collect::<Vec<_>>(),
-            vec![3, 1, 2]
-        );
-        assert_eq!(deserialized, map);
-    }
-
-    #[cfg(feature = "indexmap")]
-    #[test]
-    fn test_index_set_insertion_order_roundtrip() {
-        let set: TestIndexSet<u8> = IndexSet::from_iter([3u8, 1, 2]);
-        let serialized = serialize(&set).unwrap();
-        let deserialized: TestIndexSet<u8> = deserialize(&serialized).unwrap();
-        assert_eq!(
-            deserialized.iter().copied().collect::<Vec<_>>(),
-            vec![3, 1, 2]
-        );
-        assert_eq!(deserialized, set);
     }
 
     // Odd use case, but it's technically valid so we test it.
@@ -2675,58 +2642,6 @@ mod tests {
 
             let bincode_deserialized = bincode::deserialize(&bincode_serialized).unwrap();
             let schema_deserialized = deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&set, &bincode_deserialized);
-            prop_assert_eq!(set, schema_deserialized);
-        }
-
-        #[cfg(feature = "indexmap")]
-        #[test]
-        fn test_index_map_static(map in proptest::collection::vec((any::<u64>(), any::<StructStatic>()), 0..=100).prop_map(|entries| entries.into_iter().collect::<TestIndexMap<_, _>>())) {
-            let bincode_serialized = bincode::serialize(&map).unwrap();
-            let schema_serialized = serialize(&map).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: TestIndexMap<u64, StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: TestIndexMap<u64, StructStatic> = deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&map, &bincode_deserialized);
-            prop_assert_eq!(map, schema_deserialized);
-        }
-
-        #[cfg(feature = "indexmap")]
-        #[test]
-        fn test_index_map_non_static(map in proptest::collection::vec((any::<u64>(), any::<StructNonStatic>()), 0..=16).prop_map(|entries| entries.into_iter().collect::<TestIndexMap<_, _>>())) {
-            let bincode_serialized = bincode::serialize(&map).unwrap();
-            let schema_serialized = serialize(&map).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: TestIndexMap<u64, StructNonStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: TestIndexMap<u64, StructNonStatic> = deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&map, &bincode_deserialized);
-            prop_assert_eq!(map, schema_deserialized);
-        }
-
-        #[cfg(feature = "indexmap")]
-        #[test]
-        fn test_index_set_static(set in proptest::collection::vec(any::<StructStatic>(), 0..=100).prop_map(|entries| entries.into_iter().collect::<TestIndexSet<_>>())) {
-            let bincode_serialized = bincode::serialize(&set).unwrap();
-            let schema_serialized = serialize(&set).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: TestIndexSet<StructStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: TestIndexSet<StructStatic> = deserialize(&schema_serialized).unwrap();
-            prop_assert_eq!(&set, &bincode_deserialized);
-            prop_assert_eq!(set, schema_deserialized);
-        }
-
-        #[cfg(feature = "indexmap")]
-        #[test]
-        fn test_index_set_non_static(set in proptest::collection::vec(any::<StructNonStatic>(), 0..=16).prop_map(|entries| entries.into_iter().collect::<TestIndexSet<_>>())) {
-            let bincode_serialized = bincode::serialize(&set).unwrap();
-            let schema_serialized = serialize(&set).unwrap();
-            prop_assert_eq!(&bincode_serialized, &schema_serialized);
-
-            let bincode_deserialized: TestIndexSet<StructNonStatic> = bincode::deserialize(&bincode_serialized).unwrap();
-            let schema_deserialized: TestIndexSet<StructNonStatic> = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&set, &bincode_deserialized);
             prop_assert_eq!(set, schema_deserialized);
         }
