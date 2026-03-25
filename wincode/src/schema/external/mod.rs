@@ -1,3 +1,5 @@
+#[cfg(feature = "bv")]
+mod bv;
 #[cfg(feature = "bytes")]
 mod bytes;
 #[cfg(feature = "ecow")]
