@@ -1,20 +1,23 @@
 //! Blanket implementations for std types.
-#[cfg(feature = "alloc")]
-use crate::{context, schema::SchemaReadContext};
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
 #[cfg(feature = "std")]
-use core::hash::{BuildHasher, Hash};
-#[cfg(feature = "std")]
-use std::{
-    collections::{HashMap, HashSet},
-    time::{SystemTime, UNIX_EPOCH},
+use {
+    core::hash::{BuildHasher, Hash},
+    std::{
+        collections::{HashMap, HashSet},
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
 #[cfg(feature = "alloc")]
 use {
-    crate::containers::{self},
+    crate::{
+        containers::{self},
+        context,
+        schema::SchemaReadContext,
+    },
     alloc::{
         borrow::Cow,
         boxed::Box,
