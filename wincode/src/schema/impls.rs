@@ -1,8 +1,12 @@
 //! Blanket implementations for std types.
+#[cfg(feature = "alloc")]
+use crate::{context, schema::SchemaReadContext};
 #[cfg(all(feature = "alloc", not(feature = "std")))]
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
+#[cfg(feature = "std")]
+use core::hash::{BuildHasher, Hash};
 #[cfg(feature = "std")]
 use std::{
     collections::{HashMap, HashSet},
@@ -26,7 +30,6 @@ use {
         TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::decode_into_slice_t,
-        context,
         error::{
             ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
             invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
@@ -35,13 +38,10 @@ use {
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{
-            SchemaRead, SchemaReadContext, SchemaWrite, size_of_elem_slice, write_elem_slice,
-        },
+        schema::{SchemaRead, SchemaWrite, size_of_elem_slice, write_elem_slice},
         tag_encoding::TagEncoding,
     },
     core::{
-        hash::{BuildHasher, Hash},
         marker::PhantomData,
         mem::{MaybeUninit, transmute},
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
