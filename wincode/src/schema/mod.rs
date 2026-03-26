@@ -552,10 +552,10 @@ mod tests {
 
     use {
         crate::{
-            Deserialize, ReadResult, SchemaRead, SchemaWrite, Serialize, TypeMeta, UninitBuilder,
-            WriteResult, ZeroCopy,
-            config::{self, Config, Configuration, DefaultConfig},
-            containers, deserialize, deserialize_mut,
+            Deserialize, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite, Serialize,
+            TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
+            config::{self, Config, ConfigCore, Configuration, DefaultConfig},
+            containers, context, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen},
@@ -4538,6 +4538,64 @@ mod tests {
                 ::get(NoBorrowReader::new(&serialized)).unwrap();
             let bincode_deserialized: Cow<str> = bincode::deserialize_from(bincode_serialized.as_slice()).unwrap();
             prop_assert_eq!(&deserialized, &bincode_deserialized);
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
+    fn test_cow_ctx() {
+        #[derive(Debug, PartialEq)]
+        struct MaybeBorrowed<'a> {
+            len: u8,
+            data: Cow<'a, [u8]>,
+        }
+
+        unsafe impl<'a, C: ConfigCore> SchemaWrite<C> for MaybeBorrowed<'a> {
+            type Src = Self;
+
+            fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                Ok(1 + src.data.len())
+            }
+
+            fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+                writer.write(&[src.data.len() as u8])?;
+                writer.write(&src.data)?;
+                Ok(())
+            }
+        }
+
+        unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for MaybeBorrowed<'de> {
+            type Dst = Self;
+
+            fn read(
+                mut reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<Self::Dst>,
+            ) -> ReadResult<()> {
+                let len = reader.take_byte()?;
+                let cow = <Cow<'de, [u8]> as SchemaReadContext<C, _>>::get_with_context(
+                    context::Len(len as usize),
+                    reader,
+                )?;
+                dst.write(MaybeBorrowed { len, data: cow });
+                Ok(())
+            }
+        }
+
+        proptest!(proptest_cfg(), |(value in proptest::collection::vec(any::<u8>(), 0..=64))| {
+            let value = MaybeBorrowed {
+                len: value.len() as u8,
+                data: Cow::Owned(value),
+            };
+
+            let serialized = serialize(&value).unwrap();
+
+            let deserialized = <MaybeBorrowed as SchemaRead<DefaultConfig>>
+                ::get(NoBorrowReader::new(&serialized)).unwrap();
+            prop_assert!(matches!(deserialized.data, Cow::Owned(_)));
+            prop_assert_eq!(&value, &deserialized);
+
+            let deserialized: MaybeBorrowed = deserialize(&serialized).unwrap();
+            prop_assert!(matches!(deserialized.data, Cow::Borrowed(_)));
             prop_assert_eq!(value, deserialized);
         });
     }
