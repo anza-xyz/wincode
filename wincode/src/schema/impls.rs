@@ -3,12 +3,6 @@
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
-#[cfg(feature = "std")]
-use std::{
-    collections::{HashMap, HashSet},
-    hash::{BuildHasher, Hash},
-    time::{SystemTime, UNIX_EPOCH},
-};
 use {
     crate::{
         TypeMeta,
@@ -43,8 +37,7 @@ use {
     crate::{
         containers::{self},
         context,
-        error::WriteError,
-        schema::{SchemaReadContext, size_of_elem_iter, write_elem_iter_prealloc_check},
+        schema::SchemaReadContext,
     },
     alloc::{
         borrow::Cow,
@@ -55,6 +48,14 @@ use {
         vec::Vec,
     },
     core::mem,
+};
+#[cfg(feature = "std")]
+use {
+    core::hash::{BuildHasher, Hash},
+    std::{
+        collections::{HashMap, HashSet},
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
 
 macro_rules! impl_int_config_dependent {
@@ -1067,11 +1068,11 @@ macro_rules! impl_seq_kv {
      $target: ident<$key: ident : $($constraint:path)|*, $value: ident $(, $state:ident : $($state_constraint:path)|* )?>,
      $with_capacity: expr) => {
         #[cfg(feature = $feature)]
-        unsafe impl<C: Config, $key, $value $(, $state)?> SchemaWrite<C> for $target<$key, $value $(, $state)?>
+        unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key, $value $(, $state)?>
         where
-            $key: SchemaWrite<C>,
+            $key: $crate::schema::SchemaWrite<C>,
             $key::Src: Sized,
-            $value: SchemaWrite<C>,
+            $value: $crate::schema::SchemaWrite<C>,
             $value::Src: Sized
             $($(, $state: $state_constraint+)*)?
         {
@@ -1079,8 +1080,8 @@ macro_rules! impl_seq_kv {
 
             #[inline]
             #[allow(clippy::arithmetic_side_effects)]
-            fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
+                if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     return Ok(C::LengthEncoding::write_bytes_needed(src.len())? + (key_size + value_size) * src.len());
                 }
                 Ok(C::LengthEncoding::write_bytes_needed(src.len())? +
@@ -1089,7 +1090,7 @@ macro_rules! impl_seq_kv {
                         .try_fold(
                             0usize,
                             |acc, (k, v)|
-                            Ok::<_, WriteError>(
+                            Ok::<_, $crate::error::WriteError>(
                                 acc
                                 + $key::size_of(k)?
                                 + $value::size_of(v)?
@@ -1099,8 +1100,8 @@ macro_rules! impl_seq_kv {
             }
 
             #[inline]
-            fn write(mut writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-                if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+            fn write(mut writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
+                if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
                     let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key, $value)>(len)? + (key_size + value_size) * len;
@@ -1125,20 +1126,20 @@ macro_rules! impl_seq_kv {
         }
 
         #[cfg(feature = $feature)]
-        unsafe impl<'de, C: Config, $key, $value $(, $state)?> SchemaRead<'de, C> for $target<$key, $value $(, $state)?>
+        unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key, $value $(, $state)?>
         where
-            $key: SchemaRead<'de, C>,
-            $value: SchemaRead<'de, C>
+            $key: $crate::schema::SchemaRead<'de, C>,
+            $value: $crate::schema::SchemaRead<'de, C>
             $(,$key::Dst: $constraint+)*
             $($(, $state: $state_constraint+)* )?
         {
             type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
 
             #[inline]
-            fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader.by_ref())?;
 
-                let map = if let (TypeMeta::Static { size: key_size, .. }, TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
+                let map = if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     #[allow(clippy::arithmetic_side_effects)]
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
                     // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
@@ -1167,12 +1168,14 @@ macro_rules! impl_seq_kv {
     };
 }
 
+pub(crate) use impl_seq_kv;
+
 macro_rules! impl_seq_v {
     ($feature: literal,
      $target: ident <$key: ident : $($constraint:path)|* $(, $state:ident : $($state_constraint:path)|*)?>,
      $with_capacity: expr, $insert: ident) => {
         #[cfg(feature = $feature)]
-        unsafe impl<C: Config, $key: SchemaWrite<C> $(, $state)?> SchemaWrite<C> for $target<$key $(, $state)?>
+        unsafe impl<C: $crate::config::Config, $key: $crate::schema::SchemaWrite<C> $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key $(, $state)?>
         where
             $key::Src: Sized
             $($(, $state: $state_constraint+)* )?
@@ -1180,31 +1183,31 @@ macro_rules! impl_seq_v {
             type Src = $target<$key::Src $(, $state)?>;
 
             #[inline]
-            fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                size_of_elem_iter::<$key, C::LengthEncoding, C>(src.iter())
+            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
+                $crate::schema::size_of_elem_iter::<$key, C::LengthEncoding, C>(src.iter())
             }
 
             #[inline]
-            fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-                write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
+                $crate::schema::write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
             }
         }
 
         #[cfg(feature = $feature)]
-        unsafe impl<'de, C: Config, $key $(, $state)?> SchemaRead<'de, C> for $target<$key $(, $state)?>
+        unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key $(, $state)?>
         where
-            $key: SchemaRead<'de, C>
+            $key: $crate::schema::SchemaRead<'de, C>
             $(,$key::Dst: $constraint+)*
             $($(, $state: $state_constraint+)* )?
         {
             type Dst = $target<$key::Dst $(, $state)?>;
 
             #[inline]
-            fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader.by_ref())?;
 
                 let map = match $key::TYPE_META {
-                    TypeMeta::Static { size, .. } => {
+                    $crate::TypeMeta::Static { size, .. } => {
                         #[allow(clippy::arithmetic_side_effects)]
                         // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
@@ -1215,7 +1218,7 @@ macro_rules! impl_seq_v {
                         }
                         set
                     }
-                    TypeMeta::Dynamic => {
+                    $crate::TypeMeta::Dynamic => {
                         let mut set = $with_capacity(len $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
@@ -1230,6 +1233,8 @@ macro_rules! impl_seq_v {
         }
     };
 }
+
+pub(crate) use impl_seq_v;
 
 impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
 impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher }

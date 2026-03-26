@@ -25,6 +25,7 @@ bv = ["std", "dep:bv"]
 std = ["alloc", "thiserror/std"]
 solana-short-vec = ["dep:solana-short-vec"]
 derive = ["dep:wincode-derive"]
+indexmap = ["alloc", "dep:indexmap"]
 uuid = ["dep:uuid"]
 uuid-serde-compat = ["uuid"]
 bytes = ["alloc", "dep:bytes"]
@@ -35,6 +36,7 @@ ecow = ["alloc", "dep:ecow"]
 bytes = { version = "1.11.1", optional = true, default-features = false }
 bv = { version = "0.11.1", optional = true, default-features = false }
 ecow = { version = "0.2.6", optional = true, default-features = false }
+indexmap = { version = "2.13.0", optional = true, default-features = false }
 pastey = "0.2.1"
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
@@ -51,6 +53,7 @@ serde = { version = "1.0.227", features = ["derive", "rc"] }
 solana-short-vec = { version = "3.2.0" }
 criterion = { version = "0.7.0", features = ["html_reports"] }
 ecow = { version = "0.2.6", features = ["serde"], default-features = false }
+indexmap = { version = "2.13.0", features = ["serde"], default-features = false }
 uuid = { version = "1.20.0", features = ["serde"] }
 wincode = { path = ".", features = ["derive"] }
 
