@@ -3,31 +3,6 @@
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
-#[cfg(feature = "std")]
-use {
-    core::hash::{BuildHasher, Hash},
-    std::{
-        collections::{HashMap, HashSet},
-        time::{SystemTime, UNIX_EPOCH},
-    },
-};
-#[cfg(feature = "alloc")]
-use {
-    crate::{
-        containers::{self},
-        context,
-        schema::SchemaReadContext,
-    },
-    alloc::{
-        borrow::Cow,
-        boxed::Box,
-        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
-        rc::Rc,
-        string::String,
-        vec::Vec,
-    },
-    core::mem,
-};
 use {
     crate::{
         TypeMeta,
@@ -56,6 +31,31 @@ use {
         time::Duration,
     },
     pastey::paste,
+};
+#[cfg(feature = "alloc")]
+use {
+    crate::{
+        containers::{self},
+        context,
+        schema::SchemaReadContext,
+    },
+    alloc::{
+        borrow::Cow,
+        boxed::Box,
+        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+        rc::Rc,
+        string::String,
+        vec::Vec,
+    },
+    core::mem,
+};
+#[cfg(feature = "std")]
+use {
+    core::hash::{BuildHasher, Hash},
+    std::{
+        collections::{HashMap, HashSet},
+        time::{SystemTime, UNIX_EPOCH},
+    },
 };
 
 macro_rules! impl_int_config_dependent {
