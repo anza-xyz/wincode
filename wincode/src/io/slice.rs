@@ -110,25 +110,6 @@ impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.take_borrowed(len)
     }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        unsafe { advance_slice_unchecked(&mut self.buf, amt) };
-    }
-
-    #[inline]
-    fn consume(&mut self, amt: usize) {
-        // SAFETY: by constructing `SliceUnchecked`, caller guarantees
-        // they will read and consume within the bounds of the slice.
-        unsafe { self.consume_unchecked(amt) }
-    }
-
-    #[inline]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        // SAFETY: by constructing `SliceUnchecked`, caller guarantees
-        // they will read within the bounds of the slice.
-        unsafe { Ok(&*(self.buf.as_ptr().cast::<[u8; N]>())) }
-    }
 }
 
 /// Implementation of [`Reader`] and [`Writer`] over a slice that does not perform any bounds checks.
@@ -217,25 +198,6 @@ impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.take_borrowed(len)
     }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        unsafe { advance_slice_mut_unchecked(&mut self.buf, amt) };
-    }
-
-    #[inline]
-    fn consume(&mut self, amt: usize) {
-        // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
-        // they will read within the bounds of the slice.
-        unsafe { self.consume_unchecked(amt) }
-    }
-
-    #[inline]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
-        // they will read within the bounds of the slice.
-        unsafe { Ok(&*(self.buf.as_ptr().cast::<[u8; N]>())) }
-    }
 }
 
 /// Implementation of [`Reader`] over a slice that does not perform any bounds checks.
@@ -281,21 +243,6 @@ impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.inner.take_scoped(len)
     }
-
-    #[inline(always)]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        unsafe { self.inner.consume_unchecked(amt) }
-    }
-
-    #[inline(always)]
-    fn consume(&mut self, amt: usize) {
-        self.inner.consume(amt)
-    }
-
-    #[inline(always)]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        self.inner.peek_array()
-    }
 }
 
 impl<'a> Reader<'a> for &'a [u8] {
@@ -334,24 +281,6 @@ impl<'a> Reader<'a> for &'a [u8] {
         };
         *self = rest;
         Ok(*src)
-    }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        *self = unsafe { self.get_unchecked(amt..) };
-    }
-
-    #[inline]
-    fn consume(&mut self, amt: usize) {
-        *self = &self[amt.min(self.len())..];
-    }
-
-    #[inline]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        let Some(src) = self.first_chunk() else {
-            return Err(read_size_limit(N));
-        };
-        Ok(src)
     }
 
     #[inline(always)]
@@ -414,26 +343,6 @@ impl<'a> Reader<'a> for &'a mut [u8] {
         };
         *self = rest;
         Ok(*src)
-    }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        *self = unsafe { mem::take(self).get_unchecked_mut(amt..) };
-    }
-
-    #[inline]
-    fn consume(&mut self, amt: usize) {
-        let this = mem::take(self);
-        let len = this.len();
-        *self = &mut this[amt.min(len)..];
-    }
-
-    #[inline]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        let Some(src) = self.first_chunk() else {
-            return Err(read_size_limit(N));
-        };
-        Ok(src)
     }
 }
 
@@ -524,21 +433,6 @@ impl Writer for &mut [u8] {
 mod tests {
     #![allow(clippy::arithmetic_side_effects)]
     use {super::*, crate::proptest_config::proptest_cfg, alloc::vec::Vec, proptest::prelude::*};
-
-    #[test]
-    fn test_reader_peek_byte() {
-        let mut reader = b"hello" as &[u8];
-        assert!(matches!(reader.peek_byte(), Ok(b'h')));
-    }
-
-    #[test]
-    fn test_reader_peek_byte_empty() {
-        let mut reader = b"" as &[u8];
-        assert!(matches!(
-            reader.peek_byte(),
-            Err(ReadError::ReadSizeLimit(1))
-        ));
-    }
 
     /// Execute the given block with supported readers.
     macro_rules! with_readers {
@@ -658,14 +552,6 @@ mod tests {
                 let mut vec = Vec::with_capacity(bytes.len() + 1);
                 let dst = vec.spare_capacity_mut();
                 prop_assert!(matches!(reader.copy_into_slice(dst), Err(ReadError::ReadSizeLimit(x)) if x == bytes.len() + 1));
-            });
-        }
-
-        #[test]
-        fn test_reader_consume(bytes in any::<Vec<u8>>()) {
-            with_untrusted_readers!(&bytes, |reader| {
-                reader.consume(bytes.len());
-                prop_assert!(matches!(reader.peek_byte(), Err(ReadError::ReadSizeLimit(1))));
             });
         }
 

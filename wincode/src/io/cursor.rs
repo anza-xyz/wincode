@@ -120,13 +120,6 @@ impl<T> Cursor<T>
 where
     T: AsRef<[u8]>,
 {
-    /// Returns a slice of the remaining bytes in the cursor.
-    #[inline]
-    fn cur_slice(&self) -> &[u8] {
-        let slice = self.inner.as_ref();
-        &slice[self.pos.min(slice.len())..]
-    }
-
     /// Split the cursor at `len` and consume the left slice.
     #[inline(always)]
     fn advance_slice_checked(&mut self, len: usize) -> ReadResult<&[u8]> {
@@ -154,14 +147,6 @@ where
         Ok(())
     }
 
-    #[inline]
-    fn peek_array<const N: usize>(&mut self) -> ReadResult<&[u8; N]> {
-        let Some(src) = self.cur_slice().first_chunk::<N>() else {
-            return Err(read_size_limit(N));
-        };
-        Ok(src)
-    }
-
     #[inline(always)]
     fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
         let src = self.advance_slice_checked(N)?;
@@ -172,16 +157,6 @@ where
     #[inline]
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.advance_slice_checked(len)
-    }
-
-    #[inline]
-    unsafe fn consume_unchecked(&mut self, amt: usize) {
-        self.pos = unsafe { self.pos.unchecked_add(amt) };
-    }
-
-    #[inline]
-    fn consume(&mut self, amt: usize) {
-        self.pos = (self.pos.saturating_add(amt)).min(self.inner.as_ref().len());
     }
 
     #[inline(always)]
