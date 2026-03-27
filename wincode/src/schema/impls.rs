@@ -8,6 +8,7 @@ use {
         TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::decode_into_slice_t,
+        context,
         error::{
             ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
             invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
@@ -16,7 +17,9 @@ use {
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
-        schema::{SchemaRead, SchemaWrite, size_of_elem_slice, write_elem_slice},
+        schema::{
+            SchemaRead, SchemaReadContext, SchemaWrite, size_of_elem_slice, write_elem_slice,
+        },
         tag_encoding::TagEncoding,
     },
     core::{
@@ -36,8 +39,7 @@ use {
 use {
     crate::{
         containers::{self},
-        context,
-        schema::SchemaReadContext,
+        io::BorrowKind,
     },
     alloc::{
         borrow::Cow,
@@ -1520,9 +1522,32 @@ where
 
     const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T, C>();
 
+    #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = C::LengthEncoding::read(reader.by_ref())?;
+        <&[T]>::read_with_context(context::Len(len), reader, dst)?;
+        Ok(())
+    }
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaReadContext<'de, C, context::Len> for &'de [T]
+where
+    T: SchemaRead<'de, C> + ZeroCopy<C>,
+{
+    type Dst = &'de [T::Dst];
+
+    const TYPE_META: TypeMeta = zero_copy::type_meta_slice::<T, C>();
+
+    #[inline]
+    fn read_with_context(
+        context::Len(len): context::Len,
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
         let size = T::TYPE_META.size_assert_zero_copy();
-        let (len, total_size) = zero_copy::read_slice_len_checked::<C>(reader.by_ref(), size)?;
+        let Some(total_size) = len.checked_mul(size) else {
+            return Err(read_length_encoding_overflow("usize::MAX"));
+        };
         let bytes = reader.take_borrowed(total_size)?;
         // SAFETY:
         // - T::Dst is zero-copy (no invalid bit patterns, no layout requirements, no endianness checks, etc.).
@@ -2218,11 +2243,35 @@ where
 
     #[inline]
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        use crate::io::BorrowKind;
         let cow = if reader.supports_borrow(BorrowKind::Backing) {
             Cow::Borrowed(<&T as SchemaRead<C>>::get(reader)?)
         } else {
             Cow::Owned(<T::Owned as SchemaRead<C>>::get(reader)?)
+        };
+        dst.write(cow);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, T, C: ConfigCore> SchemaReadContext<'de, C, context::Len> for Cow<'de, [T]>
+where
+    [T]: ToOwned,
+    &'de [T]: SchemaReadContext<'de, C, context::Len, Dst = &'de [T]>,
+    <[T] as ToOwned>::Owned: SchemaReadContext<'de, C, context::Len, Dst = <[T] as ToOwned>::Owned>,
+{
+    type Dst = Self;
+
+    #[inline]
+    fn read_with_context(
+        ctx: context::Len,
+        reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let cow = if reader.supports_borrow(BorrowKind::Backing) {
+            Cow::Borrowed(<&[T]>::get_with_context(ctx, reader)?)
+        } else {
+            Cow::Owned(<<[T] as ToOwned>::Owned>::get_with_context(ctx, reader)?)
         };
         dst.write(cow);
         Ok(())
