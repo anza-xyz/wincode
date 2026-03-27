@@ -276,6 +276,11 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     const BORROW_KINDS: u8 = R::BORROW_KINDS;
 
     #[inline(always)]
+    fn supports_borrow(&self, kind: BorrowKind) -> bool {
+        (**self).supports_borrow(kind)
+    }
+
+    #[inline(always)]
     fn by_ref(&mut self) -> impl Reader<'a> {
         &mut **self
     }
