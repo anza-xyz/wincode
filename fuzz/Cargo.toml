@@ -12,7 +12,7 @@ bincode_1 = { package = "bincode", version = "1.3" }
 bincode_2 = { package = "bincode", version = "2.0", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
-uuid = { version = "1.20.0", features = ["serde"] }
+uuid = { version = "1.23.0", features = ["serde"] }
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
 wincode-derive = { path = "../wincode-derive" }
 
@@ -30,7 +30,7 @@ agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "e33a8
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
 wincode-derive = { path = "../wincode-derive" }
 serde = { version = "1.0", features = ["derive"] }
-uuid = { version = "1.20.0", features = ["serde"] }
+uuid = { version = "1.23.0", features = ["serde"] }
 
 [[bin]]
 name = "roundtrip"
