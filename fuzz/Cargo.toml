@@ -13,6 +13,8 @@ bincode_2 = { package = "bincode", version = "2.0", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
+# Solana crates in this target still derive against wincode 0.4.x.
+wincode_0_4 = { package = "wincode", version = "0.4", features = ["solana-short-vec"] }
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
 wincode-derive = { path = "../wincode-derive" }
 

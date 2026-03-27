@@ -25,14 +25,15 @@ use {
     },
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
+    wincode_0_4 as legacy_wincode,
 };
 
 macro_rules! fuzz_roundtrip {
     ($data:expr, $ty:ty) => {
-        if let Ok(value) = wincode::deserialize::<$ty>($data) {
-            let serialized = wincode::serialize(&value).expect("serialize should succeed");
-            let roundtrip: $ty =
-                wincode::deserialize(&serialized).expect("roundtrip deserialize should succeed");
+        if let Ok(value) = legacy_wincode::deserialize::<$ty>($data) {
+            let serialized = legacy_wincode::serialize(&value).expect("serialize should succeed");
+            let roundtrip: $ty = legacy_wincode::deserialize(&serialized)
+                .expect("roundtrip deserialize should succeed");
             assert_eq!(value, roundtrip, "roundtrip failed for {}", stringify!($ty));
         }
     };
