@@ -4,7 +4,7 @@ use {
     crate::{
         SchemaReadOwned,
         config::{self, DefaultConfig},
-        error::{ReadError, ReadResult, WriteResult},
+        error::{ReadResult, WriteResult},
         io::{Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
@@ -157,18 +157,27 @@ where
     T::deserialize(src)
 }
 
-#[inline]
+/// Deserialize a type from the given bytes and reject trailing bytes.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "alloc")] {
+/// let bytes = wincode::serialize(&123u64).unwrap();
+/// let value: u64 = wincode::deserialize_exact(&bytes).unwrap();
+/// assert_eq!(value, 123);
+///
+/// let mut extra = bytes.clone();
+/// extra.push(0xAA);
+/// assert!(wincode::deserialize_exact::<u64>(&extra).is_err());
+/// # }
+/// ```
+#[inline(always)]
 pub fn deserialize_exact<'de, T>(src: &'de [u8]) -> ReadResult<T>
 where
     T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
-    let mut reader = src;
-    let value = <T as SchemaRead<'de, DefaultConfig>>::get(Reader::by_ref(&mut reader))?;
-    if reader.is_empty() {
-        Ok(value)
-    } else {
-        Err(ReadError::TrailingBytes)
-    }
+    config::deserialize_exact(src, DefaultConfig::default())
 }
 
 /// Deserialize a type from the given bytes, with the ability
