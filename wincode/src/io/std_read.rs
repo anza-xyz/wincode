@@ -1,6 +1,6 @@
 use {
-    crate::io::{ReadResult, Reader, read_size_limit},
-    core::mem::{MaybeUninit, transmute},
+    crate::io::{read_size_limit, ReadResult, Reader},
+    core::mem::{transmute, MaybeUninit},
     std::io::{self, BufReader, Read},
 };
 

@@ -1,6 +1,6 @@
 use {
-    crate::common::{SchemaArgs, StructRepr, get_crate_name},
-    darling::{Error, Result, ast::Data},
+    crate::common::{get_crate_name, SchemaArgs, StructRepr},
+    darling::{ast::Data, Error, Result},
     proc_macro2::TokenStream,
     quote::quote,
     std::borrow::Cow,

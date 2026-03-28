@@ -1,9 +1,9 @@
 use {
-    crate::common::{SchemaArgs, TypeExt, get_crate_name, get_src_dst_fully_qualified},
-    darling::{Error, FromDeriveInput, Result, ast::Data},
+    crate::common::{get_crate_name, get_src_dst_fully_qualified, SchemaArgs, TypeExt},
+    darling::{ast::Data, Error, FromDeriveInput, Result},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
-    syn::{DeriveInput, GenericParam, LitInt, Path, Type, parse_quote},
+    syn::{parse_quote, DeriveInput, GenericParam, LitInt, Path, Type},
 };
 
 pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Result<TokenStream> {

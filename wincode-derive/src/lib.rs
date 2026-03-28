@@ -5,7 +5,7 @@
 //! Refer to the [`wincode`](https://docs.rs/wincode) crate for examples.
 use {
     proc_macro::TokenStream,
-    syn::{DeriveInput, parse_macro_input},
+    syn::{parse_macro_input, DeriveInput},
 };
 
 mod assert_zero_copy;

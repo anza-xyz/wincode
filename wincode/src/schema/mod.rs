@@ -552,16 +552,15 @@ mod tests {
 
     use {
         crate::{
-            Deserialize, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite, Serialize,
-            TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_mut,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer, test_util::NoBorrowReader},
+            io::{test_util::NoBorrowReader, Reader, Writer},
             len::{BincodeLen, FixIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
-            serialize,
+            serialize, Deserialize, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite,
+            Serialize, TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
         },
         bincode::Options,
         core::{marker::PhantomData, ptr},
@@ -575,8 +574,8 @@ mod tests {
             mem::MaybeUninit,
             net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
             num::{
-                NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
-                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+                NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize,
+                NonZeroU128, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
             },
             ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
@@ -4550,7 +4549,7 @@ mod tests {
             data: Cow<'a, [u8]>,
         }
 
-        unsafe impl<'a, C: ConfigCore> SchemaWrite<C> for MaybeBorrowed<'a> {
+        unsafe impl<C: ConfigCore> SchemaWrite<C> for MaybeBorrowed<'_> {
             type Src = Self;
 
             fn size_of(src: &Self::Src) -> WriteResult<usize> {

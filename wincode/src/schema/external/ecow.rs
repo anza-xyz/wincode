@@ -1,10 +1,10 @@
 use {
     crate::{
-        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
         error::invalid_utf8_encoding,
         io::{BorrowKind, Reader, Writer},
         len::SeqLen,
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
     },
     alloc::vec::Vec,
     core::{mem::MaybeUninit, str},
