@@ -124,6 +124,11 @@ pub const fn invalid_value(msg: &'static str) -> ReadError {
     ReadError::InvalidValue(msg)
 }
 
+#[cold]
+pub const fn trailing_bytes() -> ReadError {
+    ReadError::TrailingBytes
+}
+
 impl From<PreallocationError> for ReadError {
     fn from(PreallocationError { needed, limit }: PreallocationError) -> ReadError {
         ReadError::PreallocationSizeLimit { needed, limit }
