@@ -1,7 +1,7 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
     core::{
-        mem::{self, MaybeUninit, transmute},
+        mem::{self, transmute, MaybeUninit},
         ptr,
         slice::{from_raw_parts, from_raw_parts_mut},
     },

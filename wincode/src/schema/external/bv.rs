@@ -1,10 +1,10 @@
 use {
     crate::{
-        ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
         config::Config,
         error::invalid_tag_encoding,
         io::{Reader, Writer},
         len::SeqLen,
+        ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
     },
     bv::{BitVec, Bits, BlockType},
     core::mem::MaybeUninit,

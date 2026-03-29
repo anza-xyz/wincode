@@ -55,7 +55,7 @@ impl<W: Write + ?Sized> Writer for BufWriter<W> {
 mod tests {
     use {
         super::*,
-        crate::serde::{Serialize, serialize},
+        crate::serde::{serialize, Serialize},
     };
 
     const MAGIC: u64 = 0xdeadbeef_cafebabe;

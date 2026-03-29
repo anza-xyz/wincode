@@ -5,30 +5,30 @@ use alloc::borrow::ToOwned;
 use alloc::sync::Arc;
 use {
     crate::{
-        TypeMeta,
         config::{Config, ConfigCore, ZeroCopy},
         containers::decode_into_slice_t,
         context,
         error::{
-            ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
-            invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
-            read_length_encoding_overflow, unaligned_pointer_read,
+            invalid_bool_encoding, invalid_char_lead, invalid_tag_encoding, invalid_utf8_encoding,
+            invalid_value, pointer_sized_decode_error, read_length_encoding_overflow,
+            unaligned_pointer_read, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian, IntEncoding, PlatformEndian},
         io::{Reader, Writer},
         len::SeqLen,
         schema::{
-            SchemaRead, SchemaReadContext, SchemaWrite, size_of_elem_slice, write_elem_slice,
+            size_of_elem_slice, write_elem_slice, SchemaRead, SchemaReadContext, SchemaWrite,
         },
         tag_encoding::TagEncoding,
+        TypeMeta,
     },
     core::{
         marker::PhantomData,
-        mem::{MaybeUninit, transmute},
+        mem::{transmute, MaybeUninit},
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
         num::{
-            NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
-            NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+            NonZeroI128, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI8, NonZeroIsize, NonZeroU128,
+            NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU8, NonZeroUsize,
         },
         ops::{Bound, Range, RangeInclusive},
         time::Duration,
@@ -374,7 +374,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 if (b1 & 0xC0) != 0x80 {
                     return Err(utf8_error(&[b0, b1]));
                 }
-                ((b0 & 0x1F) as u32) << 6 | ((b1 & 0x3F) as u32)
+                (((b0 & 0x1F) as u32) << 6) | ((b1 & 0x3F) as u32)
             }
             0xE0..=0xEF => {
                 let [b1, b2] = reader.take_array()?;
@@ -385,7 +385,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 if (b0 == 0xE0 && b1 < 0xA0) || (b0 == 0xED && b1 >= 0xA0) {
                     return Err(utf8_error(&[b0, b1, b2]));
                 }
-                ((b0 & 0x0F) as u32) << 12 | ((b1 & 0x3F) as u32) << 6 | ((b2 & 0x3F) as u32)
+                (((b0 & 0x0F) as u32) << 12) | (((b1 & 0x3F) as u32) << 6) | ((b2 & 0x3F) as u32)
             }
             0xF0..=0xF4 => {
                 let [b1, b2, b3] = reader.take_array()?;
@@ -395,9 +395,7 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for char {
                 if (b0 == 0xF0 && b1 < 0x90) || (b0 == 0xF4 && b1 > 0x8F) {
                     return Err(utf8_error(&[b0, b1, b2, b3]));
                 }
-                ((b0 & 0x07) as u32) << 18
-                    | ((b1 & 0x3F) as u32) << 12
-                    | ((b2 & 0x3F) as u32) << 6
+                (((b0 & 0x07) as u32) << 18) | (((b1 & 0x3F) as u32) << 12) | (((b2 & 0x3F) as u32) << 6)
                     | ((b3 & 0x3F) as u32)
             }
             _ => return Err(invalid_char_lead(b0)),

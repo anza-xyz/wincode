@@ -1,14 +1,14 @@
 //! Support for heterogenous sequence length encoding.
 use {
     crate::{
-        SchemaRead, SchemaWrite, TypeMeta,
         config::{ConfigCore, PREALLOCATION_SIZE_LIMIT_DISABLED},
         error::{
-            PreallocationError, ReadResult, WriteResult, pointer_sized_decode_error,
-            preallocation_size_limit, write_length_encoding_overflow,
+            pointer_sized_decode_error, preallocation_size_limit, write_length_encoding_overflow,
+            PreallocationError, ReadResult, WriteResult,
         },
         int_encoding::{ByteOrder, Endian},
         io::{Reader, Writer},
+        SchemaRead, SchemaWrite, TypeMeta,
     },
     core::{any::type_name, marker::PhantomData},
 };
@@ -386,8 +386,8 @@ pub mod short_vec {
     use {
         super::*,
         crate::{
+            error::{write_length_encoding_overflow, ReadError},
             SchemaReadContext,
-            error::{ReadError, write_length_encoding_overflow},
         },
         core::mem::MaybeUninit,
     };

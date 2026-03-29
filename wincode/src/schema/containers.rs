@@ -59,7 +59,7 @@
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
-    crate::{TypeMeta, config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead},
+    crate::{config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead, TypeMeta},
     core::{
         mem::{self, MaybeUninit},
         ptr,
@@ -73,8 +73,8 @@ use {
         io::Writer,
         len::SeqLen,
         schema::{
-            SchemaReadContext, SchemaWrite, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
-            write_elem_slice_prealloc_check,
+            size_of_elem_iter, size_of_elem_slice, write_elem_iter,
+            write_elem_slice_prealloc_check, SchemaReadContext, SchemaWrite,
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
