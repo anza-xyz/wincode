@@ -37,10 +37,7 @@ use {
 };
 #[cfg(feature = "alloc")]
 use {
-    crate::{
-        containers::{self},
-        io::BorrowKind,
-    },
+    crate::{containers, io::BorrowKind},
     alloc::{
         borrow::Cow,
         boxed::Box,
@@ -1032,6 +1029,19 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for &'de str {
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read(reader.by_ref())?;
+        <&'de str as SchemaReadContext<C, _>>::read_with_context(context::Len(len), reader, dst)
+    }
+}
+
+unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, context::Len> for &'de str {
+    type Dst = &'de str;
+
+    #[inline]
+    fn read_with_context(
+        context::Len(len): context::Len,
+        mut reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
         let bytes = reader.take_borrowed(len)?;
         match core::str::from_utf8(bytes) {
             Ok(s) => {
@@ -1048,8 +1058,23 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for String {
     type Dst = String;
 
     #[inline]
-    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let bytes = <Vec<u8> as SchemaRead<C>>::get(reader)?;
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = C::LengthEncoding::read_prealloc_check::<u8>(reader.by_ref())?;
+        <String as SchemaReadContext<C, _>>::read_with_context(context::Len(len), reader, dst)
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
+    type Dst = String;
+
+    #[inline]
+    fn read_with_context(
+        ctx: context::Len,
+        reader: impl Reader<'de>,
+        dst: &mut MaybeUninit<Self::Dst>,
+    ) -> ReadResult<()> {
+        let bytes = <Vec<u8> as SchemaReadContext<C, _>>::get_with_context(ctx, reader)?;
         match String::from_utf8(bytes) {
             Ok(s) => {
                 dst.write(s);
