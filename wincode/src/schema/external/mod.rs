@@ -6,5 +6,7 @@ mod bytes;
 mod ecow;
 #[cfg(feature = "indexmap")]
 mod indexmap;
+#[cfg(feature = "smallvec")]
+mod smallvec;
 #[cfg(feature = "uuid")]
 mod uuid;
