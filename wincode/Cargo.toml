@@ -31,6 +31,7 @@ uuid-serde-compat = ["uuid"]
 bytes = ["alloc", "dep:bytes"]
 bytes-extra-platforms = ["bytes", "bytes/extra-platforms"]
 ecow = ["alloc", "dep:ecow"]
+smallvec = ["alloc", "dep:smallvec"]
 
 [dependencies]
 bytes = { version = "1.11.1", optional = true, default-features = false }
@@ -38,6 +39,7 @@ bv = { version = "0.11.1", optional = true, default-features = false }
 ecow = { version = "0.2.6", optional = true, default-features = false }
 indexmap = { version = "2.13.0", optional = true, default-features = false }
 pastey = "0.2.1"
+smallvec = { version = "1.15.1", optional = true, default-features = false, features = ["const_generics"] }
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
 wincode-derive = { path = "../wincode-derive", version = "0.4.3", optional = true }
@@ -54,6 +56,7 @@ solana-short-vec = { version = "3.2.0" }
 criterion = { version = "0.7.0", features = ["html_reports"] }
 ecow = { version = "0.2.6", features = ["serde"], default-features = false }
 indexmap = { version = "2.13.0", features = ["serde"], default-features = false }
+smallvec = { version = "1.15.1", features = ["const_generics", "serde"], default-features = false }
 uuid = { version = "1.23.0", features = ["serde"] }
 wincode = { path = ".", features = ["derive"] }
 
