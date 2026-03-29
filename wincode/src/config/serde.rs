@@ -5,7 +5,7 @@ use {
     crate::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         config::{Config, ConfigCore},
-        error::trailing_bytes,
+        error,
         io::{Reader, Writer},
     },
     core::mem::MaybeUninit,
@@ -181,7 +181,7 @@ where
     if reader.is_empty() {
         Ok(value)
     } else {
-        Err(trailing_bytes())
+        Err(error::trailing_bytes())
     }
 }
 
