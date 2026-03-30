@@ -443,7 +443,7 @@ where
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
 /// Variant of [`size_of_elem_iter`] specialized for slices.
-fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
+pub(crate) fn size_of_elem_slice<T, Len, C>(value: &[T::Src]) -> WriteResult<usize>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
@@ -532,7 +532,7 @@ where
 
 #[inline(always)]
 #[cfg(feature = "alloc")]
-fn write_elem_slice_prealloc_check<T, Len, C>(
+pub(crate) fn write_elem_slice_prealloc_check<T, Len, C>(
     writer: impl Writer,
     src: &[T::Src],
 ) -> WriteResult<()>

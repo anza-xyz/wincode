@@ -1,89 +1,50 @@
 use {
     crate::{
-        SchemaRead, SchemaWrite, TypeMeta,
+        ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
+        containers::decode_into_slice_t,
         io::{Reader, Writer},
         len::SeqLen,
+        schema::{size_of_elem_slice, write_elem_slice_prealloc_check},
     },
-    core::mem::MaybeUninit,
+    core::{mem::MaybeUninit, slice::from_raw_parts_mut},
     smallvec::SmallVec,
 };
 
-unsafe impl<T, U, const N: usize, C: Config> SchemaWrite<C> for SmallVec<[T; N]>
+unsafe impl<T, const N: usize, C: Config> SchemaWrite<C> for SmallVec<[T; N]>
 where
-    T: SchemaWrite<C, Src = U>,
-    U: Sized,
+    T: SchemaWrite<C>,
+    T::Src: Sized,
 {
-    type Src = SmallVec<[U; N]>;
+    type Src = SmallVec<[T::Src; N]>;
 
     #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
-    fn size_of(src: &Self::Src) -> crate::error::WriteResult<usize> {
-        if let TypeMeta::Static { size, .. } = T::TYPE_META {
-            return Ok(C::LengthEncoding::write_bytes_needed(src.len())? + size * src.len());
-        }
-        Ok(C::LengthEncoding::write_bytes_needed(src.len())?
-            + src
-                .iter()
-                .map(T::size_of)
-                .try_fold(0usize, |acc, item| item.map(|size| acc + size))?)
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        size_of_elem_slice::<T, C::LengthEncoding, C>(src)
     }
 
     #[inline]
-    fn write(
-        mut writer: impl crate::io::Writer,
-        src: &Self::Src,
-    ) -> crate::error::WriteResult<()> {
-        C::LengthEncoding::prealloc_check::<T>(src.len())?;
-        if let TypeMeta::Static { size, .. } = T::TYPE_META {
-            let len = src.len();
-            #[allow(clippy::arithmetic_side_effects)]
-            let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<T>(len)?
-                + size * len;
-            // SAFETY: `T::TYPE_META` specifies a static size, so `len` writes of `T::Src`
-            // and `LengthEncoding::write` will write `needed` bytes.
-            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-            C::LengthEncoding::write(writer.by_ref(), len)?;
-            for item in src.iter() {
-                T::write(writer.by_ref(), item)?;
-            }
-            writer.finish()?;
-            return Ok(());
-        }
-        C::LengthEncoding::write(writer.by_ref(), src.len())?;
-        for item in src.iter() {
-            T::write(writer.by_ref(), item)?;
-        }
-        Ok(())
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        write_elem_slice_prealloc_check::<T, C::LengthEncoding, C>(writer, src)
     }
 }
 
-unsafe impl<'de, T, U, const N: usize, C: Config> SchemaRead<'de, C> for SmallVec<[T; N]>
+unsafe impl<'de, T, const N: usize, C: Config> SchemaRead<'de, C> for SmallVec<[T; N]>
 where
-    T: SchemaRead<'de, C, Dst = U>,
+    T: SchemaRead<'de, C>,
 {
-    type Dst = SmallVec<[U; N]>;
+    type Dst = SmallVec<[T::Dst; N]>;
 
     #[inline]
-    fn read(
-        mut reader: impl crate::io::Reader<'de>,
-        dst: &mut MaybeUninit<Self::Dst>,
-    ) -> crate::error::ReadResult<()> {
-        let len = C::LengthEncoding::read_prealloc_check::<U>(reader.by_ref())?;
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let len = C::LengthEncoding::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut values = SmallVec::with_capacity(len);
-        if let TypeMeta::Static { size, .. } = T::TYPE_META {
-            #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-            // fully consume the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-            for _ in 0..len {
-                values.push(T::get(reader.by_ref())?);
-            }
-        } else {
-            for _ in 0..len {
-                values.push(T::get(reader.by_ref())?);
-            }
-        }
+        // SAFETY: `values` has capacity for `len` elements and `decode_into_slice_t`
+        let ptr: *mut T::Dst = values.as_mut_ptr();
+        let slice = unsafe { from_raw_parts_mut(ptr.cast::<MaybeUninit<T::Dst>>(), len) };
+        decode_into_slice_t::<T, C>(reader, slice)?;
+        // SAFETY: `decode_into_slice_t` initialized all `len` elements on success.
+        unsafe { values.set_len(len) };
         dst.write(values);
         Ok(())
     }
