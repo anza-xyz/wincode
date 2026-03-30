@@ -5,6 +5,7 @@ use {
     crate::{
         ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
         config::{Config, ConfigCore},
+        error,
         io::{Reader, Writer},
     },
     core::mem::MaybeUninit,
@@ -151,6 +152,37 @@ where
     T: SchemaRead<'de, C, Dst = T>,
 {
     T::deserialize(src, config)
+}
+
+/// Like [`crate::deserialize_exact`], but with a custom configuration.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "alloc")] {
+/// # use wincode::config::Configuration;
+/// let config = Configuration::default();
+/// let bytes = wincode::config::serialize(&123u64, config).unwrap();
+/// let value: u64 = wincode::config::deserialize_exact(&bytes, config).unwrap();
+/// assert_eq!(value, 123);
+///
+/// let mut extra = bytes.clone();
+/// extra.push(0xAA);
+/// assert!(wincode::config::deserialize_exact::<u64, _>(&extra, config).is_err());
+/// # }
+/// ```
+#[inline(always)]
+#[expect(unused_variables)]
+pub fn deserialize_exact<'de, T, C: Config>(mut src: &'de [u8], config: C) -> ReadResult<T>
+where
+    T: SchemaRead<'de, C, Dst = T>,
+{
+    let value = T::get(src.by_ref())?;
+    if src.is_empty() {
+        Ok(value)
+    } else {
+        Err(error::trailing_bytes())
+    }
 }
 
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
