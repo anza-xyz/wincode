@@ -172,13 +172,13 @@ where
 /// # }
 /// ```
 #[inline(always)]
-pub fn deserialize_exact<'de, T, C: Config>(src: &'de [u8], _config: C) -> ReadResult<T>
+#[expect(unused_variables)]
+pub fn deserialize_exact<'de, T, C: Config>(mut src: &'de [u8], config: C) -> ReadResult<T>
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    let mut reader = src;
-    let value = <T as SchemaRead<'de, C>>::get(reader.by_ref())?;
-    if reader.is_empty() {
+    let value = T::get(src.by_ref())?;
+    if src.is_empty() {
         Ok(value)
     } else {
         Err(error::trailing_bytes())
