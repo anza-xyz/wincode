@@ -157,6 +157,29 @@ where
     T::deserialize(src)
 }
 
+/// Deserialize a type from the given bytes and reject trailing bytes.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "alloc")] {
+/// let bytes = wincode::serialize(&123u64).unwrap();
+/// let value: u64 = wincode::deserialize_exact(&bytes).unwrap();
+/// assert_eq!(value, 123);
+///
+/// let mut extra = bytes.clone();
+/// extra.push(0xAA);
+/// assert!(wincode::deserialize_exact::<u64>(&extra).is_err());
+/// # }
+/// ```
+#[inline(always)]
+pub fn deserialize_exact<'de, T>(src: &'de [u8]) -> ReadResult<T>
+where
+    T: SchemaRead<'de, DefaultConfig, Dst = T>,
+{
+    config::deserialize_exact(src, DefaultConfig::default())
+}
+
 /// Deserialize a type from the given bytes, with the ability
 /// to form mutable references for types that are [`ZeroCopy`](crate::ZeroCopy).
 /// This can allow mutating the serialized data in place.

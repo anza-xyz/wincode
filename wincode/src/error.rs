@@ -53,6 +53,8 @@ pub enum ReadError {
     InvalidValue(&'static str),
     #[error("Invalid char lead: {0}")]
     InvalidCharLead(u8),
+    #[error("Trailing bytes remain after deserialization")]
+    TrailingBytes,
     #[error("Custom error: {0}")]
     Custom(&'static str),
     #[error("Zero-copy read would be unaligned")]
@@ -120,6 +122,11 @@ pub const fn invalid_char_lead(val: u8) -> ReadError {
 #[cold]
 pub const fn invalid_value(msg: &'static str) -> ReadError {
     ReadError::InvalidValue(msg)
+}
+
+#[cold]
+pub const fn trailing_bytes() -> ReadError {
+    ReadError::TrailingBytes
 }
 
 impl From<PreallocationError> for ReadError {
