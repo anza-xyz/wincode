@@ -39,8 +39,9 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<T::Dst>(reader.by_ref())?;
         let mut values = SmallVec::with_capacity(len);
-        // SAFETY: `values` has capacity for `len` elements and `decode_into_slice_t`
         let ptr: *mut T::Dst = values.as_mut_ptr();
+        // SAFETY: `values` has capacity for `len` elements and `decode_into_slice_t`
+        // initializes all elements on success.
         let slice = unsafe { from_raw_parts_mut(ptr.cast::<MaybeUninit<T::Dst>>(), len) };
         decode_into_slice_t::<T, C>(reader, slice)?;
         // SAFETY: `decode_into_slice_t` initialized all `len` elements on success.
