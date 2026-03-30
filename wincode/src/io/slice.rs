@@ -449,6 +449,11 @@ mod tests {
                 let mut $reader = Cursor::new($bytes);
                 $body
             }
+            #[cfg(feature = "std")]
+            {
+                let mut $reader = std::io::Cursor::new($bytes);
+                $body
+            }
         }};
     }
 
@@ -461,6 +466,11 @@ mod tests {
             }
             {
                 let mut $reader = Cursor::new($bytes);
+                $body
+            }
+            #[cfg(feature = "std")]
+            {
+                let mut $reader = std::io::Cursor::new($bytes);
                 $body
             }
         }};
