@@ -381,6 +381,7 @@
 //! |Attribute|Type|Default|Description
 //! |---|---|---|---|
 //! |`with`|`Type`|`None`|Overrides the default `SchemaRead` or `SchemaWrite` implementation for the field.|
+//! |`config`|`Type`|`None`|Overrides the config type used by `SchemaRead` and `SchemaWrite` for the field.|
 //! |`skip`|`bool`\|`Expr`|`false`|Skips the field during serialization and deserialization (initializing with default value).|
 //!
 //! ### `skip`

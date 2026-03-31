@@ -42,6 +42,7 @@ fn impl_struct(
         .map(|(i, field)| {
             let ident = field.struct_member_ident(i);
             let target = field.target_resolved().with_lifetime("de");
+            let config = field.config_resolved();
             let hint = if field.with.is_some() {
                 // Fields annotated with `with` may need help determining the pointer cast.
                 //
@@ -70,7 +71,7 @@ fn impl_struct(
                 }
             } else {
                 quote! {
-                    <#target as SchemaRead<'de, WincodeConfig>>::read(
+                    <#target as SchemaRead<'de, #config>>::read(
                         reader.by_ref(),
                         unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
                     )?;
@@ -191,6 +192,7 @@ fn impl_enum(
                 let read = fields.enum_members_iter(None)
                     .map(|(field, ident)| {
                         let target = field.target_resolved().with_lifetime("de");
+                        let config = field.config_resolved();
 
                         // Unfortunately we can't avoid temporaries for arbitrary enums, as Rust does not provide
                         // facilities for placement initialization on enums.
@@ -204,7 +206,7 @@ fn impl_enum(
                             quote! { let #ident = #val; }
                         } else {
                             quote! {
-                                let #ident = <#target as SchemaRead<'de, WincodeConfig>>::get(reader.by_ref())?;
+                                let #ident = <#target as SchemaRead<'de, #config>>::get(reader.by_ref())?;
                             }
                         };
                         construct_idents.push(ident);
@@ -215,7 +217,8 @@ fn impl_enum(
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
                 let static_targets = fields.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
-                    quote! {<#target as SchemaRead<'de, WincodeConfig>>::TYPE_META}
+                    let config = field.config_resolved();
+                    quote! {<#target as SchemaRead<'de, #config>>::TYPE_META}
                 });
 
                 let constructor = if style.is_struct() {
@@ -317,53 +320,65 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
     for param in generics.type_params() {
         let ident = &param.ident;
-        let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ident>));
+        let mut push_field_param_predicate = |field: &Field| {
+            if field.skip.is_some() || !field.target_resolved().mentions_type_param(ident) {
+                return;
+            }
+            let config = field.config_resolved();
+            let mut bounds = Punctuated::new();
+            bounds.push(parse_quote!(SchemaRead<'de, #config, Dst = #ident>));
 
-        predicates.push(WherePredicate::Type(PredicateType {
-            lifetimes: None,
-            bounded_ty: parse_quote!(#ident),
-            colon_token: parse_quote![:],
-            bounds,
-        }));
+            predicates.push(WherePredicate::Type(PredicateType {
+                lifetimes: None,
+                bounded_ty: parse_quote!(#ident),
+                colon_token: parse_quote![:],
+                bounds,
+            }));
+        };
+
+        match data {
+            Data::Struct(fields) => {
+                for field in fields.iter() {
+                    push_field_param_predicate(field);
+                }
+            }
+            Data::Enum(variants) => {
+                for variant in variants {
+                    for field in variant.fields.iter() {
+                        push_field_param_predicate(field);
+                    }
+                }
+            }
+        }
     }
 
-    /// Append an additional constraint to the where clause such that
-    /// `SchemaRead<'de, WincodeConfig>` is implemented for the given
-    /// field's type.
-    ///
-    /// This constraint is only necessary for fields whose types contain lifetimes.
-    /// In particular, for an arbitrary `T`, `SchemaRead<Config>` is _only_
-    /// implemented for `&T` where `T` is `ZeroCopy<Config>`. In other words, because
-    /// there is no blanket implementation for `SchemaRead<Config>` on `&T`, we must
-    /// add constraints to the where clause such that `&T` satisfies `SchemaRead<Config>`
-    /// or the derived implementation will not type-check.
-    fn constrain_reference_type(
-        field: &Field,
-        predicates: &mut Punctuated<WherePredicate, Token![,]>,
-    ) {
+    let mut constrain_lifetime_field = |field: &Field| {
+        if field.skip.is_some() || field.ty.lifetimes().is_empty() {
+            return;
+        }
         let ty = &field.ty.with_lifetime("de");
         let target = field.target_resolved().with_lifetime("de");
+        let config = field.config_resolved();
         let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(SchemaRead<'de, WincodeConfig, Dst = #ty>));
+        bounds.push(parse_quote!(SchemaRead<'de, #config, Dst = #ty>));
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
             bounded_ty: target,
             colon_token: parse_quote![:],
             bounds,
         }));
-    }
+    };
 
     match data {
         Data::Struct(fields) => {
-            for field in fields.fields_with_lifetime_iter() {
-                constrain_reference_type(field, &mut predicates);
+            for field in fields.iter() {
+                constrain_lifetime_field(field);
             }
         }
         Data::Enum(variants) => {
             for variant in variants {
-                for field in variant.fields.fields_with_lifetime_iter() {
-                    constrain_reference_type(field, &mut predicates);
+                for field in variant.fields.iter() {
+                    constrain_lifetime_field(field);
                 }
             }
         }

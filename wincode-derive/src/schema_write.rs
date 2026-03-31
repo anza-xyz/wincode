@@ -2,7 +2,7 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
+            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
             default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
             suppress_unused_fields,
         },
@@ -36,15 +36,27 @@ fn impl_struct(
         );
     }
 
-    let target = fields.unskipped_iter().map(|field| field.target_resolved());
-    let mut size_count_idents = Vec::with_capacity(fields.len());
+    let size_of_fields = fields
+        .struct_members_iter()
+        .filter_map(|(field, ident)| {
+            if field.skip.is_none() {
+                let target = field.target_resolved();
+                let config = field.config_resolved();
+                Some(quote! {
+                    total += <#target as SchemaWrite<#config>>::size_of(&src.#ident)?;
+                })
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
 
     let writes = fields.struct_members_iter()
         .filter_map(|(field, ident)| {
             if field.skip.is_none() {
                 let target = field.target_resolved();
-                let write = quote! { <#target as SchemaWrite<WincodeConfig>>::write(writer.by_ref(), &src.#ident)?; };
-                size_count_idents.push(ident);
+                let config = field.config_resolved();
+                let write = quote! { <#target as SchemaWrite<#config>>::write(writer.by_ref(), &src.#ident)?; };
                 Some(write)
             } else {
                 None
@@ -60,9 +72,7 @@ fn impl_struct(
                 return Ok(size);
             }
             let mut total = 0usize;
-            #(
-                total += <#target as SchemaWrite<WincodeConfig>>::size_of(&src.#size_count_idents)?;
-            )*
+            #(#size_of_fields)*
             Ok(total)
         },
         quote! {
@@ -138,11 +148,12 @@ fn impl_enum(
                     .filter_map(|(field, ident)| {
                         if field.skip.is_none() {
                             let target = field.target_resolved();
+                            let config = field.config_resolved();
                             let write = quote! {
-                                <#target as SchemaWrite<WincodeConfig>>::write(writer.by_ref(), #ident)?;
+                                <#target as SchemaWrite<#config>>::write(writer.by_ref(), #ident)?;
                             };
                             pattern_fragments.push(quote! { #ident });
-                            size_count_idents.push(ident);
+                            size_count_idents.push((ident, target, config));
                             Some(write)
                         } else {
                             if style.is_struct() {
@@ -164,13 +175,17 @@ fn impl_enum(
                     }
                 };
 
-                let unskipped_targets =
-                    fields.unskipped_iter().map(|field| field.target_resolved());
-
-                let static_targets = unskipped_targets
-                    .clone()
-                    .map(|target| quote! {<#target as SchemaWrite<WincodeConfig>>::TYPE_META})
+                let static_targets = size_count_idents
+                    .iter()
+                    .map(
+                        |(_, target, config)| quote! {<#target as SchemaWrite<#config>>::TYPE_META},
+                    )
                     .collect::<Vec<_>>();
+                let size_of_fields = size_count_idents.iter().map(|(ident, target, config)| {
+                    quote! {
+                        total += <#target as SchemaWrite<#config>>::size_of(#ident)?;
+                    }
+                });
                 (
                     quote! {
                         #match_case => {
@@ -179,9 +194,7 @@ fn impl_enum(
                             }
 
                             let mut total = #size_of_discriminant;
-                            #(
-                                total += <#unskipped_targets as SchemaWrite<WincodeConfig>>::size_of(#size_count_idents)?;
-                            )*
+                            #(#size_of_fields)*
 
                             Ok(total)
                         }
@@ -250,20 +263,42 @@ fn append_config(generics: &mut Generics) {
         .push(GenericParam::Type(parse_quote!(WincodeConfig: Config)));
 }
 
-fn append_where_clause(generics: &mut Generics) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
     for param in generics.type_params() {
         let ident = &param.ident;
-        let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(SchemaWrite<WincodeConfig, Src = #ident>));
+        let mut push_field_param_predicate = |field: &Field| {
+            if field.skip.is_some() || !field.target_resolved().mentions_type_param(ident) {
+                return;
+            }
+            let config = field.config_resolved();
+            let mut bounds = Punctuated::new();
+            bounds.push(parse_quote!(SchemaWrite<#config, Src = #ident>));
 
-        predicates.push(WherePredicate::Type(PredicateType {
-            lifetimes: None,
-            bounded_ty: parse_quote!(#ident),
-            colon_token: parse_quote![:],
-            bounds,
-        }));
+            predicates.push(WherePredicate::Type(PredicateType {
+                lifetimes: None,
+                bounded_ty: parse_quote!(#ident),
+                colon_token: parse_quote![:],
+                bounds,
+            }));
+        };
+
+        match data {
+            Data::Struct(fields) => {
+                for field in fields.iter() {
+                    push_field_param_predicate(field);
+                }
+            }
+            Data::Enum(variants) => {
+                for variant in variants {
+                    for field in variant.fields.iter() {
+                        push_field_param_predicate(field);
+                    }
+                }
+            }
+        }
     }
+
     if predicates.is_empty() {
         return;
     }
@@ -272,9 +307,9 @@ fn append_where_clause(generics: &mut Generics) {
     where_clause.predicates.extend(predicates);
 }
 
-fn append_generics(generics: &Generics) -> Generics {
+fn append_generics(generics: &Generics, data: &Data<Variant, Field>) -> Generics {
     let mut generics = generics.clone();
-    append_where_clause(&mut generics);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics);
     generics
 }
@@ -282,7 +317,7 @@ fn append_generics(generics: &Generics) -> Generics {
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, TraitImpl::SchemaWrite)?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    let appended_generics = append_generics(&args.generics);
+    let appended_generics = append_generics(&args.generics, &args.data);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;

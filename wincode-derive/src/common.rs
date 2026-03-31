@@ -41,6 +41,23 @@ pub(crate) struct Field {
     #[darling(default)]
     pub(crate) with: Option<Type>,
 
+    /// Per-field config override.
+    ///
+    /// This allows a field to be serialized or deserialized with a different config
+    /// than the derive-level `WincodeConfig`.
+    ///
+    /// For example:
+    /// ```ignore
+    /// type BigEndianConfig = /* ... */;
+    ///
+    /// struct Foo {
+    ///     #[wincode(config = "BigEndianConfig")]
+    ///     x: u64,
+    /// }
+    /// ```
+    #[darling(default)]
+    pub(crate) config: Option<Type>,
+
     /// Opt out of writing or reading this field.
     ///
     /// The field will be initialized using one of the available modes:
@@ -90,8 +107,8 @@ pub(crate) trait TypeExt {
     /// Gather all the lifetimes on this type.
     fn lifetimes(&self) -> Vec<&Lifetime>;
 
-    /// Return whether the type contains a lifetime parameter.
-    fn has_lifetime(&self) -> bool;
+    /// Return whether this type mentions the given generic type parameter.
+    fn mentions_type_param(&self, ident: &Ident) -> bool;
 }
 
 impl TypeExt for Type {
@@ -123,10 +140,13 @@ impl TypeExt for Type {
         lifetimes
     }
 
-    fn has_lifetime(&self) -> bool {
-        let mut visitor = HasLifetime(false);
+    fn mentions_type_param(&self, ident: &Ident) -> bool {
+        let mut visitor = HasTypeParam {
+            ident,
+            found: false,
+        };
         visitor.visit_type(self);
-        visitor.0
+        visitor.found
     }
 }
 
@@ -172,6 +192,16 @@ impl Field {
         self.target().with_infer(&self.ty)
     }
 
+    /// Get the config type for this field.
+    ///
+    /// If the field has a `config` attribute, return it.
+    /// Otherwise, return the derive-level `WincodeConfig`.
+    pub(crate) fn config_resolved(&self) -> Type {
+        self.config
+            .clone()
+            .unwrap_or_else(|| parse_quote!(WincodeConfig))
+    }
+
     /// Get the identifier for a struct member.
     ///
     /// If the field has a named identifier, return it.
@@ -191,10 +221,6 @@ impl Field {
         } else {
             index.to_string()
         }
-    }
-
-    pub(crate) fn has_lifetime(&self) -> bool {
-        self.ty.has_lifetime()
     }
 }
 
@@ -217,8 +243,6 @@ pub(crate) trait FieldsExt {
     ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone;
     /// Get an iterator over the fields that do not have `skip` attribute.
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone;
-    /// Get an iterator over fields that contain a lifetime parameter.
-    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field>;
 }
 
 impl FieldsExt for Fields<Field> {
@@ -228,14 +252,16 @@ impl FieldsExt for Fields<Field> {
             TraitImpl::SchemaRead => {
                 let items = self.unskipped_iter().map(|field| {
                     let target = field.target_resolved().with_lifetime("de");
-                    quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
+                    let config = field.config_resolved();
+                    quote! { <#target as SchemaRead<'de, #config>>::TYPE_META }
                 });
                 quote! { #(#items),* }
             }
             TraitImpl::SchemaWrite => {
                 let items = self.unskipped_iter().map(|field| {
                     let target = field.target_resolved();
-                    quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
+                    let config = field.config_resolved();
+                    quote! { <#target as SchemaWrite<#config>>::TYPE_META }
                 });
                 quote! { #(#items),* }
             }
@@ -291,10 +317,6 @@ impl FieldsExt for Fields<Field> {
 
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone {
         self.iter().filter(|field| field.skip.is_none())
-    }
-
-    fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field> {
-        self.iter().filter(|field| field.has_lifetime())
     }
 }
 
@@ -373,14 +395,16 @@ impl VariantsExt for &[Variant] {
                         TraitImpl::SchemaRead => {
                             let items = variant.fields.unskipped_iter().map(|field| {
                                 let target = field.target_resolved().with_lifetime("de");
-                                quote! { <#target as SchemaRead<'de, WincodeConfig>>::TYPE_META }
+                                let config = field.config_resolved();
+                                quote! { <#target as SchemaRead<'de, #config>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },
                         TraitImpl::SchemaWrite => {
                             let items = variant.fields.unskipped_iter().map(|field| {
                                 let target = field.target_resolved();
-                                quote! { <#target as SchemaWrite<WincodeConfig>>::TYPE_META }
+                                let config = field.config_resolved();
+                                quote! { <#target as SchemaWrite<#config>>::TYPE_META }
                             });
                             quote! { #(#items),* }
                         },
@@ -804,11 +828,18 @@ impl<'ast> Visit<'ast> for GatherLifetimes<'_, 'ast> {
     }
 }
 
-struct HasLifetime(bool);
+struct HasTypeParam<'a> {
+    ident: &'a Ident,
+    found: bool,
+}
 
-impl Visit<'_> for HasLifetime {
-    fn visit_lifetime(&mut self, _: &Lifetime) {
-        self.0 = true;
+impl Visit<'_> for HasTypeParam<'_> {
+    fn visit_type_path(&mut self, path: &syn::TypePath) {
+        if path.qself.is_none() && path.path.is_ident(self.ident) {
+            self.found = true;
+            return;
+        }
+        visit::visit_type_path(self, path);
     }
 }
 
@@ -899,14 +930,5 @@ mod tests {
         let ty: Type = parse_quote!(&'a Foo<'b, 'c>);
         let (a, b, c) = (parse_quote!('a), parse_quote!('b), parse_quote!('c));
         assert_eq!(ty.lifetimes(), vec![&a, &b, &c]);
-    }
-
-    #[test]
-    fn test_has_lifetime() {
-        let ty: Type = parse_quote!(&'a Foo);
-        assert!(ty.has_lifetime());
-
-        let ty: Type = parse_quote!(Foo<'b, 'c>);
-        assert!(ty.has_lifetime());
     }
 }
