@@ -165,12 +165,14 @@ fn cursor_vec_as_trusted_for(
         }
     }
 
-    // SAFETY:
-    // - The contract of `as_trusted_for` requires that the caller initialize the
-    //   entire reserved window `[pos..next_pos)` before using the parent writer again.
-    // - The buffer contains only bytes (Vec<u8>), so there is no drop implementation
-    //   that must be considered.
-    unsafe { vec.set_len(next_pos) }
+    if next_pos > cur_len {
+        // SAFETY:
+        // - The contract of `as_trusted_for` requires that the caller initialize the
+        //   entire reserved window `[pos..next_pos)` before using the parent writer again.
+        // - The buffer contains only bytes (Vec<u8>), so there is no drop implementation
+        //   that must be considered.
+        unsafe { vec.set_len(next_pos) }
+    }
     cursor.set_position(next_pos as u64);
 
     // SAFETY: `vec.reserve` above ensures that at least `pos + n_bytes`
@@ -319,6 +321,19 @@ mod tests {
             cursor.finish().unwrap();
 
             assert_eq!(&cursor.into_inner()[..], &vec![1, 2, 9, 8, 7, 6]);
+        });
+    }
+
+    #[test]
+    fn cursor_vec_trusted_overwrite_preserves_tail() {
+        let mut inner = vec![1, 2, 3, 4, 5, 6];
+        with_vec_cursors!(inner, |cursor| {
+            cursor.set_position(2);
+
+            write_trusted(&mut cursor, &[9, 8]);
+            cursor.finish().unwrap();
+
+            assert_eq!(&cursor.into_inner()[..], &vec![1, 2, 9, 8, 5, 6]);
         });
     }
 
