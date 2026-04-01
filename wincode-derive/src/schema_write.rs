@@ -141,7 +141,7 @@ fn impl_enum(
         let (size, write) = match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
                 let mut pattern_fragments = Vec::with_capacity(fields.len());
-                let mut size_count_idents = vec![];
+                let mut unskipped_field_traits = vec![];
 
                 let write = fields
                     .enum_members_iter(None)
@@ -149,11 +149,12 @@ fn impl_enum(
                         if field.skip.is_none() {
                             let target = field.target_resolved();
                             let config = field.config_resolved();
+                            let field_trait = quote! { #target as SchemaWrite<#config> };
                             let write = quote! {
-                                <#target as SchemaWrite<#config>>::write(writer.by_ref(), #ident)?;
+                                <#field_trait>::write(writer.by_ref(), #ident)?;
                             };
                             pattern_fragments.push(quote! { #ident });
-                            size_count_idents.push((ident, target, config));
+                            unskipped_field_traits.push((ident, field_trait));
                             Some(write)
                         } else {
                             if style.is_struct() {
@@ -175,15 +176,13 @@ fn impl_enum(
                     }
                 };
 
-                let static_targets = size_count_idents
+                let static_targets = unskipped_field_traits
                     .iter()
-                    .map(
-                        |(_, target, config)| quote! {<#target as SchemaWrite<#config>>::TYPE_META},
-                    )
+                    .map(|(_, field_trait)| quote! { <#field_trait>::TYPE_META })
                     .collect::<Vec<_>>();
-                let size_of_fields = size_count_idents.iter().map(|(ident, target, config)| {
+                let size_of_fields = unskipped_field_traits.iter().map(|(ident, field_trait)| {
                     quote! {
-                        total += <#target as SchemaWrite<#config>>::size_of(#ident)?;
+                        total += <#field_trait>::size_of(#ident)?;
                     }
                 });
                 (
@@ -285,13 +284,13 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
 
         match data {
             Data::Struct(fields) => {
-                for field in fields.iter() {
+                for field in fields.unskipped_iter() {
                     push_field_param_predicate(field);
                 }
             }
             Data::Enum(variants) => {
                 for variant in variants {
-                    for field in variant.fields.iter() {
+                    for field in variant.fields.unskipped_iter() {
                         push_field_param_predicate(field);
                     }
                 }

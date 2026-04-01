@@ -371,13 +371,13 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
 
     match data {
         Data::Struct(fields) => {
-            for field in fields.iter() {
+            for field in fields.unskipped_iter() {
                 constrain_lifetime_field(field);
             }
         }
         Data::Enum(variants) => {
             for variant in variants {
-                for field in variant.fields.iter() {
+                for field in variant.fields.unskipped_iter() {
                     constrain_lifetime_field(field);
                 }
             }

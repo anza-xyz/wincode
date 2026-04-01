@@ -557,6 +557,7 @@ mod tests {
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
+            int_encoding,
             io::{Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen},
             pod_wrapper,
@@ -1817,17 +1818,12 @@ mod tests {
 
     #[test]
     fn test_field_config_override() {
-        type BigEndianConfig = config::Configuration<
-            true,
-            { config::DEFAULT_PREALLOCATION_SIZE_LIMIT },
-            BincodeLen,
-            crate::int_encoding::BigEndian,
-        >;
+        type BigEndianConfig = config::Configuration<true, 0, BincodeLen, int_encoding::BigEndian>;
 
         #[derive(Debug, PartialEq, Eq)]
-        struct OnlyDefault(u16);
+        struct OnlyDefaultConfigU16(u16);
 
-        unsafe impl SchemaWrite<DefaultConfig> for OnlyDefault {
+        unsafe impl SchemaWrite<DefaultConfig> for OnlyDefaultConfigU16 {
             type Src = Self;
 
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
@@ -1839,7 +1835,7 @@ mod tests {
             }
         }
 
-        unsafe impl<'de> SchemaRead<'de, DefaultConfig> for OnlyDefault {
+        unsafe impl<'de> SchemaRead<'de, DefaultConfig> for OnlyDefaultConfigU16 {
             type Dst = Self;
 
             fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
@@ -1849,31 +1845,31 @@ mod tests {
             }
         }
 
-        struct GenericHelper<T>(PhantomData<T>);
+        struct ConfigForwardingWrapper<T>(PhantomData<T>);
 
-        unsafe impl<T> SchemaWrite<BigEndianConfig> for GenericHelper<T>
+        unsafe impl<T, C: ConfigCore> SchemaWrite<C> for ConfigForwardingWrapper<T>
         where
-            T: SchemaWrite<BigEndianConfig, Src = T>,
+            T: SchemaWrite<C, Src = T>,
         {
             type Src = u16;
 
             fn size_of(src: &Self::Src) -> WriteResult<usize> {
-                <u16 as SchemaWrite<BigEndianConfig>>::size_of(src)
+                <u16 as SchemaWrite<C>>::size_of(src)
             }
 
             fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
-                <u16 as SchemaWrite<BigEndianConfig>>::write(writer, src)
+                <u16 as SchemaWrite<C>>::write(writer, src)
             }
         }
 
-        unsafe impl<'de, T> SchemaRead<'de, BigEndianConfig> for GenericHelper<T>
+        unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for ConfigForwardingWrapper<T>
         where
-            T: SchemaRead<'de, BigEndianConfig, Dst = T>,
+            T: SchemaRead<'de, C, Dst = T>,
         {
             type Dst = u16;
 
             fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-                <u16 as SchemaRead<'de, BigEndianConfig>>::read(reader, dst)
+                <u16 as SchemaRead<'de, C>>::read(reader, dst)
             }
         }
 
@@ -1918,34 +1914,35 @@ mod tests {
         }
 
         let value = Mixed {
-            a: OnlyDefault(0x1234),
+            a: OnlyDefaultConfigU16(0x1234),
             b: 0x5678u16,
         };
         let serialized = serialize(&value).unwrap();
         assert_eq!(serialized, [0x34, 0x12, 0x56, 0x78]);
 
-        let deserialized: Mixed<OnlyDefault, u16> = deserialize(&serialized).unwrap();
+        let deserialized: Mixed<OnlyDefaultConfigU16, u16> = deserialize(&serialized).unwrap();
         assert_eq!(deserialized, value);
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
         #[wincode(internal)]
         struct MixedWithTarget<T, U> {
             a: T,
-            #[wincode(with = "GenericHelper<U>", config = "BigEndianConfig")]
+            #[wincode(with = "ConfigForwardingWrapper<U>", config = "BigEndianConfig")]
             b: u16,
             #[wincode(skip)]
             _marker: PhantomData<U>,
         }
 
-        let value: MixedWithTarget<OnlyDefault, u16> = MixedWithTarget {
-            a: OnlyDefault(0x1234),
+        let value: MixedWithTarget<OnlyDefaultConfigU16, u16> = MixedWithTarget {
+            a: OnlyDefaultConfigU16(0x1234),
             b: 0x5678,
             _marker: PhantomData,
         };
         let serialized = serialize(&value).unwrap();
         assert_eq!(serialized, [0x34, 0x12, 0x56, 0x78]);
 
-        let deserialized: MixedWithTarget<OnlyDefault, u16> = deserialize(&serialized).unwrap();
+        let deserialized: MixedWithTarget<OnlyDefaultConfigU16, u16> =
+            deserialize(&serialized).unwrap();
         assert_eq!(deserialized, value);
 
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]

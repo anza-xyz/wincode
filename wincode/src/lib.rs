@@ -384,6 +384,32 @@
 //! |`config`|`Type`|`None`|Overrides the config type used by `SchemaRead` and `SchemaWrite` for the field.|
 //! |`skip`|`bool`\|`Expr`|`false`|Skips the field during serialization and deserialization (initializing with default value).|
 //!
+//! ### `config`
+//!
+//! Allows a field to use a different config than the derive-level `WincodeConfig`.
+//!
+//! Example:
+//! ```
+//! # #[cfg(all(feature = "derive", feature = "alloc"))] {
+//! use wincode::{SchemaRead, SchemaWrite, config, int_encoding, len::BincodeLen};
+//!
+//! type BigEndianConfig = config::Configuration<true, 0, BincodeLen, int_encoding::BigEndian>;
+//!
+//! #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+//! struct Example {
+//!     a: u16,
+//!     #[wincode(config = "BigEndianConfig")]
+//!     b: u16,
+//! }
+//!
+//! let value = Example {
+//!     a: 0x1234,
+//!     b: 0x5678,
+//! };
+//! assert_eq!(wincode::serialize(&value).unwrap(), [0x34, 0x12, 0x56, 0x78]);
+//! # }
+//! ```
+//!
 //! ### `skip`
 //!
 //! Allows omitting the field during serialization and deserialization. When type is initialized
