@@ -69,12 +69,12 @@ use {
 use {
     crate::{
         context,
-        error::WriteResult,
+        error::{ReadError, WriteResult},
         io::Writer,
         len::SeqLen,
         schema::{
             SchemaReadContext, SchemaWrite, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
-            write_elem_slice_prealloc_check,
+            write_elem_iter_prealloc_check, write_elem_slice_prealloc_check,
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
@@ -513,6 +513,271 @@ where
         let vec = <Vec<T, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));
+        Ok(())
+    }
+}
+
+/// Iterator that reads `T` items from a [`Reader`] via [`SchemaRead::get`],
+/// storing the first error for later inspection.
+///
+/// Unlike `collect::<Result<C, _>>()` this preserves `remaining` in `size_hint`
+/// so that collections can preallocate the expected capacity.
+#[cfg(feature = "alloc")]
+struct SchemaReadIter<'de, T, C, R> {
+    reader: R,
+    remaining: usize,
+    error: Option<ReadError>,
+    #[allow(clippy::type_complexity)]
+    _marker: PhantomData<fn() -> (&'de (), T, C)>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T, C, R> SchemaReadIter<'de, T, C, R>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+    R: Reader<'de>,
+{
+    fn collect_result<Coll: FromIterator<T::Dst>>(reader: R, remaining: usize) -> ReadResult<Coll> {
+        let mut iter = Self {
+            reader,
+            remaining,
+            error: None,
+            _marker: PhantomData,
+        };
+        let coll = Coll::from_iter(&mut iter);
+        match iter.error {
+            Some(e) => Err(e),
+            None => Ok(coll),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T, C, R> Iterator for SchemaReadIter<'de, T, C, R>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+    R: Reader<'de>,
+{
+    type Item = T::Dst;
+
+    #[inline]
+    fn next(&mut self) -> Option<T::Dst> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        match T::get(self.reader.by_ref()) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.error = Some(e);
+                self.remaining = 0;
+                None
+            }
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+/// A generic sequence schema for custom collections that implement
+/// [`FromIterator`] (for reading) and whose references implement
+/// [`IntoIterator`] with an [`ExactSizeIterator`] (for writing).
+///
+/// Intended for external collection types that cannot have a dedicated
+/// schema impl added directly. Unlike [`Vec`], [`VecDeque`], and [`BinaryHeap`], this
+/// container relies on the collection's [`FromIterator`] impl rather than
+/// writing directly into preallocated memory.
+///
+/// # Allocation efficiency
+///
+/// During deserialization, the iterator passed to [`FromIterator`] has a
+/// precise [`size_hint`](Iterator::size_hint) matching the number of elements
+/// produced, unless a read error is encountered. Collections whose
+/// [`FromIterator`] implementation uses the size hint to preallocate capacity
+/// will allocate optimally. Collections that do not use it will not benefit.
+///
+/// # Examples
+///
+/// ```ignore
+/// use some_crate::IndexSet;
+/// use wincode::{SchemaRead, SchemaWrite, containers::Seq, len::BincodeLen};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// struct MyData {
+///     #[wincode(with = "Seq<IndexSet<u32>, BincodeLen>")]
+///     items: IndexSet<u32>,
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+pub struct Seq<Coll, Len>(PhantomData<(Coll, Len)>);
+
+#[cfg(feature = "alloc")]
+unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, Len>
+where
+    Len: SeqLen<C>,
+    Coll: IntoIterator,
+    Coll::Item: SchemaWrite<C>,
+    for<'a> &'a Coll: IntoIterator<Item = &'a <Coll::Item as SchemaWrite<C>>::Src>,
+    for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
+{
+    type Src = Coll;
+
+    #[inline]
+    fn size_of(src: &Coll) -> WriteResult<usize> {
+        size_of_elem_iter::<Coll::Item, Len, C>(src.into_iter())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
+        write_elem_iter_prealloc_check::<Coll::Item, Len, C>(writer, src.into_iter())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
+where
+    Len: SeqLen<C>,
+    Coll: IntoIterator,
+    Coll::Item: SchemaRead<'de, C>,
+    Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
+{
+    type Dst = Coll;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
+        let len =
+            Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
+        let result = if let TypeMeta::Static { size, .. } = <Coll::Item as SchemaRead<C>>::TYPE_META
+        {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `Coll::Item::TYPE_META` specifies a static size, so `len` reads will
+            // consume `size * len` bytes, fully consuming the trusted window.
+            let reader = unsafe { reader.as_trusted_for(size * len) }?;
+            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
+        } else {
+            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
+        };
+        dst.write(result?);
+        Ok(())
+    }
+}
+
+/// A generic key-value sequence schema for custom map-like collections that
+/// implement [`FromIterator<(K::Dst, V::Dst)>`](FromIterator) (for reading)
+/// and whose references implement [`IntoIterator`] yielding
+/// `(&K::Src, &V::Src)` pairs with an [`ExactSizeIterator`] (for writing).
+///
+/// Intended for external map types that cannot have a dedicated schema impl
+/// added directly.
+///
+/// # Allocation efficiency
+///
+/// During deserialization, the iterator passed to [`FromIterator`] has a
+/// precise [`size_hint`](Iterator::size_hint) matching the number of pairs to
+/// be read, unless a read error is encountered. Collections whose
+/// [`FromIterator`] implementation uses the size hint to preallocate capacity
+/// will allocate optimally. Collections that do not use it will not benefit.
+///
+/// # Examples
+///
+/// ```ignore
+/// use some_crate::MyMap;
+/// use wincode::{SchemaRead, SchemaWrite, containers::SeqKv, len::BincodeLen};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// struct MyData {
+///     #[wincode(with = "SeqKv<MyMap<u32, u64>, u32, u64, BincodeLen>")]
+///     items: MyMap<u32, u64>,
+/// }
+/// ```
+#[cfg(feature = "alloc")]
+pub struct SeqKv<Coll, K, V, Len>(PhantomData<(Coll, K, V, Len)>);
+
+#[cfg(feature = "alloc")]
+unsafe impl<Coll, K, V, Len, C: ConfigCore> SchemaWrite<C> for SeqKv<Coll, K, V, Len>
+where
+    Len: SeqLen<C>,
+    K: SchemaWrite<C>,
+    V: SchemaWrite<C>,
+    for<'a> &'a Coll: IntoIterator<Item = (&'a K::Src, &'a V::Src)>,
+    for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
+{
+    type Src = Coll;
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Coll) -> WriteResult<usize> {
+        let mut src = src.into_iter();
+        if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) = (
+            <K as SchemaWrite<C>>::TYPE_META,
+            <V as SchemaWrite<C>>::TYPE_META,
+        ) {
+            return Ok(<Len>::write_bytes_needed(src.len())? + (ks + vs) * src.len());
+        }
+        Ok(<Len>::write_bytes_needed(src.len())?
+            + src.try_fold(0usize, |acc, (k, v)| -> WriteResult<usize> {
+                Ok(acc + <K>::size_of(k)? + <V>::size_of(v)?)
+            })?)
+    }
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
+        let src = src.into_iter();
+        <Len>::prealloc_check::<(K, V)>(src.len())?;
+        let mut writer = writer;
+        if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) = (
+            <K as SchemaWrite<C>>::TYPE_META,
+            <V as SchemaWrite<C>>::TYPE_META,
+        ) {
+            let needed = <Len>::write_bytes_needed(src.len())? + (ks + vs) * src.len();
+            // SAFETY: `needed` is the size of the encoded length plus the sizes of the key-value
+            // pairs. `Len::write` and `len` writes of `(K::Src, V::Src)` will write `needed` bytes,
+            // fully initializing the trusted window.
+            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+            <Len>::write(writer.by_ref(), src.len())?;
+            for (k, v) in src {
+                <K>::write(writer.by_ref(), k)?;
+                <V>::write(writer.by_ref(), v)?;
+            }
+            writer.finish()?;
+            return Ok(());
+        }
+
+        <Len>::write(writer.by_ref(), src.len())?;
+        for (k, v) in src {
+            <K>::write(writer.by_ref(), k)?;
+            <V>::write(writer.by_ref(), v)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<'de, Coll, K, V, Len, C: ConfigCore> SchemaRead<'de, C> for SeqKv<Coll, K, V, Len>
+where
+    Len: SeqLen<C>,
+    K: SchemaRead<'de, C>,
+    V: SchemaRead<'de, C>,
+    Coll: FromIterator<(K::Dst, V::Dst)>,
+{
+    type Dst = Coll;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
+        let len = Len::read_prealloc_check::<(K::Dst, V::Dst)>(reader.by_ref())?;
+        let result = if let TypeMeta::Static { size, .. } = <(K, V) as SchemaRead<C>>::TYPE_META {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let reader = unsafe { reader.as_trusted_for(size * len) }?;
+            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
+        } else {
+            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
+        };
+        dst.write(result?);
         Ok(())
     }
 }
