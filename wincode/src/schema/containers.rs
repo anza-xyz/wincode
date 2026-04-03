@@ -684,6 +684,7 @@ where
 {
     type Src = Coll;
 
+    #[allow(clippy::arithmetic_side_effects)]
     #[inline]
     fn size_of(src: &Coll) -> WriteResult<usize> {
         let mut src = src.into_iter();
@@ -699,6 +700,7 @@ where
             })?)
     }
 
+    #[allow(clippy::arithmetic_side_effects)]
     #[inline]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
         let src = src.into_iter();
