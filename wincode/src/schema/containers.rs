@@ -59,13 +59,7 @@
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
-    crate::{
-        TypeMeta,
-        config::ConfigCore,
-        error::{ReadError, ReadResult},
-        io::Reader,
-        schema::SchemaRead,
-    },
+    crate::{TypeMeta, config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead},
     core::{
         mem::{self, MaybeUninit},
         ptr,
@@ -75,7 +69,7 @@ use {
 use {
     crate::{
         context,
-        error::WriteResult,
+        error::{ReadError, WriteResult},
         io::Writer,
         len::SeqLen,
         schema::{
@@ -533,7 +527,8 @@ struct SchemaReadIter<'de, T, C, R> {
     reader: R,
     remaining: usize,
     error: Option<ReadError>,
-    _marker: PhantomData<(&'de (), fn() -> (T, C))>,
+    #[allow(clippy::type_complexity)]
+    _marker: PhantomData<fn() -> (&'de (), T, C)>,
 }
 
 #[cfg(feature = "alloc")]
