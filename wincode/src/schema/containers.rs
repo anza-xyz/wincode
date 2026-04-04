@@ -618,6 +618,12 @@ where
 ///     }
 /// }
 ///
+/// impl<T> IntoIterator for MyCollection<T> {
+///     type Item = T;
+///     type IntoIter = std::vec::IntoIter<T>;
+///     fn into_iter(self) -> Self::IntoIter { self.0.into_iter() }
+/// }
+///
 /// impl<'a, T> IntoIterator for &'a MyCollection<T> {
 ///     type Item = &'a T;
 ///     type IntoIter = core::slice::Iter<'a, T>;
@@ -625,56 +631,60 @@ where
 /// }
 ///
 /// let data: MyCollection<u32> = [1, 2, 3].into_iter().collect();
-/// let bytes = <Seq<MyCollection<u32>, u32, BincodeLen>>::serialize(&data).unwrap();
+/// let bytes = <Seq<MyCollection<u32>, BincodeLen>>::serialize(&data).unwrap();
 /// let out: MyCollection<u32> =
-///     <Seq<MyCollection<u32>, u32, BincodeLen>>::deserialize(&bytes).unwrap();
+///     <Seq<MyCollection<u32>, BincodeLen>>::deserialize(&bytes).unwrap();
 /// assert_eq!(data, out);
 /// # }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct Seq<Coll, T, Len>(PhantomData<(Coll, T, Len)>);
+pub struct Seq<Coll, Len>(PhantomData<(Coll, Len)>);
 
 #[cfg(feature = "alloc")]
-unsafe impl<Coll, T, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, T, Len>
+unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, Len>
 where
     Len: SeqLen<C>,
-    T: SchemaWrite<C>,
-    for<'a> &'a Coll: IntoIterator<Item = &'a T::Src>,
+    Coll: IntoIterator,
+    Coll::Item: SchemaWrite<C>,
+    for<'a> &'a Coll: IntoIterator<Item = &'a <Coll::Item as SchemaWrite<C>>::Src>,
     for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
 {
     type Src = Coll;
 
     #[inline]
     fn size_of(src: &Coll) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len, C>(src.into_iter())
+        size_of_elem_iter::<Coll::Item, Len, C>(src.into_iter())
     }
 
     #[inline]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
-        write_elem_iter_prealloc_check::<T, Len, C>(writer, src.into_iter())
+        write_elem_iter_prealloc_check::<Coll::Item, Len, C>(writer, src.into_iter())
     }
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl<'de, Coll, T, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, T, Len>
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
 where
     Len: SeqLen<C>,
-    T: SchemaRead<'de, C>,
-    Coll: FromIterator<T::Dst>,
+    Coll: IntoIterator,
+    Coll::Item: SchemaRead<'de, C>,
+    Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
 {
     type Dst = Coll;
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
-        let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let result = if let TypeMeta::Static { size, .. } = <T as SchemaRead<C>>::TYPE_META {
+        let len =
+            Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
+        let result = if let TypeMeta::Static { size, .. } = <Coll::Item as SchemaRead<C>>::TYPE_META
+        {
             #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-            // will consume `size * len` bytes, fully consuming the trusted window.
+            // SAFETY: `Coll::Item::TYPE_META` specifies a static size, so `len` reads will
+            // consume `size * len` bytes, fully consuming the trusted window.
             let reader = unsafe { reader.as_trusted_for(size * len) }?;
-            SchemaReadIter::<T, C, _>::collect_result(reader, len)
+            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
         } else {
-            SchemaReadIter::<T, C, _>::collect_result(reader, len)
+            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
         };
         dst.write(result?);
         Ok(())
