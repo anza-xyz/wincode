@@ -597,45 +597,23 @@ where
 ///
 /// # Allocation efficiency
 ///
-/// During deserialization, elements are collected via an [`ExactSizeIterator`]
-/// whose [`size_hint`](Iterator::size_hint) reports the exact element count.
-/// Collections whose [`FromIterator`] implementation uses the size hint to
-/// preallocate capacity will allocate optimally. Collections that do not use
-/// it will not benefit.
+/// During deserialization, the iterator passed to [`FromIterator`] has a
+/// precise [`size_hint`](Iterator::size_hint) matching the number of elements
+/// produced, unless a read error is encountered. Collections whose
+/// [`FromIterator`] implementation uses the size hint to preallocate capacity
+/// will allocate optimally. Collections that do not use it will not benefit.
 ///
 /// # Examples
 ///
-/// ```
-/// # #[cfg(feature = "alloc")] {
-/// use wincode::{Deserialize, Serialize, containers::Seq, len::BincodeLen};
+/// ```ignore
+/// use some_crate::IndexSet;
+/// use wincode::{SchemaRead, SchemaWrite, containers::Seq, len::BincodeLen};
 ///
-/// #[derive(PartialEq, Debug)]
-/// struct MyCollection<T>(Vec<T>);
-///
-/// impl<T> FromIterator<T> for MyCollection<T> {
-///     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-///         MyCollection(iter.into_iter().collect())
-///     }
+/// #[derive(SchemaRead, SchemaWrite)]
+/// struct MyData {
+///     #[wincode(with = "Seq<IndexSet<u32>, BincodeLen>")]
+///     items: IndexSet<u32>,
 /// }
-///
-/// impl<T> IntoIterator for MyCollection<T> {
-///     type Item = T;
-///     type IntoIter = std::vec::IntoIter<T>;
-///     fn into_iter(self) -> Self::IntoIter { self.0.into_iter() }
-/// }
-///
-/// impl<'a, T> IntoIterator for &'a MyCollection<T> {
-///     type Item = &'a T;
-///     type IntoIter = core::slice::Iter<'a, T>;
-///     fn into_iter(self) -> Self::IntoIter { self.0.iter() }
-/// }
-///
-/// let data: MyCollection<u32> = [1, 2, 3].into_iter().collect();
-/// let bytes = <Seq<MyCollection<u32>, BincodeLen>>::serialize(&data).unwrap();
-/// let out: MyCollection<u32> =
-///     <Seq<MyCollection<u32>, BincodeLen>>::deserialize(&bytes).unwrap();
-/// assert_eq!(data, out);
-/// # }
 /// ```
 #[cfg(feature = "alloc")]
 pub struct Seq<Coll, Len>(PhantomData<(Coll, Len)>);
@@ -701,11 +679,11 @@ where
 ///
 /// # Allocation efficiency
 ///
-/// During deserialization, key-value pairs are collected via an
-/// [`ExactSizeIterator`] whose [`size_hint`](Iterator::size_hint) reports the
-/// exact element count. Collections whose [`FromIterator`] implementation uses
-/// the size hint to preallocate capacity will allocate optimally. Collections
-/// that do not use it will not benefit.
+/// During deserialization, the iterator passed to [`FromIterator`] has a
+/// precise [`size_hint`](Iterator::size_hint) matching the number of pairs to
+/// be read, unless a read error is encountered. Collections whose
+/// [`FromIterator`] implementation uses the size hint to preallocate capacity
+/// will allocate optimally. Collections that do not use it will not benefit.
 ///
 /// # Examples
 ///
