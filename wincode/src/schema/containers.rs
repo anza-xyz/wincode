@@ -59,7 +59,13 @@
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
-    crate::{TypeMeta, config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead},
+    crate::{
+        TypeMeta,
+        config::ConfigCore,
+        error::{ReadError, ReadResult},
+        io::Reader,
+        schema::SchemaRead,
+    },
     core::{
         mem::{self, MaybeUninit},
         ptr,
@@ -517,6 +523,69 @@ where
     }
 }
 
+/// Iterator that reads `T` items from a [`Reader`] via [`SchemaRead::get`],
+/// storing the first error for later inspection.
+///
+/// Unlike `collect::<Result<C, _>>()` this preserves `remaining` in `size_hint`
+/// so that collections can preallocate the expected capacity.
+#[cfg(feature = "alloc")]
+struct SchemaReadIter<'de, T, C, R> {
+    reader: R,
+    remaining: usize,
+    error: Option<ReadError>,
+    _marker: PhantomData<(&'de (), fn() -> (T, C))>,
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T, C, R> SchemaReadIter<'de, T, C, R>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+    R: Reader<'de>,
+{
+    fn collect_result<Coll: FromIterator<T::Dst>>(reader: R, remaining: usize) -> ReadResult<Coll> {
+        let mut iter = Self {
+            reader,
+            remaining,
+            error: None,
+            _marker: PhantomData,
+        };
+        let coll = Coll::from_iter(&mut iter);
+        match iter.error {
+            Some(e) => Err(e),
+            None => Ok(coll),
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'de, T, C, R> Iterator for SchemaReadIter<'de, T, C, R>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+    R: Reader<'de>,
+{
+    type Item = T::Dst;
+
+    #[inline]
+    fn next(&mut self) -> Option<T::Dst> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        match T::get(self.reader.by_ref()) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.error = Some(e);
+                self.remaining = 0;
+                None
+            }
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
 /// A generic sequence schema for custom collections that implement
 /// [`FromIterator`] (for reading) and whose references implement
 /// [`IntoIterator`] with an [`ExactSizeIterator`] (for writing).
@@ -598,20 +667,16 @@ where
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let coll = if let TypeMeta::Static { size, .. } = T::TYPE_META {
+        let result = if let TypeMeta::Static { size, .. } = <T as SchemaRead<C>>::TYPE_META {
             #[allow(clippy::arithmetic_side_effects)]
             // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
             // will consume `size * len` bytes, fully consuming the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
-            (0..len)
-                .map(|_| T::get(reader.by_ref()))
-                .collect::<Result<Coll, _>>()?
+            let reader = unsafe { reader.as_trusted_for(size * len) }?;
+            SchemaReadIter::<T, C, _>::collect_result(reader, len)
         } else {
-            (0..len)
-                .map(|_| T::get(reader.by_ref()))
-                .collect::<Result<Coll, _>>()?
+            SchemaReadIter::<T, C, _>::collect_result(reader, len)
         };
-        dst.write(coll);
+        dst.write(result?);
         Ok(())
     }
 }
@@ -684,8 +749,8 @@ where
 {
     type Src = Coll;
 
-    #[allow(clippy::arithmetic_side_effects)]
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Coll) -> WriteResult<usize> {
         let mut src = src.into_iter();
         if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) = (
@@ -700,8 +765,8 @@ where
             })?)
     }
 
-    #[allow(clippy::arithmetic_side_effects)]
     #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
         let src = src.into_iter();
         <Len>::prealloc_check::<(K, V)>(src.len())?;
@@ -746,27 +811,16 @@ where
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<(K::Dst, V::Dst)>(reader.by_ref())?;
-        let coll = if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) =
-            (K::TYPE_META, V::TYPE_META)
-        {
+        let result = if let TypeMeta::Static { size, .. } = <(K, V) as SchemaRead<C>>::TYPE_META {
             #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `K::TYPE_META` and `V::TYPE_META` specify static sizes, so `len` reads of
-            // `(K::Dst, V::Dst)` will consume `(ks + vs) * len` bytes, fully consuming the
-            // trusted window.
-            let mut reader = unsafe { reader.as_trusted_for((ks + vs) * len) }?;
-            (0..len)
-                .map(|_| -> ReadResult<_> {
-                    Ok((K::get(reader.by_ref())?, V::get(reader.by_ref())?))
-                })
-                .collect::<Result<Coll, _>>()?
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let reader = unsafe { reader.as_trusted_for(size * len) }?;
+            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
         } else {
-            (0..len)
-                .map(|_| -> ReadResult<_> {
-                    Ok((K::get(reader.by_ref())?, V::get(reader.by_ref())?))
-                })
-                .collect::<Result<Coll, _>>()?
+            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
         };
-        dst.write(coll);
+        dst.write(result?);
         Ok(())
     }
 }
