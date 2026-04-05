@@ -30,7 +30,7 @@ use {
             NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize, NonZeroU8,
             NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
         },
-        ops::{Bound, Range, RangeInclusive},
+        ops::{Bound, ControlFlow, Range, RangeInclusive},
         time::Duration,
     },
     pastey::paste,
@@ -805,6 +805,99 @@ where
             Result::Err(error) => {
                 C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
                 E::write(writer, error)
+            }
+        }
+    }
+}
+
+unsafe impl<'de, B, Cn, C: Config> SchemaRead<'de, C> for ControlFlow<B, Cn>
+where
+    B: SchemaRead<'de, C>,
+    Cn: SchemaRead<'de, C>,
+{
+    type Dst = ControlFlow<B::Dst, Cn::Dst>;
+
+    const TYPE_META: TypeMeta = match (
+        B::TYPE_META,
+        Cn::TYPE_META,
+        <C::TagEncoding as SchemaRead<C>>::TYPE_META,
+    ) {
+        (
+            TypeMeta::Static { size: b_size, .. },
+            TypeMeta::Static { size: c_size, .. },
+            TypeMeta::Static {
+                size: disc_size, ..
+            },
+        ) if b_size == c_size => TypeMeta::Static {
+            size: disc_size + b_size,
+            zero_copy: false,
+        },
+        _ => TypeMeta::Dynamic,
+    };
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let disc = C::TagEncoding::try_into_u32(C::TagEncoding::get(reader.by_ref())?)?;
+        match disc {
+            0 => dst.write(ControlFlow::Continue(Cn::get(reader)?)),
+            1 => dst.write(ControlFlow::Break(B::get(reader)?)),
+            _ => return Err(invalid_tag_encoding(disc as usize)),
+        };
+
+        Ok(())
+    }
+}
+
+unsafe impl<B, Cn, C: Config> SchemaWrite<C> for ControlFlow<B, Cn>
+where
+    B: SchemaWrite<C>,
+    Cn: SchemaWrite<C>,
+    B::Src: Sized,
+    Cn::Src: Sized,
+{
+    type Src = ControlFlow<B::Src, Cn::Src>;
+
+    const TYPE_META: TypeMeta = match (
+        B::TYPE_META,
+        Cn::TYPE_META,
+        <C::TagEncoding as SchemaWrite<C>>::TYPE_META,
+    ) {
+        (
+            TypeMeta::Static { size: b_size, .. },
+            TypeMeta::Static { size: c_size, .. },
+            TypeMeta::Static {
+                size: disc_size, ..
+            },
+        ) if b_size == c_size => TypeMeta::Static {
+            size: disc_size + b_size,
+            zero_copy: false,
+        },
+        _ => TypeMeta::Dynamic,
+    };
+
+    #[inline]
+    #[allow(clippy::arithmetic_side_effects)]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        match src {
+            ControlFlow::Continue(value) => {
+                Ok(C::TagEncoding::size_of_from_u32(0)? + Cn::size_of(value)?)
+            }
+            ControlFlow::Break(value) => {
+                Ok(C::TagEncoding::size_of_from_u32(1)? + B::size_of(value)?)
+            }
+        }
+    }
+
+    #[inline]
+    fn write(mut writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
+        match value {
+            ControlFlow::Continue(value) => {
+                C::TagEncoding::write_from_u32(writer.by_ref(), 0)?;
+                Cn::write(writer, value)
+            }
+            ControlFlow::Break(value) => {
+                C::TagEncoding::write_from_u32(writer.by_ref(), 1)?;
+                B::write(writer, value)
             }
         }
     }
