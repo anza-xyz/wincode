@@ -110,6 +110,14 @@ impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.take_borrowed(len)
     }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        // SAFETY: by constructing `SliceUnchecked`, caller guarantees
+        // they will read within the bounds of the slice.
+        unsafe { advance_slice_unchecked(&mut self.buf, n_bytes) };
+        Ok(())
+    }
 }
 
 /// Implementation of [`Reader`] and [`Writer`] over a slice that does not perform any bounds checks.
@@ -198,6 +206,14 @@ impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.take_borrowed(len)
     }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
+        // they will read within the bounds of the slice.
+        unsafe { advance_slice_mut_unchecked(&mut self.buf, n_bytes) };
+        Ok(())
+    }
 }
 
 /// Implementation of [`Reader`] over a slice that does not perform any bounds checks.
@@ -243,6 +259,11 @@ impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     fn take_scoped(&mut self, len: usize) -> ReadResult<&[u8]> {
         self.inner.take_scoped(len)
     }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        self.inner.advance(n_bytes)
+    }
 }
 
 impl<'a> Reader<'a> for &'a [u8] {
@@ -281,6 +302,14 @@ impl<'a> Reader<'a> for &'a [u8] {
         };
         *self = rest;
         Ok(*src)
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        if advance_slice_checked(self, n_bytes).is_none() {
+            return Err(read_size_limit(n_bytes));
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -343,6 +372,14 @@ impl<'a> Reader<'a> for &'a mut [u8] {
         };
         *self = rest;
         Ok(*src)
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        if advance_slice_mut_checked(self, n_bytes).is_none() {
+            return Err(read_size_limit(n_bytes));
+        }
+        Ok(())
     }
 }
 

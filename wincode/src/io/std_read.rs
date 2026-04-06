@@ -60,12 +60,42 @@ impl<R: Read + ?Sized> Reader<'_> for ReadAdapter<R> {
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         copy_into_slice(&mut self.0, dst)
     }
+
+    fn advance(&mut self, mut n_bytes: usize) -> ReadResult<()> {
+        let mut buf = [MaybeUninit::<u8>::uninit(); 64];
+        while let Some(remaining) = n_bytes.checked_sub(buf.len()) {
+            copy_into_slice(&mut self.0, &mut buf)?;
+            n_bytes = remaining;
+        }
+        copy_into_slice(&mut self.0, &mut buf[..n_bytes])
+    }
 }
 
 impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
     #[inline(always)]
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         copy_into_slice(self, dst)
+    }
+
+    fn advance(&mut self, mut n_bytes: usize) -> ReadResult<()> {
+        use io::BufRead as _;
+        loop {
+            let buffered = self.buffer().len();
+            if let Some(remaining) = n_bytes.checked_sub(buffered) {
+                self.consume(buffered);
+                n_bytes = remaining;
+                if n_bytes == 0 {
+                    break;
+                }
+                if self.fill_buf()?.is_empty() {
+                    return Err(read_size_limit(n_bytes));
+                }
+            } else {
+                self.consume(n_bytes);
+                break;
+            }
+        }
+        Ok(())
     }
 }
 
