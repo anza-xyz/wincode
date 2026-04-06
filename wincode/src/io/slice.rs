@@ -603,6 +603,24 @@ mod tests {
         }
 
         #[test]
+        fn test_reader_advance(
+            bytes in proptest::collection::vec(any::<u8>(), 0..=64usize),
+            skip in 0..=64usize
+        ) {
+            if skip <= bytes.len() {
+                with_readers!(&bytes, |reader| {
+                    reader.advance(skip).unwrap();
+                    let rest = reader.take_scoped(bytes.len() - skip).unwrap();
+                    prop_assert_eq!(rest, &bytes[skip..]);
+                });
+            } else {
+                with_untrusted_readers!(&bytes, |reader| {
+                    prop_assert!(matches!(reader.advance(skip), Err(ReadError::ReadSizeLimit(x)) if x == skip));
+                });
+            }
+        }
+
+        #[test]
         fn test_reader_copy_into_t(ints in proptest::collection::vec(any::<u64>(), 0..=100)) {
             let bytes = ints.iter().flat_map(|int| int.to_le_bytes()).collect::<Vec<u8>>();
             with_readers!(&bytes, |reader| {
