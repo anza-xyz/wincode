@@ -9,41 +9,40 @@ env:
   NIGHTLY: nightly-2025-06-23
 
 jobs:
-  fmt:
-    name: rustfmt & miri (nightly)
+  nightly:
+    name: rustfmt, clippy & miri (nightly)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.NIGHTLY }}
-          components: rustfmt, miri, rust-src
+          components: rustfmt, clippy, miri, rust-src
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
       - name: rustfmt (check)
         run: cargo +${{ env.NIGHTLY }} fmt --all -- --check
-      - name: miri (check)
-        run: cargo +${{ env.NIGHTLY }} miri test --all-features --lib --bins --no-fail-fast --workspace --exclude wincode-fuzz
-
-  lint-test:
-    name: clippy & tests (MSRV)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.89.0
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
       - name: clippy (deny warnings)
         run: cargo +${{ env.NIGHTLY }} clippy --all-targets --all-features -- -D warnings
       - name: clippy (empty features)
         run: cargo +${{ env.NIGHTLY }} clippy --no-default-features -- -D warnings
       - name: clippy (alloc)
         run: cargo +${{ env.NIGHTLY }} clippy --no-default-features --features alloc -- -D warnings
+      - name: miri (check)
+        run: cargo +${{ env.NIGHTLY }} miri test --all-features --lib --bins --no-fail-fast --workspace --exclude wincode-fuzz
+
+  test:
+    name: tests (MSRV)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.89.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: tests
         run: cargo test --all-features --all-targets --no-fail-fast --workspace
       - name: test alloc
