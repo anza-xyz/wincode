@@ -79,17 +79,18 @@ impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
 
     fn advance(&mut self, mut n_bytes: usize) -> ReadResult<()> {
         use io::BufRead as _;
-        loop {
-            let buffered = self.buffer().len();
-            if let Some(remaining) = n_bytes.checked_sub(buffered) {
-                self.consume(buffered);
+        while n_bytes != 0 {
+            let buf_len = loop {
+                match self.fill_buf() {
+                    Ok(buf) => break buf.len(),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
+
+            if let Some(remaining) = n_bytes.checked_sub(buf_len) {
+                self.consume(buf_len);
                 n_bytes = remaining;
-                if n_bytes == 0 {
-                    break;
-                }
-                if self.fill_buf()?.is_empty() {
-                    return Err(read_size_limit(n_bytes));
-                }
             } else {
                 self.consume(n_bytes);
                 break;
