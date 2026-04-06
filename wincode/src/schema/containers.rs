@@ -536,9 +536,26 @@ impl<'de, T, C, R> SchemaReadIter<'de, T, C, R>
 where
     T: SchemaRead<'de, C>,
     C: ConfigCore,
-    R: Reader<'de>,
 {
-    fn collect_result<Coll: FromIterator<T::Dst>>(reader: R, remaining: usize) -> ReadResult<Coll> {
+    fn collect_result<Coll: FromIterator<T::Dst>>(
+        len: usize,
+        mut reader: impl Reader<'de>,
+    ) -> ReadResult<Coll> {
+        if let TypeMeta::Static { size, .. } = T::TYPE_META {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let reader = unsafe { reader.as_trusted_for(size * len) }?;
+            SchemaReadIter::<T, C, _>::collect_impl(reader, len)
+        } else {
+            SchemaReadIter::<T, C, _>::collect_impl(reader, len)
+        }
+    }
+
+    fn collect_impl<Coll: FromIterator<T::Dst>>(reader: R, remaining: usize) -> ReadResult<Coll>
+    where
+        R: Reader<'de>,
+    {
         let mut iter = Self {
             reader,
             remaining,
@@ -649,17 +666,8 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
         let len =
             Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
-        let result = if let TypeMeta::Static { size, .. } = <Coll::Item as SchemaRead<C>>::TYPE_META
-        {
-            #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `Coll::Item::TYPE_META` specifies a static size, so `len` reads will
-            // consume `size * len` bytes, fully consuming the trusted window.
-            let reader = unsafe { reader.as_trusted_for(size * len) }?;
-            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
-        } else {
-            SchemaReadIter::<Coll::Item, C, _>::collect_result(reader, len)
-        };
-        dst.write(result?);
+        let coll = SchemaReadIter::<Coll::Item, C, ()>::collect_result(len, reader)?;
+        dst.write(coll);
         Ok(())
     }
 }
@@ -732,16 +740,8 @@ where
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
         let len = Len::read_prealloc_check::<(K::Dst, V::Dst)>(reader.by_ref())?;
-        let result = if let TypeMeta::Static { size, .. } = <(K, V) as SchemaRead<C>>::TYPE_META {
-            #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-            // will consume `size * len` bytes, fully consuming the trusted window.
-            let reader = unsafe { reader.as_trusted_for(size * len) }?;
-            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
-        } else {
-            SchemaReadIter::<(K, V), C, _>::collect_result(reader, len)
-        };
-        dst.write(result?);
+        let coll = SchemaReadIter::<(K, V), C, ()>::collect_result(len, reader)?;
+        dst.write(coll);
         Ok(())
     }
 }
