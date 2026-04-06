@@ -421,7 +421,7 @@ where
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len, C>(value.iter())
+        size_of_elem_iter::<T, Len, C, _>(value.iter())
     }
 
     #[inline(always)]
@@ -453,7 +453,7 @@ where
             return Ok(());
         }
 
-        write_elem_iter::<T, Len, C>(writer, src.iter())
+        write_elem_iter::<T, Len, C, _>(writer, src.iter())
     }
 }
 
@@ -626,7 +626,7 @@ where
 
     #[inline]
     fn size_of(src: &Coll) -> WriteResult<usize> {
-        size_of_elem_iter::<Coll::Item, Len, C>(src.into_iter())
+        size_of_elem_iter::<Coll::Item, Len, C, _>(src.into_iter())
     }
 
     #[inline]
@@ -707,51 +707,15 @@ where
     type Src = Coll;
 
     #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
     fn size_of(src: &Coll) -> WriteResult<usize> {
-        let mut src = src.into_iter();
-        if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) = (
-            <K as SchemaWrite<C>>::TYPE_META,
-            <V as SchemaWrite<C>>::TYPE_META,
-        ) {
-            return Ok(<Len>::write_bytes_needed(src.len())? + (ks + vs) * src.len());
-        }
-        Ok(<Len>::write_bytes_needed(src.len())?
-            + src.try_fold(0usize, |acc, (k, v)| -> WriteResult<usize> {
-                Ok(acc + <K>::size_of(k)? + <V>::size_of(v)?)
-            })?)
+        size_of_elem_iter::<(&K, &V), Len, C, _>(src.into_iter())
     }
 
     #[inline]
-    #[allow(clippy::arithmetic_side_effects)]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
         let src = src.into_iter();
-        <Len>::prealloc_check::<(K, V)>(src.len())?;
-        let mut writer = writer;
-        if let (TypeMeta::Static { size: ks, .. }, TypeMeta::Static { size: vs, .. }) = (
-            <K as SchemaWrite<C>>::TYPE_META,
-            <V as SchemaWrite<C>>::TYPE_META,
-        ) {
-            let needed = <Len>::write_bytes_needed(src.len())? + (ks + vs) * src.len();
-            // SAFETY: `needed` is the size of the encoded length plus the sizes of the key-value
-            // pairs. `Len::write` and `len` writes of `(K::Src, V::Src)` will write `needed` bytes,
-            // fully initializing the trusted window.
-            let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-            <Len>::write(writer.by_ref(), src.len())?;
-            for (k, v) in src {
-                <K>::write(writer.by_ref(), k)?;
-                <V>::write(writer.by_ref(), v)?;
-            }
-            writer.finish()?;
-            return Ok(());
-        }
-
-        <Len>::write(writer.by_ref(), src.len())?;
-        for (k, v) in src {
-            <K>::write(writer.by_ref(), k)?;
-            <V>::write(writer.by_ref(), v)?;
-        }
-        Ok(())
+        Len::prealloc_check::<(K, V)>(src.len())?;
+        write_elem_iter::<(&K, &V), Len, C, _>(writer, src)
     }
 }
 

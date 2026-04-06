@@ -52,7 +52,7 @@ use {
         io::*,
         len::SeqLen,
     },
-    core::mem::MaybeUninit,
+    core::{borrow::Borrow, mem::MaybeUninit},
 };
 
 pub mod containers;
@@ -422,13 +422,14 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-fn size_of_elem_iter<'a, T, Len, C>(
-    value: impl ExactSizeIterator<Item = &'a T::Src>,
+fn size_of_elem_iter<T, Len, C, Item>(
+    value: impl ExactSizeIterator<Item = Item>,
 ) -> WriteResult<usize>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    T: SchemaWrite<C> + 'a,
+    T: SchemaWrite<C>,
+    Item: Borrow<T::Src>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
@@ -436,7 +437,7 @@ where
     // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
     Ok(Len::write_bytes_needed(value.len())?
         + (value
-            .map(T::size_of)
+            .map(|x| T::size_of(x.borrow()))
             .try_fold(0usize, |acc, x| x.map(|x| acc + x))?))
 }
 
@@ -450,18 +451,19 @@ where
     T: SchemaWrite<C>,
     T::Src: Sized,
 {
-    size_of_elem_iter::<T, Len, C>(value.iter())
+    size_of_elem_iter::<T, Len, C, _>(value.iter())
 }
 
 #[inline(always)]
-fn write_elem_iter<'a, T, Len, C>(
+fn write_elem_iter<T, Len, C, Item>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item = &'a T::Src>,
+    src: impl ExactSizeIterator<Item = Item>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    T: SchemaWrite<C> + 'a,
+    T: SchemaWrite<C>,
+    Item: Borrow<T::Src>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
@@ -472,7 +474,7 @@ where
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer.by_ref(), src.len())?;
         for item in src {
-            T::write(writer.by_ref(), item)?;
+            T::write(writer.by_ref(), item.borrow())?;
         }
         writer.finish()?;
         return Ok(());
@@ -480,7 +482,7 @@ where
 
     Len::write(writer.by_ref(), src.len())?;
     for item in src {
-        T::write(writer.by_ref(), item)?;
+        T::write(writer.by_ref(), item.borrow())?;
     }
     Ok(())
 }
@@ -497,7 +499,7 @@ where
     T: SchemaWrite<C> + 'a,
 {
     Len::prealloc_check::<T>(src.len())?;
-    write_elem_iter::<T, Len, C>(writer, src)
+    write_elem_iter::<T, Len, C, _>(writer, src)
 }
 
 #[inline(always)]
@@ -527,7 +529,7 @@ where
         writer.finish()?;
         return Ok(());
     }
-    write_elem_iter::<T, Len, C>(writer, src.iter())
+    write_elem_iter::<T, Len, C, _>(writer, src.iter())
 }
 
 #[inline(always)]
