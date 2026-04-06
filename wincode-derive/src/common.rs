@@ -138,7 +138,7 @@ pub(crate) enum TraitImpl {
 
 impl Display for TraitImpl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -303,7 +303,7 @@ fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone 
     ('a'..='z').cycle().enumerate().map(move |(i, ch)| {
         let wrap = i / 26;
         let name = if wrap == 0 {
-            format!("{}{}", prefix, ch)
+            format!("{prefix}{ch}")
         } else {
             format!("{}{}{}", prefix, ch, wrap - 1)
         };
