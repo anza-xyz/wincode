@@ -2680,7 +2680,7 @@ mod tests {
             prop_assert_eq!(&test_data, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
 
-            type TestMapSeq = containers::SeqKv<TestMap, BincodeLen>;
+            type TestMapSeq = containers::Seq<TestMap, BincodeLen>;
             let test_seq_serialized = TestMapSeq::serialize(&test_data).unwrap();
             assert_eq!(test_seq_serialized, wincode_serialized);
             let test_seq_deserialized = TestMapSeq::deserialize(&test_seq_serialized).unwrap();
@@ -2692,13 +2692,12 @@ mod tests {
             let test_deserialized: TestMap = deserialize(&regular_serialized).unwrap();
             prop_assert_eq!(test_data, test_deserialized);
 
-            type RegularMapSeq = containers::SeqKv<RegularMap, BincodeLen>;
+            type RegularMapSeq = containers::Seq<RegularMap, BincodeLen>;
             let regular_seq_serialized = RegularMapSeq::serialize(&regular_deserialized).unwrap();
             assert_eq!(regular_serialized, regular_seq_serialized);
             let regular_seq_deserialized = RegularMapSeq::deserialize(&regular_seq_serialized).unwrap();
             prop_assert_eq!(&regular_deserialized, &regular_seq_deserialized);
         }
-
 
         #[test]
         fn test_btree_map_zero_copy(map in proptest::collection::btree_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {

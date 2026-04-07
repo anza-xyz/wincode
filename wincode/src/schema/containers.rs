@@ -74,7 +74,7 @@ use {
         len::SeqLen,
         schema::{
             SchemaReadContext, SchemaWrite, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
-            write_elem_iter_prealloc_check, write_elem_slice_prealloc_check,
+            write_elem_slice_prealloc_check,
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
@@ -602,6 +602,14 @@ where
 /// [`FromIterator`] (for reading) and whose references implement
 /// [`IntoIterator`] with an [`ExactSizeIterator`] (for writing).
 ///
+/// Works for both element sequences and key-value maps:
+/// - For element collections (sets, ordered sets, etc.) whose reference
+///   iterators yield `&T`, the schema for `T` is used directly.
+/// - For map-like collections whose reference iterators yield `(&K, &V)` pairs,
+///   the pair itself acts as the schema (automatically satisfied when `K` and
+///   `V` implement `SchemaWrite<C>`).
+///
+///
 /// Intended for external collection types that cannot have a dedicated
 /// schema impl added directly. Unlike [`Vec`], [`VecDeque`], and [`BinaryHeap`], this
 /// container relies on the collection's [`FromIterator`] impl rather than
@@ -618,13 +626,15 @@ where
 /// # Examples
 ///
 /// ```ignore
-/// use some_crate::IndexSet;
+/// use some_crate::{IndexSet, MyMap};
 /// use wincode::{SchemaRead, SchemaWrite, containers::Seq, len::BincodeLen};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
 /// struct MyData {
 ///     #[wincode(with = "Seq<IndexSet<u32>, BincodeLen>")]
 ///     items: IndexSet<u32>,
+///     #[wincode(with = "Seq<MyMap<u32, u64>, BincodeLen>")]
+///     map: MyMap<u32, u64>,
 /// }
 /// ```
 #[cfg(feature = "alloc")]
@@ -632,85 +642,6 @@ pub struct Seq<Coll, Len>(PhantomData<(Coll, Len)>);
 
 #[cfg(feature = "alloc")]
 unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, Len>
-where
-    Len: SeqLen<C>,
-    Coll: IntoIterator,
-    Coll::Item: SchemaWrite<C>,
-    for<'a> &'a Coll: IntoIterator<Item = &'a <Coll::Item as SchemaWrite<C>>::Src>,
-    for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
-{
-    type Src = Coll;
-
-    #[inline]
-    fn size_of(src: &Coll) -> WriteResult<usize> {
-        size_of_elem_iter::<Coll::Item, Len, C, _>(src.into_iter())
-    }
-
-    #[inline]
-    fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
-        write_elem_iter_prealloc_check::<Coll::Item, Len, C>(writer, src.into_iter())
-    }
-}
-
-#[cfg(feature = "alloc")]
-unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
-where
-    Len: SeqLen<C>,
-    Coll: IntoIterator,
-    Coll::Item: SchemaRead<'de, C>,
-    Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
-{
-    type Dst = Coll;
-
-    #[inline]
-    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
-        let len =
-            Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
-        let coll = SchemaReadIter::<Coll::Item, C, ()>::collect_result(len, reader)?;
-        dst.write(coll);
-        Ok(())
-    }
-}
-
-/// A generic key-value sequence schema for custom map-like collections whose
-/// references implement [`IntoIterator`] with an [`ExactSizeIterator`] (for
-/// writing) and that implement [`FromIterator`] over the owned item type (for
-/// reading).
-///
-/// The key and value schemas are inferred from the collection's iterator item
-/// type. For a collection whose reference iterator yields `(&K, &V)` pairs,
-/// both `(&K, &V): SchemaWrite<C>` must hold (satisfied automatically when
-/// `K` and `V` implement `SchemaWrite<C>`), and `(K, V): SchemaRead<'de, C>`
-/// must hold for reading.
-///
-/// Intended for external map types that cannot have a dedicated schema impl
-/// added directly.
-///
-/// # Allocation efficiency
-///
-/// During deserialization, the iterator passed to [`FromIterator`] has a
-/// precise [`size_hint`](Iterator::size_hint) matching the number of pairs to
-/// be read, unless a read error is encountered. Collections whose
-/// [`FromIterator`] implementation uses the size hint to preallocate capacity
-/// will allocate optimally. Collections that do not use it will not benefit.
-///
-/// # Examples
-///
-/// ```ignore
-/// use some_crate::MyMap;
-/// use wincode::{SchemaRead, SchemaWrite, containers::SeqKv, len::BincodeLen};
-///
-/// #[derive(SchemaRead, SchemaWrite)]
-/// struct MyData {
-///     #[wincode(with = "SeqKv<MyMap<u32, u64>, BincodeLen>")]
-///     items: MyMap<u32, u64>,
-/// }
-/// ```
-#[cfg(feature = "alloc")]
-pub struct SeqKv<Coll, Len>(PhantomData<(Coll, Len)>);
-
-#[cfg(feature = "alloc")]
-unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for SeqKv<Coll, Len>
 where
     Len: SeqLen<C>,
     Coll: IntoIterator,
@@ -736,7 +667,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for SeqKv<Coll, Len>
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
 where
     Len: SeqLen<C>,
     Coll: IntoIterator,
