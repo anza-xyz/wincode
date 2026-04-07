@@ -78,7 +78,7 @@ use {
         },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
-    core::marker::PhantomData,
+    core::{borrow::Borrow, marker::PhantomData},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -672,10 +672,16 @@ where
     }
 }
 
-/// A generic key-value sequence schema for custom map-like collections that
-/// implement [`FromIterator<(K::Dst, V::Dst)>`](FromIterator) (for reading)
-/// and whose references implement [`IntoIterator`] yielding
-/// `(&K::Src, &V::Src)` pairs with an [`ExactSizeIterator`] (for writing).
+/// A generic key-value sequence schema for custom map-like collections whose
+/// references implement [`IntoIterator`] with an [`ExactSizeIterator`] (for
+/// writing) and that implement [`FromIterator`] over the owned item type (for
+/// reading).
+///
+/// The key and value schemas are inferred from the collection's iterator item
+/// type. For a collection whose reference iterator yields `(&K, &V)` pairs,
+/// both `(&K, &V): SchemaWrite<C>` must hold (satisfied automatically when
+/// `K` and `V` implement `SchemaWrite<C>`), and `(K, V): SchemaRead<'de, C>`
+/// must hold for reading.
 ///
 /// Intended for external map types that cannot have a dedicated schema impl
 /// added directly.
@@ -696,51 +702,54 @@ where
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
 /// struct MyData {
-///     #[wincode(with = "SeqKv<MyMap<u32, u64>, u32, u64, BincodeLen>")]
+///     #[wincode(with = "SeqKv<MyMap<u32, u64>, BincodeLen>")]
 ///     items: MyMap<u32, u64>,
 /// }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct SeqKv<Coll, K, V, Len>(PhantomData<(Coll, K, V, Len)>);
+pub struct SeqKv<Coll, Len>(PhantomData<(Coll, Len)>);
 
 #[cfg(feature = "alloc")]
-unsafe impl<Coll, K, V, Len, C: ConfigCore> SchemaWrite<C> for SeqKv<Coll, K, V, Len>
+unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for SeqKv<Coll, Len>
 where
     Len: SeqLen<C>,
-    K: SchemaWrite<C>,
-    V: SchemaWrite<C>,
-    for<'a> &'a Coll: IntoIterator<Item = (&'a K::Src, &'a V::Src)>,
+    Coll: IntoIterator,
+    for<'a> &'a Coll: IntoIterator,
+    for<'a> <&'a Coll as IntoIterator>::Item: SchemaWrite<C>,
+    for<'a> <&'a Coll as IntoIterator>::Item:
+        Borrow<<<&'a Coll as IntoIterator>::Item as SchemaWrite<C>>::Src>,
     for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
 {
     type Src = Coll;
 
     #[inline]
     fn size_of(src: &Coll) -> WriteResult<usize> {
-        size_of_elem_iter::<(&K, &V), Len, C, _>(src.into_iter())
+        size_of_elem_iter::<<&Coll as IntoIterator>::Item, Len, C, _>(src.into_iter())
     }
 
     #[inline]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
-        let src = src.into_iter();
-        Len::prealloc_check::<(K, V)>(src.len())?;
-        write_elem_iter::<(&K, &V), Len, C, _>(writer, src)
+        let iter = src.into_iter();
+        Len::prealloc_check::<Coll::Item>(iter.len())?;
+        write_elem_iter::<<&Coll as IntoIterator>::Item, Len, C, _>(writer, iter)
     }
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl<'de, Coll, K, V, Len, C: ConfigCore> SchemaRead<'de, C> for SeqKv<Coll, K, V, Len>
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for SeqKv<Coll, Len>
 where
     Len: SeqLen<C>,
-    K: SchemaRead<'de, C>,
-    V: SchemaRead<'de, C>,
-    Coll: FromIterator<(K::Dst, V::Dst)>,
+    Coll: IntoIterator,
+    Coll::Item: SchemaRead<'de, C>,
+    Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
 {
     type Dst = Coll;
 
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
-        let len = Len::read_prealloc_check::<(K::Dst, V::Dst)>(reader.by_ref())?;
-        let coll = SchemaReadIter::<(K, V), C, ()>::collect_result(len, reader)?;
+        let len =
+            Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
+        let coll = SchemaReadIter::<Coll::Item, C, ()>::collect_result(len, reader)?;
         dst.write(coll);
         Ok(())
     }

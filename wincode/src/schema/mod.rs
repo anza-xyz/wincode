@@ -2680,8 +2680,7 @@ mod tests {
             prop_assert_eq!(&test_data, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
 
-            type TestSetSeq = containers::Seq<HashSet<u32, SumHasher>, BincodeLen>;
-            type TestMapSeq = containers::SeqKv<TestMap, String, TestSetSeq, BincodeLen>;
+            type TestMapSeq = containers::SeqKv<TestMap, BincodeLen>;
             let test_seq_serialized = TestMapSeq::serialize(&test_data).unwrap();
             assert_eq!(test_seq_serialized, wincode_serialized);
             let test_seq_deserialized = TestMapSeq::deserialize(&test_seq_serialized).unwrap();
@@ -2693,8 +2692,7 @@ mod tests {
             let test_deserialized: TestMap = deserialize(&regular_serialized).unwrap();
             prop_assert_eq!(test_data, test_deserialized);
 
-            type RegualarSetSeq = containers::Seq<HashSet<u32>, BincodeLen>;
-            type RegularMapSeq = containers::SeqKv<RegularMap, String, RegualarSetSeq, BincodeLen>;
+            type RegularMapSeq = containers::SeqKv<RegularMap, BincodeLen>;
             let regular_seq_serialized = RegularMapSeq::serialize(&regular_deserialized).unwrap();
             assert_eq!(regular_serialized, regular_seq_serialized);
             let regular_seq_deserialized = RegularMapSeq::deserialize(&regular_seq_serialized).unwrap();
