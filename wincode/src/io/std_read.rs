@@ -82,6 +82,7 @@ impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
         while n_bytes != 0 {
             let buf_len = loop {
                 match self.fill_buf() {
+                    Ok([]) => return Err(read_size_limit(n_bytes)),
                     Ok(buf) => break buf.len(),
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                     Err(e) => return Err(e.into()),

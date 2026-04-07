@@ -615,8 +615,13 @@ mod tests {
                 });
             } else {
                 with_untrusted_readers!(&bytes, |reader| {
-                    prop_assert!(matches!(reader.advance(skip), Err(ReadError::ReadSizeLimit(x)) if x == skip));
+                    prop_assert!(matches!(reader.advance(skip), Err(ReadError::ReadSizeLimit(x)) if x <= skip));
                 });
+                #[cfg(feature = "std")]
+                {
+                    let mut reader = std::io::BufReader::new(bytes.as_slice());
+                    prop_assert!(matches!(reader.advance(skip), Err(ReadError::ReadSizeLimit(x)) if x <= skip));
+                }
             }
         }
 
