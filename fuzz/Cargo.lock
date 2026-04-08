@@ -3030,14 +3030,14 @@ dependencies = [
 
 [[package]]
 name = "solana-fee-calculator"
-version = "3.1.0"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b2a5675b2cf8d407c672dc1776492b1f382337720ddf566645ae43237a3d8c3"
+checksum = "57e8add96b5741573e9f7529c4bb7719cfcfa999c3847a68cdfaef0cb6adf567"
 dependencies = [
  "log",
  "serde",
  "serde_derive",
- "wincode 0.4.9",
+ "wincode 0.5.1",
 ]
 
 [[package]]
@@ -4493,7 +4493,7 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "pastey",
  "proc-macro2",
@@ -4501,6 +4501,7 @@ dependencies = [
  "solana-short-vec",
  "thiserror 2.0.18",
  "uuid",
+ "wincode-derive",
 ]
 
 [[package]]
@@ -4532,7 +4533,7 @@ dependencies = [
  "solana-transaction",
  "uuid",
  "wincode 0.4.9",
- "wincode 0.5.0",
+ "wincode 0.5.1",
  "wincode-derive",
 ]
 
