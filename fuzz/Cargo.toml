@@ -14,19 +14,18 @@ serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
 # Solana crates in this target still derive against wincode 0.4.x.
-wincode_0_4 = { package = "wincode", version = "0.4", features = ["solana-short-vec"] }
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
 wincode-derive = { path = "../wincode-derive" }
 
-solana-address = { version = "2.3.0", features = ["wincode"] }
-solana-hash = { version = "4.2.0", features = ["wincode"] }
-solana-fee-calculator = { version = "3.1.0", features = ["wincode"] }
-solana-message = { version = "4.0.0", features = ["wincode"] }
+solana-address = { version = "2.6.0", features = ["wincode"] }
+solana-hash = { version = "4.3.0", features = ["wincode"] }
+solana-fee-calculator = { version = "3.2.0", features = ["wincode"] }
+solana-message = { version = "4.1.0", features = ["wincode"] }
 solana-nonce = { version = "3.1.0", features = ["wincode"] }
-solana-signature = { version = "3.3.0", features = ["wincode"] }
-solana-transaction = { version = "4.0.0", features = ["wincode"] }
-solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "e33a858d174e20de14acd1d0d4d014315a963401", features = ["agave-unstable-api"] }
-agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "e33a858d174e20de14acd1d0d4d014315a963401", features = ["agave-unstable-api"] }
+solana-signature = { version = "3.4.0", features = ["wincode"] }
+solana-transaction = { version = "4.1.0", features = ["wincode"] }
+solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
+agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
@@ -51,10 +50,3 @@ bench = false
 [patch.crates-io]
 wincode = { path = "../wincode" }
 wincode-derive = { path = "../wincode-derive" }
-solana-message = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-address = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-hash = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-instruction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-signature = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-transaction = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
-solana-transaction-error = { git = "https://github.com/anza-xyz/solana-sdk", rev = "288790cd5eb8bf711931cf80409eadc4d2ddc81a" }
