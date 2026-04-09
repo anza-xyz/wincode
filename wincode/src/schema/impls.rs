@@ -187,12 +187,18 @@ impl_float!(f32, f64);
 macro_rules! impl_pointer_width {
     ($($type:ty => $target:ty),*) => {
         $(
+            #[cfg(target_pointer_width = "64")]
+            unsafe impl<C: ConfigCore> ZeroCopy<C> for $type where C::IntEncoding: ZeroCopy<C> {}
+
             unsafe impl<C: ConfigCore> SchemaWrite<C> for $type {
                 type Src = $type;
 
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        #[cfg(target_pointer_width = "64")]
+                        zero_copy: C::IntEncoding::ZERO_COPY,
+                        #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
                 } else {
@@ -216,6 +222,9 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        #[cfg(target_pointer_width = "64")]
+                        zero_copy: C::IntEncoding::ZERO_COPY,
+                        #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
                 } else {
