@@ -193,6 +193,11 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
+                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
+                        #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                        #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
                 } else {
@@ -216,6 +221,11 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
+                        #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
+                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
+                        #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                        #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
                 } else {
