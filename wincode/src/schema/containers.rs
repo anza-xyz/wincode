@@ -69,7 +69,7 @@ use {
 use {
     crate::{
         context,
-        error::{ReadError, WriteResult},
+        error::WriteResult,
         io::Writer,
         len::SeqLen,
         schema::{
@@ -517,86 +517,55 @@ where
     }
 }
 
-/// Iterator that reads `T` items from a [`Reader`] via [`SchemaRead::get`],
-/// storing the first error for later inspection.
+/// Newtype that collects a fallible iterator into `Result<C, E>` while preserving `size_hint`.
 ///
-/// Unlike `collect::<Result<C, _>>()` this preserves `remaining` in `size_hint`
-/// so that collections can preallocate the expected capacity.
-#[cfg(feature = "alloc")]
-struct SchemaReadIter<'de, T, C, R> {
-    reader: R,
-    remaining: usize,
-    error: Option<ReadError>,
-    #[allow(clippy::type_complexity)]
-    _marker: PhantomData<fn() -> (&'de (), T, C)>,
-}
+/// Unlike `collect::<Result<V, E>>()`, which loses the size hint on error, this type
+/// drives `V::from_iter` through an adaptor that stops on the first error but keeps
+/// `size_hint` accurate so that `V` can preallocate its full expected capacity.
+struct ResultPrealloc<T, E>(Result<T, E>);
 
-#[cfg(feature = "alloc")]
-impl<'de, T, C, R> SchemaReadIter<'de, T, C, R>
-where
-    T: SchemaRead<'de, C>,
-    C: ConfigCore,
-{
-    fn collect_result<Coll: FromIterator<T::Dst>>(
-        len: usize,
-        mut reader: impl Reader<'de>,
-    ) -> ReadResult<Coll> {
-        if let TypeMeta::Static { size, .. } = T::TYPE_META {
-            #[allow(clippy::arithmetic_side_effects)]
-            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-            // will consume `size * len` bytes, fully consuming the trusted window.
-            let reader = unsafe { reader.as_trusted_for(size * len) }?;
-            SchemaReadIter::<T, C, _>::collect_impl(reader, len)
-        } else {
-            SchemaReadIter::<T, C, _>::collect_impl(reader, len)
+impl<A, E, V: FromIterator<A>> FromIterator<Result<A, E>> for ResultPrealloc<V, E> {
+    fn from_iter<I: IntoIterator<Item = Result<A, E>>>(iter: I) -> ResultPrealloc<V, E> {
+        struct Iter<I, E> {
+            inner: I,
+            error: Option<E>,
         }
-    }
 
-    fn collect_impl<Coll: FromIterator<T::Dst>>(reader: R, remaining: usize) -> ReadResult<Coll>
-    where
-        R: Reader<'de>,
-    {
-        let mut iter = Self {
-            reader,
-            remaining,
-            error: None,
-            _marker: PhantomData,
-        };
-        let coll = Coll::from_iter(&mut iter);
-        match iter.error {
-            Some(e) => Err(e),
-            None => Ok(coll),
-        }
-    }
-}
+        impl<I: Iterator<Item = Result<T, E>>, T, E> Iterator for Iter<I, E> {
+            type Item = T;
 
-#[cfg(feature = "alloc")]
-impl<'de, T, C, R> Iterator for SchemaReadIter<'de, T, C, R>
-where
-    T: SchemaRead<'de, C>,
-    C: ConfigCore,
-    R: Reader<'de>,
-{
-    type Item = T::Dst;
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                self.inner.next()?.map_err(|e| self.error = Some(e)).ok()
+            }
 
-    #[inline]
-    fn next(&mut self) -> Option<T::Dst> {
-        self.remaining = self.remaining.checked_sub(1)?;
-        match T::get(self.reader.by_ref()) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                self.error = Some(e);
-                self.remaining = 0;
-                None
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                self.inner.size_hint()
             }
         }
-    }
 
-    #[inline]
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.remaining, Some(self.remaining))
+        let mut iter = Iter {
+            inner: iter.into_iter(),
+            error: None,
+        };
+        let result = V::from_iter(&mut iter);
+        ResultPrealloc(iter.error.map_or(Ok(result), Err))
     }
 }
+
+/// Extension trait that adds [`collect_result_prealloc`](CollectResultExt::collect_result_prealloc)
+/// to any fallible iterator, collecting into `Result<B, E>` with preallocation-friendly size hints.
+trait CollectResultExt<T, E>: Iterator<Item = Result<T, E>> {
+    #[inline]
+    fn collect_result_prealloc<B: FromIterator<T>>(self) -> Result<B, E>
+    where
+        Self: Sized,
+    {
+        self.collect::<ResultPrealloc<B, E>>().0
+    }
+}
+impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>> {}
 
 /// A generic sequence schema for custom collections that implement
 /// [`FromIterator`] (for reading) and whose references implement
@@ -677,7 +646,20 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
         let len =
             Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
-        let coll = SchemaReadIter::<Coll::Item, C, ()>::collect_result(len, reader)?;
+
+        let coll = if let TypeMeta::Static { size, .. } = Coll::Item::TYPE_META {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `Item::TYPE_META` specifies a static size, so `len` reads of `Item::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            (0..len)
+                .map(|_| Coll::Item::get(reader.by_ref()))
+                .collect_result_prealloc()?
+        } else {
+            (0..len)
+                .map(|_| Coll::Item::get(reader.by_ref()))
+                .collect_result_prealloc()?
+        };
         dst.write(coll);
         Ok(())
     }
