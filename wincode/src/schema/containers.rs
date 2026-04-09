@@ -59,8 +59,17 @@
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
-    crate::{TypeMeta, config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead},
+    crate::{
+        TypeMeta,
+        config::ConfigCore,
+        error::{ReadResult, WriteResult},
+        io::{Reader, Writer},
+        len::SeqLen,
+        schema::{SchemaRead, SchemaWrite, size_of_elem_iter, write_elem_iter},
+    },
     core::{
+        borrow::Borrow,
+        marker::PhantomData,
         mem::{self, MaybeUninit},
         ptr,
     },
@@ -69,16 +78,9 @@ use {
 use {
     crate::{
         context,
-        error::WriteResult,
-        io::Writer,
-        len::SeqLen,
-        schema::{
-            SchemaReadContext, SchemaWrite, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
-            write_elem_slice_prealloc_check,
-        },
+        schema::{SchemaReadContext, size_of_elem_slice, write_elem_slice_prealloc_check},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
-    core::{borrow::Borrow, marker::PhantomData},
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -605,10 +607,8 @@ impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>
 ///     map: MyMap<u32, u64>,
 /// }
 /// ```
-#[cfg(feature = "alloc")]
 pub struct FromIntoIterator<Coll, Len>(PhantomData<(Coll, Len)>);
 
-#[cfg(feature = "alloc")]
 unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for FromIntoIterator<Coll, Len>
 where
     Len: SeqLen<C>,
@@ -632,7 +632,6 @@ where
     }
 }
 
-#[cfg(feature = "alloc")]
 unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for FromIntoIterator<Coll, Len>
 where
     Len: SeqLen<C>,

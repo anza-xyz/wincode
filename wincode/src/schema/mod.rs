@@ -423,7 +423,7 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
 fn size_of_elem_iter<T, Len, C>(
-    value: impl ExactSizeIterator<Item = impl Borrow<T::Src>>,
+    value: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<usize>
 where
     C: ConfigCore,
