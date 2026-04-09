@@ -52,7 +52,7 @@ use {
         io::*,
         len::SeqLen,
     },
-    core::mem::MaybeUninit,
+    core::{borrow::Borrow, mem::MaybeUninit},
 };
 
 pub mod containers;
@@ -422,13 +422,13 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-fn size_of_elem_iter<'a, T, Len, C>(
-    value: impl ExactSizeIterator<Item = &'a T::Src>,
+fn size_of_elem_iter<T, Len, C>(
+    value: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<usize>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    T: SchemaWrite<C> + 'a,
+    T: SchemaWrite<C>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
@@ -436,7 +436,7 @@ where
     // Extremely unlikely a type-in-memory's size will overflow usize::MAX.
     Ok(Len::write_bytes_needed(value.len())?
         + (value
-            .map(T::size_of)
+            .map(|x| T::size_of(x.borrow()))
             .try_fold(0usize, |acc, x| x.map(|x| acc + x))?))
 }
 
@@ -454,14 +454,14 @@ where
 }
 
 #[inline(always)]
-fn write_elem_iter<'a, T, Len, C>(
+fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item = &'a T::Src>,
+    src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    T: SchemaWrite<C> + 'a,
+    T: SchemaWrite<C>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
@@ -472,7 +472,7 @@ where
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         Len::write(writer.by_ref(), src.len())?;
         for item in src {
-            T::write(writer.by_ref(), item)?;
+            T::write(writer.by_ref(), item.borrow())?;
         }
         writer.finish()?;
         return Ok(());
@@ -480,7 +480,7 @@ where
 
     Len::write(writer.by_ref(), src.len())?;
     for item in src {
-        T::write(writer.by_ref(), item)?;
+        T::write(writer.by_ref(), item.borrow())?;
     }
     Ok(())
 }
@@ -2678,13 +2678,24 @@ mod tests {
             prop_assert_eq!(&test_data, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
 
+            type TestMapSeq = containers::FromIntoIterator<TestMap, BincodeLen>;
+            let test_seq_serialized = TestMapSeq::serialize(&test_data).unwrap();
+            assert_eq!(test_seq_serialized, wincode_serialized);
+            let test_seq_deserialized = TestMapSeq::deserialize(&test_seq_serialized).unwrap();
+            prop_assert_eq!(&test_data, &test_seq_deserialized);
+
             type RegularMap = HashMap<String, HashSet<u32>>;
             let regular_deserialized: RegularMap = deserialize(&wincode_serialized).unwrap();
             let regular_serialized = serialize(&regular_deserialized).unwrap();
             let test_deserialized: TestMap = deserialize(&regular_serialized).unwrap();
             prop_assert_eq!(test_data, test_deserialized);
-        }
 
+            type RegularMapSeq = containers::FromIntoIterator<RegularMap, BincodeLen>;
+            let regular_seq_serialized = RegularMapSeq::serialize(&regular_deserialized).unwrap();
+            assert_eq!(regular_serialized, regular_seq_serialized);
+            let regular_seq_deserialized = RegularMapSeq::deserialize(&regular_seq_serialized).unwrap();
+            prop_assert_eq!(&regular_deserialized, &regular_seq_deserialized);
+        }
 
         #[test]
         fn test_btree_map_zero_copy(map in proptest::collection::btree_map(any::<u8>(), any::<StructZeroCopy>(), 0..=100)) {

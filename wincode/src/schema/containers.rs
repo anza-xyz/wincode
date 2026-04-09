@@ -59,8 +59,17 @@
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
-    crate::{TypeMeta, config::ConfigCore, error::ReadResult, io::Reader, schema::SchemaRead},
+    crate::{
+        TypeMeta,
+        config::ConfigCore,
+        error::{ReadResult, WriteResult},
+        io::{Reader, Writer},
+        len::SeqLen,
+        schema::{SchemaRead, SchemaWrite, size_of_elem_iter, write_elem_iter},
+    },
     core::{
+        borrow::Borrow,
+        marker::PhantomData,
         mem::{self, MaybeUninit},
         ptr,
     },
@@ -69,16 +78,9 @@ use {
 use {
     crate::{
         context,
-        error::WriteResult,
-        io::Writer,
-        len::SeqLen,
-        schema::{
-            SchemaReadContext, SchemaWrite, size_of_elem_iter, size_of_elem_slice, write_elem_iter,
-            write_elem_slice_prealloc_check,
-        },
+        schema::{SchemaReadContext, size_of_elem_slice, write_elem_slice_prealloc_check},
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
-    core::marker::PhantomData,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -513,6 +515,150 @@ where
         let vec = <Vec<T, Len>>::get(reader)?;
         // Leverage the vec impl.
         dst.write(collections::BinaryHeap::from(vec));
+        Ok(())
+    }
+}
+
+/// Newtype that collects a fallible iterator into `Result<C, E>` while preserving `size_hint`.
+///
+/// Unlike `collect::<Result<V, E>>()`, which loses the size hint on error, this type
+/// drives `V::from_iter` through an adaptor that stops on the first error but keeps
+/// `size_hint` accurate so that `V` can preallocate its full expected capacity.
+struct ResultPrealloc<T, E>(Result<T, E>);
+
+impl<A, E, V: FromIterator<A>> FromIterator<Result<A, E>> for ResultPrealloc<V, E> {
+    fn from_iter<I: IntoIterator<Item = Result<A, E>>>(iter: I) -> ResultPrealloc<V, E> {
+        struct Iter<I, E> {
+            inner: I,
+            error: Option<E>,
+        }
+
+        impl<I: Iterator<Item = Result<T, E>>, T, E> Iterator for Iter<I, E> {
+            type Item = T;
+
+            #[inline]
+            fn next(&mut self) -> Option<Self::Item> {
+                self.inner.next()?.map_err(|e| self.error = Some(e)).ok()
+            }
+
+            #[inline]
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                self.inner.size_hint()
+            }
+        }
+
+        let mut iter = Iter {
+            inner: iter.into_iter(),
+            error: None,
+        };
+        let result = V::from_iter(&mut iter);
+        ResultPrealloc(iter.error.map_or(Ok(result), Err))
+    }
+}
+
+/// Extension trait that adds [`collect_result_prealloc`](CollectResultExt::collect_result_prealloc)
+/// to any fallible iterator, collecting into `Result<B, E>` with preallocation-friendly size hints.
+trait CollectResultExt<T, E>: Iterator<Item = Result<T, E>> {
+    #[inline]
+    fn collect_result_prealloc<B: FromIterator<T>>(self) -> Result<B, E>
+    where
+        Self: Sized,
+    {
+        self.collect::<ResultPrealloc<B, E>>().0
+    }
+}
+impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>> {}
+
+/// A generic sequence schema for custom collections that implement
+/// [`FromIterator`] (for reading) and whose references implement
+/// [`IntoIterator`] with an [`ExactSizeIterator`] (for writing).
+///
+/// Works for both element sequences and key-value maps:
+/// - For element collections (sets, ordered sets, etc.) whose reference
+///   iterators yield `&T`, the schema for `T` is used directly.
+/// - For map-like collections whose reference iterators yield `(&K, &V)` pairs,
+///   the pair itself acts as the schema (automatically satisfied when `K` and
+///   `V` implement `SchemaWrite<C>`).
+///
+/// Intended for external collection types that cannot have a dedicated
+/// schema impl added directly. Unlike [`Vec`], [`VecDeque`], and [`BinaryHeap`], this
+/// container relies on the collection's [`FromIterator`] impl rather than
+/// writing directly into preallocated memory.
+///
+/// # Allocation efficiency
+///
+/// During deserialization, the iterator passed to [`FromIterator`] has a
+/// precise [`size_hint`](Iterator::size_hint) matching the number of elements
+/// produced, unless a read error is encountered. Collections whose
+/// [`FromIterator`] implementation uses the size hint to preallocate capacity
+/// will allocate optimally. Collections that do not use it will not benefit.
+///
+/// # Examples
+///
+/// ```ignore
+/// use some_crate::{IndexSet, MyMap};
+/// use wincode::{SchemaRead, SchemaWrite, containers::FromIntoIterator, len::BincodeLen};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// struct MyData {
+///     #[wincode(with = "FromIntoIterator<IndexSet<u32>, BincodeLen>")]
+///     items: IndexSet<u32>,
+///     #[wincode(with = "FromIntoIterator<MyMap<u32, u64>, BincodeLen>")]
+///     map: MyMap<u32, u64>,
+/// }
+/// ```
+pub struct FromIntoIterator<Coll, Len>(PhantomData<(Coll, Len)>);
+
+unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for FromIntoIterator<Coll, Len>
+where
+    Len: SeqLen<C>,
+    Coll: IntoIterator,
+    for<'a> &'a Coll: IntoIterator<Item: SchemaWrite<C>, IntoIter: ExactSizeIterator>,
+    for<'a> <&'a Coll as IntoIterator>::Item:
+        Borrow<<<&'a Coll as IntoIterator>::Item as SchemaWrite<C>>::Src>,
+{
+    type Src = Coll;
+
+    #[inline]
+    fn size_of(src: &Coll) -> WriteResult<usize> {
+        size_of_elem_iter::<<&Coll as IntoIterator>::Item, Len, C>(src.into_iter())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
+        let iter = src.into_iter();
+        Len::prealloc_check::<Coll::Item>(iter.len())?;
+        write_elem_iter::<<&Coll as IntoIterator>::Item, Len, C>(writer, iter)
+    }
+}
+
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for FromIntoIterator<Coll, Len>
+where
+    Len: SeqLen<C>,
+    Coll: IntoIterator<Item: SchemaRead<'de, C>>,
+    Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
+{
+    type Dst = Coll;
+
+    #[inline]
+    fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Coll>) -> ReadResult<()> {
+        let len =
+            Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
+
+        let coll = if let TypeMeta::Static { size, .. } = Coll::Item::TYPE_META {
+            #[allow(clippy::arithmetic_side_effects)]
+            // SAFETY: `Item::TYPE_META` specifies a static size, so `len` reads of `Item::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            (0..len)
+                .map(|_| Coll::Item::get(reader.by_ref()))
+                .collect_result_prealloc()?
+        } else {
+            (0..len)
+                .map(|_| Coll::Item::get(reader.by_ref()))
+                .collect_result_prealloc()?
+        };
+        dst.write(coll);
         Ok(())
     }
 }
