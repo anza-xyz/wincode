@@ -562,6 +562,7 @@ mod tests {
             pod_wrapper,
             proptest_config::proptest_cfg,
             serialize,
+            tag_encoding::TagEncoding,
         },
         bincode::Options,
         core::{marker::PhantomData, ptr},
@@ -578,7 +579,7 @@ mod tests {
                 NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                 NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
             },
-            ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
+            ops::{Bound, ControlFlow, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
             result::Result,
             sync::Arc,
@@ -3497,6 +3498,129 @@ mod tests {
             prop_assert_eq!(&value, &wincode_deserialized);
             prop_assert_eq!(wincode_deserialized, bincode_deserialized);
         });
+    }
+
+    #[test]
+    fn test_control_flow_basic() {
+        proptest!(
+            proptest_cfg(),
+            |(
+                value in prop_oneof![
+                    any::<u64>().prop_map(ControlFlow::Break),
+                    any::<String>().prop_map(ControlFlow::Continue),
+                ]
+            )| {
+                let serialized = serialize(&value).unwrap();
+                let deserialized: ControlFlow<u64, String> = deserialize(&serialized).unwrap();
+                prop_assert_eq!(value, deserialized);
+            }
+        );
+    }
+
+    #[test]
+    fn test_control_flow_nested() {
+        proptest!(
+            proptest_cfg(),
+            |(
+                value in prop_oneof![
+                    any::<u32>().prop_map(ControlFlow::Break),
+                    prop_oneof![
+                        any::<u64>().prop_map(ControlFlow::Break),
+                        any::<String>().prop_map(ControlFlow::Continue),
+                    ]
+                    .prop_map(ControlFlow::Continue),
+                ]
+            )| {
+                let serialized = serialize(&value).unwrap();
+                let deserialized: ControlFlow<u32, ControlFlow<u64, String>> =
+                    deserialize(&serialized).unwrap();
+                prop_assert_eq!(value, deserialized);
+            }
+        );
+    }
+
+    #[test]
+    fn test_control_flow_with_complex_types() {
+        use std::collections::HashMap;
+
+        proptest!(
+            proptest_cfg(),
+            |(
+                value in prop_oneof![
+                    any::<bool>().prop_map(ControlFlow::Break),
+                    any::<HashMap<String, Vec<u32>>>().prop_map(ControlFlow::Continue),
+                ]
+            )| {
+                let serialized = serialize(&value).unwrap();
+                let deserialized: ControlFlow<bool, HashMap<String, Vec<u32>>> =
+                    deserialize(&serialized).unwrap();
+                prop_assert_eq!(value, deserialized);
+            }
+        );
+    }
+
+    #[test]
+    fn test_control_flow_type_meta_static() {
+        assert!(matches!(
+            <ControlFlow<u64, u64> as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 12,
+                zero_copy: false
+            }
+        ));
+
+        proptest!(
+            proptest_cfg(),
+            |(
+                value in prop_oneof![
+                    any::<u64>().prop_map(ControlFlow::Break),
+                    any::<u64>().prop_map(ControlFlow::Continue),
+                ]
+            )| {
+                let serialized = serialize(&value).unwrap();
+                let deserialized: ControlFlow<u64, u64> = deserialize(&serialized).unwrap();
+                prop_assert_eq!(value, deserialized);
+            }
+        );
+    }
+
+    #[test]
+    fn test_control_flow_type_meta_dynamic() {
+        assert!(matches!(
+            <ControlFlow<u64, u32> as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+        assert!(matches!(
+            <ControlFlow<u64, String> as SchemaRead<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        ));
+
+        proptest!(
+            proptest_cfg(),
+            |(
+                value in prop_oneof![
+                    any::<u64>().prop_map(ControlFlow::Break),
+                    any::<String>().prop_map(ControlFlow::Continue),
+                ]
+            )| {
+                let serialized = serialize(&value).unwrap();
+                let deserialized: ControlFlow<u64, String> = deserialize(&serialized).unwrap();
+                prop_assert_eq!(value, deserialized);
+            }
+        );
+    }
+
+    #[test]
+    fn test_control_flow_invalid_tag() {
+        let mut serialized = Vec::new();
+        <<DefaultConfig as Config>::TagEncoding as TagEncoding<DefaultConfig>>::write_from_u32(
+            &mut serialized,
+            2,
+        )
+        .unwrap();
+
+        let err = deserialize::<ControlFlow<u64, u64>>(&serialized).unwrap_err();
+        assert!(matches!(err, error::ReadError::InvalidTagEncoding(2)));
     }
 
     /// A buffer containing a single instance of type `T`,
