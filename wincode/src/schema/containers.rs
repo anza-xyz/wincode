@@ -421,7 +421,7 @@ where
 
     #[inline(always)]
     fn size_of(value: &Self::Src) -> WriteResult<usize> {
-        size_of_elem_iter::<T, Len, C, _>(value.iter())
+        size_of_elem_iter::<T, Len, C>(value.iter())
     }
 
     #[inline(always)]
@@ -453,7 +453,7 @@ where
             return Ok(());
         }
 
-        write_elem_iter::<T, Len, C, _>(writer, src.iter())
+        write_elem_iter::<T, Len, C>(writer, src.iter())
     }
 }
 
@@ -645,24 +645,22 @@ unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, Len>
 where
     Len: SeqLen<C>,
     Coll: IntoIterator,
-    for<'a> &'a Coll: IntoIterator,
-    for<'a> <&'a Coll as IntoIterator>::Item: SchemaWrite<C>,
+    for<'a> &'a Coll: IntoIterator<Item: SchemaWrite<C>, IntoIter: ExactSizeIterator>,
     for<'a> <&'a Coll as IntoIterator>::Item:
         Borrow<<<&'a Coll as IntoIterator>::Item as SchemaWrite<C>>::Src>,
-    for<'a> <&'a Coll as IntoIterator>::IntoIter: ExactSizeIterator,
 {
     type Src = Coll;
 
     #[inline]
     fn size_of(src: &Coll) -> WriteResult<usize> {
-        size_of_elem_iter::<<&Coll as IntoIterator>::Item, Len, C, _>(src.into_iter())
+        size_of_elem_iter::<<&Coll as IntoIterator>::Item, Len, C>(src.into_iter())
     }
 
     #[inline]
     fn write(writer: impl Writer, src: &Coll) -> WriteResult<()> {
         let iter = src.into_iter();
         Len::prealloc_check::<Coll::Item>(iter.len())?;
-        write_elem_iter::<<&Coll as IntoIterator>::Item, Len, C, _>(writer, iter)
+        write_elem_iter::<<&Coll as IntoIterator>::Item, Len, C>(writer, iter)
     }
 }
 
@@ -670,8 +668,7 @@ where
 unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
 where
     Len: SeqLen<C>,
-    Coll: IntoIterator,
-    Coll::Item: SchemaRead<'de, C>,
+    Coll: IntoIterator<Item: SchemaRead<'de, C>>,
     Coll: FromIterator<<Coll::Item as SchemaRead<'de, C>>::Dst>,
 {
     type Dst = Coll;

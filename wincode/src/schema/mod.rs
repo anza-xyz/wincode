@@ -422,14 +422,13 @@ impl<T, C: ConfigCore> SchemaReadOwned<C> for T where T: for<'de> SchemaRead<'de
 
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
-fn size_of_elem_iter<T, Len, C, Item>(
-    value: impl ExactSizeIterator<Item = Item>,
+fn size_of_elem_iter<T, Len, C>(
+    value: impl ExactSizeIterator<Item = impl Borrow<T::Src>>,
 ) -> WriteResult<usize>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
-    Item: Borrow<T::Src>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         return Ok(Len::write_bytes_needed(value.len())? + size * value.len());
@@ -451,19 +450,18 @@ where
     T: SchemaWrite<C>,
     T::Src: Sized,
 {
-    size_of_elem_iter::<T, Len, C, _>(value.iter())
+    size_of_elem_iter::<T, Len, C>(value.iter())
 }
 
 #[inline(always)]
-fn write_elem_iter<T, Len, C, Item>(
+fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item = Item>,
+    src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
-    Item: Borrow<T::Src>,
 {
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
@@ -499,7 +497,7 @@ where
     T: SchemaWrite<C> + 'a,
 {
     Len::prealloc_check::<T>(src.len())?;
-    write_elem_iter::<T, Len, C, _>(writer, src)
+    write_elem_iter::<T, Len, C>(writer, src)
 }
 
 #[inline(always)]
@@ -529,7 +527,7 @@ where
         writer.finish()?;
         return Ok(());
     }
-    write_elem_iter::<T, Len, C, _>(writer, src.iter())
+    write_elem_iter::<T, Len, C>(writer, src.iter())
 }
 
 #[inline(always)]

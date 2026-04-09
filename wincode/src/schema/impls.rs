@@ -1211,7 +1211,7 @@ macro_rules! impl_seq_v {
 
             #[inline]
             fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
-                $crate::schema::size_of_elem_iter::<$key, C::LengthEncoding, C, _>(src.iter())
+                $crate::schema::size_of_elem_iter::<$key, C::LengthEncoding, C>(src.iter())
             }
 
             #[inline]
