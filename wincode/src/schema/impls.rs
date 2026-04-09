@@ -187,16 +187,17 @@ impl_float!(f32, f64);
 macro_rules! impl_pointer_width {
     ($($type:ty => $target:ty),*) => {
         $(
+            #[cfg(target_pointer_width = "64")]
+            unsafe impl<C: ConfigCore> ZeroCopy<C> for $type where C::IntEncoding: ZeroCopy<C> {}
+
             unsafe impl<C: ConfigCore> SchemaWrite<C> for $type {
                 type Src = $type;
 
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
-                        #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
-                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
-                        #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                        #[cfg(target_pointer_width = "64")]
+                        zero_copy: C::IntEncoding::ZERO_COPY,
                         #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
@@ -221,10 +222,8 @@ macro_rules! impl_pointer_width {
                 const TYPE_META: TypeMeta = if C::IntEncoding::STATIC {
                     TypeMeta::Static {
                         size: size_of::<$target>(),
-                        #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
-                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Big),
-                        #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-                        zero_copy: matches!(C::ByteOrder::ENDIAN, Endian::Little),
+                        #[cfg(target_pointer_width = "64")]
+                        zero_copy: C::IntEncoding::ZERO_COPY,
                         #[cfg(not(target_pointer_width = "64"))]
                         zero_copy: false,
                     }
