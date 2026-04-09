@@ -578,7 +578,6 @@ impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>
 ///   the pair itself acts as the schema (automatically satisfied when `K` and
 ///   `V` implement `SchemaWrite<C>`).
 ///
-///
 /// Intended for external collection types that cannot have a dedicated
 /// schema impl added directly. Unlike [`Vec`], [`VecDeque`], and [`BinaryHeap`], this
 /// container relies on the collection's [`FromIterator`] impl rather than
@@ -596,21 +595,21 @@ impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>
 ///
 /// ```ignore
 /// use some_crate::{IndexSet, MyMap};
-/// use wincode::{SchemaRead, SchemaWrite, containers::Seq, len::BincodeLen};
+/// use wincode::{SchemaRead, SchemaWrite, containers::FromIntoIterator, len::BincodeLen};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
 /// struct MyData {
-///     #[wincode(with = "Seq<IndexSet<u32>, BincodeLen>")]
+///     #[wincode(with = "FromIntoIterator<IndexSet<u32>, BincodeLen>")]
 ///     items: IndexSet<u32>,
-///     #[wincode(with = "Seq<MyMap<u32, u64>, BincodeLen>")]
+///     #[wincode(with = "FromIntoIterator<MyMap<u32, u64>, BincodeLen>")]
 ///     map: MyMap<u32, u64>,
 /// }
 /// ```
 #[cfg(feature = "alloc")]
-pub struct Seq<Coll, Len>(PhantomData<(Coll, Len)>);
+pub struct FromIntoIterator<Coll, Len>(PhantomData<(Coll, Len)>);
 
 #[cfg(feature = "alloc")]
-unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for Seq<Coll, Len>
+unsafe impl<Coll, Len, C: ConfigCore> SchemaWrite<C> for FromIntoIterator<Coll, Len>
 where
     Len: SeqLen<C>,
     Coll: IntoIterator,
@@ -634,7 +633,7 @@ where
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for Seq<Coll, Len>
+unsafe impl<'de, Coll, Len, C: ConfigCore> SchemaRead<'de, C> for FromIntoIterator<Coll, Len>
 where
     Len: SeqLen<C>,
     Coll: IntoIterator<Item: SchemaRead<'de, C>>,
