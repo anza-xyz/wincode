@@ -334,6 +334,7 @@
 //! |`struct_extensions` (DEPRECATED)|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations. DEPRECATED; Use `#[derive(UninitBuilder)]` instead.|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
+//! |`crate`|`Path`|`::wincode`|Specifies the path to the `wincode` crate. Useful when `wincode` is renamed in `Cargo.toml` or re-exported from another module. The path is emitted as written and resolved from the derive expansion site.|
 //!
 //! ### `no_suppress_unused`
 //!

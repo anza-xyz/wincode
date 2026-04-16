@@ -4634,4 +4634,19 @@ mod tests {
             prop_assert_eq!(value, deserialized);
         });
     }
+
+    #[test]
+    fn test_external_wincode() {
+        use crate as my_wincode;
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(crate = "my_wincode")]
+        struct Foo {
+            bar: u8,
+        }
+
+        let data = Foo { bar: 42 };
+        let serialized = serialize(&data).unwrap();
+        let deserialized: Foo = deserialize(&serialized).unwrap();
+        assert_eq!(data, deserialized);
+    }
 }

@@ -490,9 +490,11 @@ pub(crate) fn suppress_unused_fields(args: &SchemaArgs) -> TokenStream {
     }
 }
 
-/// Get the path to `wincode` based on the `internal` flag.
+/// Get the path to `wincode` based on the `internal` or `crate_path` option.
 pub(crate) fn get_crate_name(args: &SchemaArgs) -> Path {
-    if args.internal {
+    if let Some(crate_path) = &args.crate_path {
+        crate_path.clone()
+    } else if args.internal {
         parse_quote!(crate)
     } else {
         parse_quote!(::wincode)
@@ -571,6 +573,12 @@ pub(crate) struct SchemaArgs {
     /// - `#[wincode(assert_zero_copy(MyConfig))]` - uses custom config path
     #[darling(default)]
     pub(crate) assert_zero_copy: Option<AssertZeroCopyConfig>,
+    /// Specifies the path to the `wincode` crate.
+    ///
+    /// Useful when `wincode` is renamed in `Cargo.toml` or re-exported from another module.
+    /// The path is emitted as written and resolved from the derive expansion site.
+    #[darling(rename = "crate", default)]
+    pub(crate) crate_path: Option<Path>,
 }
 
 /// Configuration for zero-copy assertions.
