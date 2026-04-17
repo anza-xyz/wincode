@@ -21,4 +21,8 @@ impl Reader<'_> for NoBorrowReader<'_> {
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         self.inner.copy_into_slice(dst)
     }
+
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        self.inner.advance(n_bytes)
+    }
 }

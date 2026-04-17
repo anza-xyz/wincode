@@ -60,12 +60,44 @@ impl<R: Read + ?Sized> Reader<'_> for ReadAdapter<R> {
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         copy_into_slice(&mut self.0, dst)
     }
+
+    fn advance(&mut self, mut n_bytes: usize) -> ReadResult<()> {
+        let mut buf = [MaybeUninit::<u8>::uninit(); 64];
+        while let Some(remaining) = n_bytes.checked_sub(buf.len()) {
+            copy_into_slice(&mut self.0, &mut buf)?;
+            n_bytes = remaining;
+        }
+        copy_into_slice(&mut self.0, &mut buf[..n_bytes])
+    }
 }
 
 impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
     #[inline(always)]
     fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
         copy_into_slice(self, dst)
+    }
+
+    fn advance(&mut self, mut n_bytes: usize) -> ReadResult<()> {
+        use io::BufRead as _;
+        while n_bytes != 0 {
+            let buf_len = loop {
+                match self.fill_buf() {
+                    Ok([]) => return Err(read_size_limit(n_bytes)),
+                    Ok(buf) => break buf.len(),
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => return Err(e.into()),
+                }
+            };
+
+            if let Some(remaining) = n_bytes.checked_sub(buf_len) {
+                self.consume(buf_len);
+                n_bytes = remaining;
+            } else {
+                self.consume(n_bytes);
+                break;
+            }
+        }
+        Ok(())
     }
 }
 
