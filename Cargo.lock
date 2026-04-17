@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "darling",
  "proc-macro2",
