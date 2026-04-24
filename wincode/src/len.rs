@@ -381,13 +381,13 @@ pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_L
     UseIntLen<u64, PREALLOCATION_SIZE_LIMIT>;
 
 #[cfg(feature = "solana-short-vec")]
-#[deprecated(
-    since = "0.5.4",
-    note = "`solana-short-vec` supports the `wincode` feature natively starting with version \
-            3.2.1; enable that feature on the `solana-short-vec` dependency directly instead of \
-            using this wincode feature."
-)]
 pub mod short_vec {
+    #[deprecated(
+        since = "0.5.4",
+        note = "`solana-short-vec` supports the `wincode` feature natively starting with version \
+                3.2.1; enable that feature on the `solana-short-vec` dependency directly instead \
+                of using this wincode feature."
+    )]
     pub use solana_short_vec::ShortU16;
     use {
         super::*,
@@ -416,6 +416,12 @@ pub mod short_vec {
     /// Bytes are taken from `ctx` first. If the prefix does not contain a complete
     /// `ShortU16`, decoding continues by consuming the remaining bytes from `reader`.
     /// The reader is left untouched when `ctx` already contains a valid encoding.
+    #[deprecated(
+        since = "0.5.4",
+        note = "`solana-short-vec` supports the `wincode` feature natively starting with version \
+                3.2.1; enable that feature on the `solana-short-vec` dependency directly instead \
+                of using this wincode feature."
+    )]
     #[inline]
     pub fn decode_short_u16_with_ctx<'de, const N: usize>(
         ctx: [u8; N],
@@ -481,6 +487,7 @@ pub mod short_vec {
             reader: impl Reader<'de>,
             dst: &mut MaybeUninit<Self::Dst>,
         ) -> ReadResult<()> {
+            #[allow(deprecated)]
             let len = decode_short_u16_with_ctx(ctx, reader)?;
             dst.write(ShortU16(len));
             Ok(())
@@ -605,6 +612,12 @@ pub mod short_vec {
     /// assert_eq!(len, 16384);
     /// assert_eq!(read, 3);
     /// ```
+    #[deprecated(
+        since = "0.5.4",
+        note = "`solana-short-vec` supports the `wincode` feature natively starting with version \
+                3.2.1; enable that feature on the `solana-short-vec` dependency directly instead \
+                of using this wincode feature."
+    )]
     #[inline]
     pub const fn decode_short_u16(bytes: &[u8]) -> ReadResult<(u16, usize)> {
         // Byte 0
@@ -646,6 +659,7 @@ pub mod short_vec {
 
     #[inline(always)]
     fn decode_short_u16_from_reader<'de>(reader: impl Reader<'de>) -> ReadResult<u16> {
+        #[allow(deprecated)]
         decode_short_u16_with_ctx([], reader)
     }
 
@@ -671,6 +685,7 @@ pub mod short_vec {
     }
 
     #[cfg(all(test, feature = "alloc", feature = "derive"))]
+    #[allow(deprecated)]
     mod tests {
         use {
             super::*,
