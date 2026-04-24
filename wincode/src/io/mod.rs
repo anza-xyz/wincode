@@ -171,6 +171,18 @@ pub trait Reader<'a> {
         Err(ReadError::UnsupportedBorrow(BorrowKind::CallSite))
     }
 
+    /// Advance the reader by `n_bytes`, discarding those bytes.
+    ///
+    /// Use this to skip over bytes that are no longer needed — for example, when handling a legacy
+    /// serialized format where a field is still present in the binary representation but its value
+    /// is ignored for compatibility reasons.
+    ///
+    /// Errors if fewer than `n_bytes` bytes are available.
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        self.take_scoped(n_bytes).map(|_| ())
+    }
+
     /// Advance the parent by `n_bytes` and return a [`Reader`] that can elide bounds checks within
     /// that `n_bytes` window.
     ///
@@ -313,6 +325,11 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
         unsafe { (*self).as_trusted_for(n_bytes) }
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, n_bytes: usize) -> ReadResult<()> {
+        (*self).advance(n_bytes)
     }
 
     #[inline(always)]
