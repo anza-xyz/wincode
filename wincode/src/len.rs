@@ -381,6 +381,12 @@ pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_L
     UseIntLen<u64, PREALLOCATION_SIZE_LIMIT>;
 
 #[cfg(feature = "solana-short-vec")]
+#[deprecated(
+    since = "0.5.4",
+    note = "`solana-short-vec` supports the `wincode` feature natively starting with version \
+            3.2.1; enable that feature on the `solana-short-vec` dependency directly instead of \
+            using this wincode feature."
+)]
 pub mod short_vec {
     pub use solana_short_vec::ShortU16;
     use {
@@ -891,4 +897,5 @@ pub mod short_vec {
 }
 
 #[cfg(feature = "solana-short-vec")]
+#[allow(deprecated)]
 pub use short_vec::*;

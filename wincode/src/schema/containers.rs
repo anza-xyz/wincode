@@ -3,57 +3,51 @@
 //! as special case opt-in raw-copy overrides (see [`pod_wrapper!`]).
 //!
 //! # Examples
-//! Raw byte vec with solana short vec length encoding:
+//! Raw byte vec with `UseIntLen<u16>` length encoding:
 //!
 //! ```
-//! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
-//! # use wincode::{containers::self, len::ShortU16};
-//! # use wincode_derive::SchemaWrite;
-//! # use serde::Serialize;
-//! # use solana_short_vec;
-//! #[derive(Serialize, SchemaWrite)]
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{containers, len::UseIntLen};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
+//! # use core::mem::size_of;
+//! #[derive(SchemaWrite, SchemaRead, PartialEq, Debug)]
 //! struct MyStruct {
-//!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<_, ShortU16>")]
+//!     #[wincode(with = "containers::Vec<_, UseIntLen<u16>>")]
 //!     vec: Vec<u8>,
 //! }
 //!
-//! let my_struct = MyStruct {
-//!     vec: vec![1, 2, 3],
-//! };
-//! let wincode_bytes = wincode::serialize(&my_struct).unwrap();
-//! let bincode_bytes = bincode::serialize(&my_struct).unwrap();
-//! assert_eq!(wincode_bytes, bincode_bytes);
+//! let my_struct = MyStruct { vec: vec![1, 2, 3] };
+//! let bytes = wincode::serialize(&my_struct).unwrap();
+//! assert_eq!(bytes.len(), size_of::<u16>() + my_struct.vec.len() * size_of::<u8>());
+//! assert_eq!(my_struct, wincode::deserialize(&bytes).unwrap());
 //! # }
 //! ```
 //!
-//! Vector with struct elements and custom length encoding:
+//! Vector with struct elements and `UseIntLen<u16>` length encoding:
 //!
 //! ```
-//! # #[cfg(all(feature = "solana-short-vec", feature = "alloc", feature = "derive"))] {
-//! # use wincode_derive::SchemaWrite;
-//! # use wincode::{containers::self, len::ShortU16};
-//! # use serde::Serialize;
-//! # use solana_short_vec;
-//! #[derive(Serialize, SchemaWrite)]
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{containers, len::UseIntLen};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
+//! # use core::mem::size_of;
+//! #[derive(SchemaWrite, SchemaRead, PartialEq, Debug)]
 //! struct Point {
 //!     x: u64,
 //!     y: u64,
 //! }
 //!
-//! #[derive(Serialize, SchemaWrite)]
+//! #[derive(SchemaWrite, SchemaRead, PartialEq, Debug)]
 //! struct MyStruct {
-//!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<Point, ShortU16>")]
+//!     #[wincode(with = "containers::Vec<Point, UseIntLen<u16>>")]
 //!     vec: Vec<Point>,
 //! }
 //!
 //! let my_struct = MyStruct {
 //!     vec: vec![Point { x: 1, y: 2 }, Point { x: 3, y: 4 }],
 //! };
-//! let wincode_bytes = wincode::serialize(&my_struct).unwrap();
-//! let bincode_bytes = bincode::serialize(&my_struct).unwrap();
-//! assert_eq!(wincode_bytes, bincode_bytes);
+//! let bytes = wincode::serialize(&my_struct).unwrap();
+//! assert_eq!(bytes.len(), size_of::<u16>() + my_struct.vec.len() * size_of::<Point>());
+//! assert_eq!(my_struct, wincode::deserialize(&bytes).unwrap());
 //! # }
 //! ```
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
@@ -96,28 +90,26 @@ pub struct VecDeque<T, Len>(PhantomData<Len>, PhantomData<T>);
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "alloc", feature = "derive", feature = "solana-short-vec"))] {
-/// # use wincode::{containers, len::ShortU16};
+/// # #[cfg(all(feature = "alloc", feature = "derive"))] {
+/// # use wincode::{containers, len::UseIntLen};
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
-/// # use serde::{Serialize, Deserialize};
-/// # use std::array;
-/// #[derive(Serialize, SchemaWrite, Clone, Copy)]
+/// # use core::{array, mem::size_of};
+/// #[derive(SchemaWrite, SchemaRead, Clone, Copy, PartialEq, Debug)]
 /// #[repr(transparent)]
 /// struct Address([u8; 32]);
 ///
-/// #[derive(Serialize, SchemaWrite)]
+/// #[derive(SchemaWrite, SchemaRead, PartialEq, Debug)]
 /// struct MyStruct {
-///     #[serde(with = "solana_short_vec")]
-///     #[wincode(with = "containers::Box<[Address], ShortU16>")]
-///     address: Box<[Address]>
+///     #[wincode(with = "containers::Box<[Address], UseIntLen<u16>>")]
+///     address: Box<[Address]>,
 /// }
 ///
 /// let my_struct = MyStruct {
 ///     address: vec![Address(array::from_fn(|i| i as u8)); 10].into_boxed_slice(),
 /// };
-/// let wincode_bytes = wincode::serialize(&my_struct).unwrap();
-/// let bincode_bytes = bincode::serialize(&my_struct).unwrap();
-/// assert_eq!(wincode_bytes, bincode_bytes);
+/// let bytes = wincode::serialize(&my_struct).unwrap();
+/// assert_eq!(bytes.len(), size_of::<u16>() + my_struct.address.len() * size_of::<Address>());
+/// assert_eq!(my_struct, wincode::deserialize(&bytes).unwrap());
 /// # }
 /// ```
 #[cfg(feature = "alloc")]

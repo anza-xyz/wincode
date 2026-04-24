@@ -319,7 +319,7 @@
 //! |---|---|---|
 //! |`std`|enabled|Enables `std` support.|
 //! |`alloc`|enabled automatically when `std` is enabled|Enables `alloc` support.|
-//! |`solana-short-vec`|disabled|Enables `solana-short-vec` support.|
+//! |`solana-short-vec`|disabled|**Deprecated since 0.5.4, to be removed in 0.6.0.** Enables `solana-short-vec` support. Use the `wincode` feature on the `solana-short-vec` dependency directly instead (available since `solana-short-vec` 3.2.1).|
 //! |`derive`|disabled|Enables the derive macros for [`SchemaRead`] and [`SchemaWrite`].|
 //! |`uuid`|disabled|Enables support for the `uuid` crate.|
 //! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|

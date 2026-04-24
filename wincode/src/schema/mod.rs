@@ -3,17 +3,17 @@
 //! # Example
 //!
 //! ```
-//! # #[cfg(all(feature = "solana-short-vec", feature = "alloc"))] {
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
 //! # use rand::random;
-//! # use wincode::{Serialize, Deserialize, len::{BincodeLen, ShortU16}, containers};
+//! # use wincode::{Serialize, Deserialize, len::UseIntLen, containers};
 //! # use wincode_derive::{SchemaWrite, SchemaRead};
-//! # use std::array;
+//! # use core::{array, mem::size_of};
 //!
-//! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+//! # #[derive(Debug, PartialEq, Eq)]
 //! #[repr(transparent)]
 //! #[derive(Clone, Copy)]
 //! struct Signature([u8; 32]);
-//! # #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+//! # #[derive(Debug, PartialEq, Eq)]
 //! #[repr(transparent)]
 //! #[derive(Clone, Copy)]
 //! struct Address([u8; 32]);
@@ -23,12 +23,11 @@
 //!     unsafe struct PodAddress(Address);
 //! }
 //!
-//! # #[derive(SchemaWrite, SchemaRead, serde::Serialize, serde::Deserialize, Debug, PartialEq, Eq)]
+//! # #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
 //! struct MyStruct {
-//!     #[wincode(with = "containers::Vec<PodSignature, BincodeLen>")]
+//!     #[wincode(with = "containers::Vec<PodSignature, UseIntLen<u16>>")]
 //!     signature: Vec<Signature>,
-//!     #[serde(with = "solana_short_vec")]
-//!     #[wincode(with = "containers::Vec<PodAddress, ShortU16>")]
+//!     #[wincode(with = "containers::Vec<PodAddress, UseIntLen<u16>>")]
 //!     address: Vec<Address>,
 //! }
 //!
@@ -36,13 +35,13 @@
 //!     signature: (0..10).map(|_| Signature(array::from_fn(|_| random()))).collect(),
 //!     address: (0..10).map(|_| Address(array::from_fn(|_| random()))).collect(),
 //! };
-//! let bincode_serialized = bincode::serialize(&my_struct).unwrap();
-//! let wincode_serialized = wincode::serialize(&my_struct).unwrap();
-//! assert_eq!(bincode_serialized, wincode_serialized);
-//!
-//! let bincode_deserialized: MyStruct = bincode::deserialize(&bincode_serialized).unwrap();
-//! let wincode_deserialized: MyStruct = wincode::deserialize(&wincode_serialized).unwrap();
-//! assert_eq!(bincode_deserialized, wincode_deserialized);
+//! let bytes = MyStruct::serialize(&my_struct).unwrap();
+//! assert_eq!(
+//!     bytes.len(),
+//!     (size_of::<u16>() + my_struct.signature.len() * size_of::<Signature>())
+//!         + (size_of::<u16>() + my_struct.address.len() * size_of::<Address>()),
+//! );
+//! assert_eq!(my_struct, MyStruct::deserialize(&bytes).unwrap());
 //! # }
 //! ```
 use {
