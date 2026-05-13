@@ -385,7 +385,7 @@ fn append_generics(generics: &Generics, data: &Data<Variant, Field>) -> Generics
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
-    let repr = extract_repr(&input, TraitImpl::SchemaRead)?;
+    let repr = extract_repr(&input, "SchemaRead")?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let appended_generics = append_generics(&args.generics, &args.data);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
