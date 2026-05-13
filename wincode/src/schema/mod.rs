@@ -54,6 +54,7 @@ use {
     core::{borrow::Borrow, mem::MaybeUninit},
 };
 
+mod compile_fail;
 pub mod containers;
 pub mod context;
 mod external;
