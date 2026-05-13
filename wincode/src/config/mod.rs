@@ -151,9 +151,23 @@ impl<
     /// [`containers`](crate::containers).
     pub const fn with_length_encoding<L>(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L, ByteOrder, IntEncoding>
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        L,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+    >
     where
-        Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, L>: Config,
+        Configuration<
+            ZERO_COPY_ALIGN_CHECK,
+            PREALLOCATION_SIZE_LIMIT,
+            L,
+            ByteOrder,
+            IntEncoding,
+            TagEncoding,
+        >: Config,
     {
         generate()
     }
@@ -172,6 +186,7 @@ impl<
         LengthEncoding,
         BigEndian,
         IntEncoding,
+        TagEncoding,
     > {
         generate()
     }
@@ -187,6 +202,7 @@ impl<
         LengthEncoding,
         LittleEndian,
         IntEncoding,
+        TagEncoding,
     > {
         generate()
     }
@@ -203,6 +219,7 @@ impl<
         LengthEncoding,
         LittleEndian,
         IntEncoding,
+        TagEncoding,
     > {
         generate()
     }
@@ -219,6 +236,7 @@ impl<
         LengthEncoding,
         BigEndian,
         IntEncoding,
+        TagEncoding,
     > {
         generate()
     }
@@ -234,6 +252,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         FixInt,
+        TagEncoding,
     > {
         generate()
     }
@@ -255,6 +274,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         VarInt,
+        TagEncoding,
     > {
         generate()
     }
@@ -266,7 +286,14 @@ impl<
     /// Default is [`FixInt`].
     pub const fn with_int_encoding<I>(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, I>
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        I,
+        TagEncoding,
+    >
     where
         Configuration<
             ZERO_COPY_ALIGN_CHECK,
@@ -274,6 +301,7 @@ impl<
             LengthEncoding,
             ByteOrder,
             I,
+            TagEncoding,
         >: Config,
     {
         generate()
@@ -288,7 +316,14 @@ impl<
     /// This is enabled by default.
     pub const fn enable_zero_copy_align_check(
         self,
-    ) -> Configuration<true, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, IntEncoding> {
+    ) -> Configuration<
+        true,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+    > {
         generate()
     }
 
@@ -311,8 +346,14 @@ impl<
     /// alignment; owned deserialization paths are unaffected.
     pub const unsafe fn disable_zero_copy_align_check(
         self,
-    ) -> Configuration<false, PREALLOCATION_SIZE_LIMIT, LengthEncoding, ByteOrder, IntEncoding>
-    {
+    ) -> Configuration<
+        false,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+    > {
         generate()
     }
 
@@ -326,7 +367,14 @@ impl<
     /// The default limit is 4 MiB.
     pub const fn with_preallocation_size_limit<const LIMIT: usize>(
         self,
-    ) -> Configuration<ZERO_COPY_ALIGN_CHECK, LIMIT, LengthEncoding, ByteOrder, IntEncoding> {
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+    > {
         generate()
     }
 
@@ -341,6 +389,7 @@ impl<
         LengthEncoding,
         ByteOrder,
         IntEncoding,
+        TagEncoding,
     > {
         generate()
     }
