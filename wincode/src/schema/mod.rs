@@ -551,8 +551,8 @@ mod tests {
 
     use {
         crate::{
-            Deserialize, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite, Serialize,
-            TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
+            Deserialize, ReadError, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite,
+            Serialize, TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
@@ -3610,6 +3610,20 @@ mod tests {
                 prop_assert!(wincode_deserialized.is_err());
             }
         });
+    }
+
+    #[test]
+    fn test_preallocation_size_limit_rejects_zst_hashmap_len() {
+        let c = Configuration::default().with_preallocation_size_limit::<4>();
+        let serialized = 5u64.to_le_bytes();
+        let decoded: Result<HashMap<(), ()>, _> = config::deserialize(&serialized, c);
+        assert!(matches!(
+            decoded,
+            Err(ReadError::PreallocationSizeLimit {
+                needed: 5,
+                limit: 4
+            })
+        ));
     }
 
     #[test]
