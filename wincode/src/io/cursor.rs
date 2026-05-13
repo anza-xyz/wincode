@@ -290,6 +290,35 @@ mod vec {
         Ok(())
     }
 
+    /// Zero-fill the gap between `inner.len()` and `pos`, if `pos` is past the
+    /// current initialized length.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `inner.capacity() >= pos`.
+    ///
+    /// If `pos > inner.len()`, the range `inner.len()..pos` must be spare capacity
+    /// owned by `inner` and valid to write as `MaybeUninit<u8>`. This function
+    /// initializes that entire gap with zero bytes and then sets `inner.len()` to
+    /// `pos`.
+    ///
+    /// Callers should normally establish this by calling `maybe_grow(inner, pos, n)`
+    /// with any `n` such that `pos + n` is checked and fits in the vector capacity.
+    #[inline]
+    unsafe fn zero_fill_gap(inner: &mut Vec<u8>, pos: usize) {
+        if let Some(init_gap) = pos.checked_sub(inner.len()) {
+            let spare = inner.spare_capacity_mut();
+            debug_assert!(spare.len() >= init_gap);
+
+            unsafe {
+                spare
+                    .get_unchecked_mut(..init_gap)
+                    .fill(MaybeUninit::new(0));
+                inner.set_len(pos);
+            }
+        }
+    }
+
     /// Add `len` to the cursor's position and update the length of the vector if necessary.
     ///
     /// # SAFETY:
@@ -311,43 +340,90 @@ mod vec {
     /// Write `src` to the vector at the current position and advance the position by `src.len()`.
     pub(super) fn write(inner: &mut Vec<u8>, pos: &mut usize, src: &[u8]) -> WriteResult<()> {
         maybe_grow(inner, *pos, src.len())?;
-        // SAFETY: We just ensured at least `pos + src.len()` capacity is available.
+        // SAFETY: `maybe_grow` checked `*pos + src.len()` and ensured capacity
+        // for it, so `inner.capacity() >= *pos`; `zero_fill_gap` only writes
+        // `inner.len()..*pos`.
+        unsafe { zero_fill_gap(inner, *pos) };
+        // SAFETY: `maybe_grow` ensured at least `*pos + src.len()` capacity is
+        // available.
         unsafe { ptr::copy_nonoverlapping(src.as_ptr(), inner.as_mut_ptr().add(*pos), src.len()) };
-        // SAFETY: We just wrote `src.len()` bytes to the vector.
+        // SAFETY: `zero_fill_gap` initialized any gap before `*pos`, and we
+        // just wrote `src.len()` bytes starting at `*pos`.
         unsafe { add_len(inner, pos, src.len()) };
         Ok(())
     }
 
     #[inline]
-    #[expect(clippy::arithmetic_side_effects)]
     pub(super) unsafe fn as_trusted_for<'a>(
         inner: &'a mut Vec<u8>,
         pos: &'a mut usize,
         n_bytes: usize,
     ) -> WriteResult<impl Writer> {
         maybe_grow(inner, *pos, n_bytes)?;
-        // SAFETY: `maybe_grow` ensures at least `pos + n_bytes` capacity is available.
-        let buf = unsafe {
-            from_raw_parts_mut(
-                inner.as_mut_ptr().add(*pos).cast::<MaybeUninit<u8>>(),
-                n_bytes,
-            )
-        };
-
-        *pos += n_bytes;
+        // SAFETY: `maybe_grow` checked `*pos + n_bytes` and ensured capacity
+        // for it, so `inner.capacity() >= *pos`; `zero_fill_gap` only writes
+        // `inner.len()..*pos`.
+        unsafe { zero_fill_gap(inner, *pos) };
         // SAFETY: by calling `as_trusted_for`, caller guarantees they
         // will fully initialize `n_bytes` of memory and will not write
         // beyond the bounds of the slice.
-        Ok(unsafe { SliceMutUnchecked::new(buf) })
+        Ok(unsafe { CursorVecUnchecked::new(inner, pos) })
     }
+}
 
+#[cfg(feature = "alloc")]
+struct CursorVecUnchecked<'a> {
+    inner: &'a mut Vec<u8>,
+    pos: &'a mut usize,
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> CursorVecUnchecked<'a> {
+    /// # Safety
+    ///
+    /// The caller must ensure that `*pos` is within `inner`'s capacity and
+    /// that any gap before `*pos` has already been initialized. Writes through
+    /// this unchecked writer must stay within the trusted window reserved by
+    /// the caller.
+    const unsafe fn new(inner: &'a mut Vec<u8>, pos: &'a mut usize) -> Self {
+        Self { inner, pos }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<'a> Writer for CursorVecUnchecked<'a> {
     #[inline]
-    pub(super) fn finish(inner: &mut Vec<u8>, pos: usize) {
-        if pos > inner.len() {
-            unsafe {
-                inner.set_len(pos);
-            }
+    fn write(&mut self, src: &[u8]) -> WriteResult<()> {
+        let cur_len = self.inner.len();
+        let cur_pos = *self.pos;
+        #[expect(clippy::arithmetic_side_effects)]
+        let next_pos = cur_pos + src.len();
+
+        // SAFETY:
+        // - `as_trusted_for` ensured sufficient capacity for the trusted window before
+        //   constructing this writer.
+        // - The trusted-writer contract requires all writes through this writer to stay
+        //   within that reserved window.
+        // - Given Rust's aliasing rules, we can assume that `src` does not overlap with
+        //   the internal buffer.
+        unsafe {
+            copy_nonoverlapping(
+                src.as_ptr(),
+                self.inner.as_mut_ptr().add(cur_pos),
+                src.len(),
+            );
         }
+
+        if next_pos > cur_len {
+            // SAFETY: any gap before the trusted window was initialized before
+            // constructing this writer, and this call just initialized the bytes
+            // from the previous cursor position through `next_pos`.
+            unsafe { self.inner.set_len(next_pos) }
+        }
+
+        *self.pos = next_pos;
+
+        Ok(())
     }
 }
 
@@ -386,12 +462,6 @@ impl Writer for Cursor<&mut Vec<u8>> {
         vec::write(self.inner, &mut self.pos, src)
     }
 
-    #[inline]
-    fn finish(&mut self) -> WriteResult<()> {
-        vec::finish(self.inner, self.pos);
-        Ok(())
-    }
-
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> WriteResult<impl Writer> {
         unsafe { vec::as_trusted_for(self.inner, &mut self.pos, n_bytes) }
@@ -428,12 +498,6 @@ impl Writer for Cursor<Vec<u8>> {
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
         vec::write(&mut self.inner, &mut self.pos, src)
-    }
-
-    #[inline]
-    fn finish(&mut self) -> WriteResult<()> {
-        vec::finish(&mut self.inner, self.pos);
-        Ok(())
     }
 
     #[inline(always)]
@@ -631,5 +695,38 @@ mod tests {
                 prop_assert_eq!(&deserialized[i].zero_copy_content, chunk);
             }
         }
+    }
+
+    #[test]
+    fn cursor_vec_write_zero_fills_gap() {
+        let mut output = vec![1, 2, 3];
+        let mut cursor = Cursor::new_at(&mut output, 6);
+
+        cursor.write(&[9, 10]).unwrap();
+
+        assert_eq!(output, vec![1, 2, 3, 0, 0, 0, 9, 10]);
+    }
+
+    #[test]
+    fn cursor_vec_trusted_write_zero_fills_gap() {
+        let mut output = vec![1, 2, 3];
+        let mut cursor = Cursor::new_at(&mut output, 6);
+
+        unsafe { <Cursor<_> as Writer>::as_trusted_for(&mut cursor, 2) }
+            .unwrap()
+            .write(&[9, 10])
+            .unwrap();
+
+        assert_eq!(output, vec![1, 2, 3, 0, 0, 0, 9, 10]);
+    }
+
+    #[test]
+    fn cursor_vec_finish_does_not_extend_len() {
+        let mut output = Vec::with_capacity(8);
+        let mut cursor = Cursor::new_at(&mut output, 6);
+
+        cursor.finish().unwrap();
+
+        assert_eq!(output.len(), 0);
     }
 }

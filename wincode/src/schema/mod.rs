@@ -3757,6 +3757,20 @@ mod tests {
     }
 
     #[test]
+    fn test_static_tuple_write_error_leaves_only_initialized_prefix() {
+        let before_epoch = UNIX_EPOCH.checked_sub(Duration::from_secs(1)).unwrap();
+        let value = (0xAAu8, before_epoch);
+        let mut bytes = Vec::new();
+
+        assert!(crate::serialize_into(&mut bytes, &value).is_err());
+        #[cfg(miri)]
+        if bytes.len() > 1 {
+            let _ = core::hint::black_box(bytes[1]);
+        }
+        assert_eq!(bytes, [0xAA]);
+    }
+
+    #[test]
     fn test_deserialize_exact_accepts_exact_input() {
         let bytes = serialize(&123u64).unwrap();
         let value: u64 = deserialize_exact(&bytes).unwrap();
