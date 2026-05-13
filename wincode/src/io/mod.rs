@@ -1,5 +1,6 @@
 //! [`Reader`] and [`Writer`] implementations.
 use {
+    crate::error::read_length_encoding_overflow,
     core::{
         mem::{self, MaybeUninit, transmute},
         ptr,
@@ -203,6 +204,30 @@ pub trait Reader<'a> {
         Ok(self)
     }
 
+    /// Construct a trusted window for a sequence of length `len` and serialized
+    /// element size `size`.
+    ///
+    /// Always prefer this over manual unchecked arithmetic.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that operations through the returned reader do not
+    /// logically read or consume more than `len * size` bytes without performing
+    /// additional bounds checks.
+    ///
+    /// See [`Reader::as_trusted_for`].
+    #[inline]
+    unsafe fn as_trusted_for_seq(
+        &mut self,
+        len: usize,
+        size: usize,
+    ) -> Result<impl Reader<'a>, crate::error::ReadError> {
+        let Some(window) = len.checked_mul(size) else {
+            return Err(read_length_encoding_overflow("usize::MAX"));
+        };
+        Ok(unsafe { self.as_trusted_for(window) }?)
+    }
+
     /// Get a mutable reference to the [`Reader`].
     ///
     /// Useful in situations where one only has an `impl Reader<'de>` that
@@ -313,6 +338,15 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     #[inline(always)]
     unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> ReadResult<impl Reader<'a>> {
         unsafe { (*self).as_trusted_for(n_bytes) }
+    }
+
+    #[inline(always)]
+    unsafe fn as_trusted_for_seq(
+        &mut self,
+        len: usize,
+        size: usize,
+    ) -> Result<impl Reader<'a>, crate::error::ReadError> {
+        unsafe { (*self).as_trusted_for_seq(len, size) }
     }
 
     #[inline(always)]

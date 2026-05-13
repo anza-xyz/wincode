@@ -638,10 +638,9 @@ where
             Len::read_prealloc_check::<<Coll::Item as SchemaRead<'de, C>>::Dst>(reader.by_ref())?;
 
         let coll = if let TypeMeta::Static { size, .. } = Coll::Item::TYPE_META {
-            #[allow(clippy::arithmetic_side_effects)]
             // SAFETY: `Item::TYPE_META` specifies a static size, so `len` reads of `Item::Dst`
             // will consume `size * len` bytes, fully consuming the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
             (0..len)
                 .map(|_| Coll::Item::get(reader.by_ref()))
                 .collect_result_prealloc()?
@@ -732,10 +731,9 @@ where
             size,
             zero_copy: false,
         } => {
-            #[allow(clippy::arithmetic_side_effects)]
             // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
             // will consume `size * len` bytes, fully consuming the trusted window.
-            let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+            let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
             for i in 0..len {
                 // SAFETY: `i < len` and `base` is valid for `len` elements.
                 let slot = unsafe { &mut *base.add(i) };
