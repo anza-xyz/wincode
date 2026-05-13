@@ -49,6 +49,7 @@ unsafe impl<C: Config, Block: BlockType + SchemaWrite<C, Src = Block>> SchemaWri
                 for i in 0..n_blocks {
                     Block::write(writer.by_ref(), &src.get_raw_block(i))?;
                 }
+                writer.finish()?;
             } else {
                 for i in 0..n_blocks {
                     Block::write(writer.by_ref(), &src.get_raw_block(i))?;
