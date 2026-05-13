@@ -1176,10 +1176,12 @@ macro_rules! impl_seq_kv {
                 let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader.by_ref())?;
 
                 let map = if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
-                    #[allow(clippy::arithmetic_side_effects)]
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
                     // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
-                    let mut reader = unsafe { reader.as_trusted_for((key_size + value_size) * len) }?;
+                    let Some(el_size) = key_size.checked_add(value_size) else {
+                        return Err($crate::error::read_length_encoding_overflow("usize::MAX"));
+                    };
+                    let mut reader = unsafe { reader.as_trusted_for_seq(len, el_size) }?;
                     let mut map = $with_capacity(len $(, $state::default())?);
                     for _ in 0..len {
                         let k = $key::get(reader.by_ref())?;
@@ -1244,10 +1246,9 @@ macro_rules! impl_seq_v {
 
                 let map = match $key::TYPE_META {
                     $crate::TypeMeta::Static { size, .. } => {
-                        #[allow(clippy::arithmetic_side_effects)]
                         // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
-                        let mut reader = unsafe { reader.as_trusted_for(size * len) }?;
+                        let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
                         let mut set = $with_capacity(len $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
