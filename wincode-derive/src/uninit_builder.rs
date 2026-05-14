@@ -1,5 +1,7 @@
 use {
-    crate::common::{SchemaArgs, TypeExt, get_crate_name, get_src_dst_fully_qualified},
+    crate::common::{
+        SchemaArgs, TypeExt, extract_repr, get_crate_name, get_src_dst_fully_qualified,
+    },
     darling::{Error, FromDeriveInput, Result, ast::Data},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
@@ -272,6 +274,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
+    let _repr = extract_repr(&input, "UninitBuilder")?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let crate_name = get_crate_name(&args);
     let uninit_builder = impl_uninit_builder(&args, &crate_name)?;

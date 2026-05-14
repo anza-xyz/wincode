@@ -642,7 +642,7 @@ impl StructRepr {
 }
 
 /// Extract the `#[repr]` attribute from the derive input, returning an error if the type is packed (not supported).
-pub(crate) fn extract_repr(input: &DeriveInput, trait_impl: TraitImpl) -> Result<StructRepr> {
+pub(crate) fn extract_repr(input: &DeriveInput, trait_impl: &'static str) -> Result<StructRepr> {
     let mut struct_repr = StructRepr::default();
     for attr in &input.attrs {
         if !attr.path().is_ident("repr") {
