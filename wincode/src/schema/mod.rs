@@ -2177,6 +2177,43 @@ mod tests {
     }
 
     #[test]
+    fn test_chained_config_preserves_tag_encoding() {
+        let config = Configuration::default()
+            .with_tag_encoding::<u8>()
+            .with_big_endian()
+            .with_preallocation_size_limit::<64>();
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        enum Enum {
+            A,
+            B,
+        }
+
+        assert_eq!(
+            <Enum as SchemaRead<'_, _>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        assert_eq!(
+            <Enum as SchemaWrite<_>>::type_meta(config),
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        );
+
+        let serialized = config::serialize(&Enum::B, config).unwrap();
+        assert_eq!(serialized, [1]);
+
+        let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
+        assert_eq!(deserialized, Enum::B);
+    }
+
+    #[test]
     fn test_enum_config_discriminant_override() {
         let config = Configuration::default().with_tag_encoding::<u8>();
 
