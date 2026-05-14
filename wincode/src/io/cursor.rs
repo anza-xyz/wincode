@@ -374,18 +374,18 @@ pub(super) mod vec {
         // SAFETY: by calling `as_trusted_for`, caller guarantees they
         // will fully initialize `n_bytes` of memory and will not write
         // beyond the bounds of the slice.
-        Ok(unsafe { CursorVecUnchecked::new(inner, pos) })
+        Ok(unsafe { VecPosUnchecked::new(inner, pos) })
     }
 }
 
 #[cfg(feature = "alloc")]
-struct CursorVecUnchecked<'a> {
+struct VecPosUnchecked<'a> {
     inner: &'a mut Vec<u8>,
     pos: &'a mut usize,
 }
 
 #[cfg(feature = "alloc")]
-impl<'a> CursorVecUnchecked<'a> {
+impl<'a> VecPosUnchecked<'a> {
     /// # Safety
     ///
     /// The caller must ensure that `*pos` is within `inner`'s capacity and
@@ -398,7 +398,7 @@ impl<'a> CursorVecUnchecked<'a> {
 }
 
 #[cfg(feature = "alloc")]
-impl<'a> Writer for CursorVecUnchecked<'a> {
+impl<'a> Writer for VecPosUnchecked<'a> {
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
         // SAFETY:
