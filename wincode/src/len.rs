@@ -90,7 +90,11 @@ pub unsafe trait SeqLen<C: ConfigCore> {
         if let Some(prealloc_limit) =
             Self::PREALLOCATION_SIZE_LIMIT_OVERRIDE.to_opt_limit_with_config::<C>()
         {
-            check(len, size_of::<T>(), prealloc_limit)?;
+            // ZSTs do not require element storage in Vec-like containers, but
+            // user-controlled lengths still drive iteration and may allocate
+            // collection metadata. Charge one byte per ZST element so the
+            // preallocation limit also bounds sequence length.
+            check(len, size_of::<T>().max(1), prealloc_limit)?;
         }
         Ok(())
     }
