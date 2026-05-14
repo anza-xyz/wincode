@@ -259,7 +259,7 @@ impl<const N: usize> Writer for Cursor<&mut MaybeUninit<[u8; N]>> {
 
 /// Helper functions for writing to `Cursor<&mut Vec<u8>>` and `Cursor<Vec<u8>>`.
 #[cfg(feature = "alloc")]
-mod vec {
+pub(super) mod vec {
     use super::*;
 
     /// Grow the vector if necessary to accommodate the given `needed` bytes.
@@ -273,7 +273,7 @@ mod vec {
     ///
     /// Panics if the new capacity exceeds `isize::MAX` _bytes_.
     #[inline]
-    pub(super) fn maybe_grow(inner: &mut Vec<u8>, pos: usize, needed: usize) -> WriteResult<()> {
+    fn maybe_grow(inner: &mut Vec<u8>, pos: usize, needed: usize) -> WriteResult<()> {
         let Some(required) = pos.checked_add(needed) else {
             return Err(write_size_limit(needed));
         };
@@ -299,8 +299,7 @@ mod vec {
     ///
     /// If `pos > inner.len()`, the range `inner.len()..pos` must be spare capacity
     /// owned by `inner` and valid to write as `MaybeUninit<u8>`. This function
-    /// initializes that entire gap with zero bytes and then sets `inner.len()` to
-    /// `pos`.
+    /// initializes that entire gap with zero bytes.
     ///
     /// Callers should normally establish this by calling `maybe_grow(inner, pos, n)`
     /// with any `n` such that `pos + n` is checked and fits in the vector capacity.
@@ -314,9 +313,24 @@ mod vec {
                 spare
                     .get_unchecked_mut(..init_gap)
                     .fill(MaybeUninit::new(0));
-                inner.set_len(pos);
             }
         }
+    }
+
+    /// Prepare `inner` for a write of `needed` bytes starting at cursor position `pos`.
+    ///
+    /// This checks that `pos + needed` fits in `usize`, ensures the vector has enough
+    /// capacity for the whole write window, and zero-initializes any sparse gap between
+    /// the current length and `pos`. It does not change the vector's length: callers must
+    /// only expose newly initialized bytes after the write window itself has been
+    /// initialized, typically via [`add_len`] or an equivalent `set_len`.
+    #[inline]
+    pub(crate) fn prepare_write(inner: &mut Vec<u8>, pos: usize, needed: usize) -> WriteResult<()> {
+        maybe_grow(inner, pos, needed)?;
+        // SAFETY: `maybe_grow` checked `pos + needed` and ensured capacity for it,
+        // so `inner.capacity() >= pos`; `zero_fill_gap` only writes `inner.len()..pos`.
+        unsafe { zero_fill_gap(inner, pos) };
+        Ok(())
     }
 
     /// Add `len` to the cursor's position and update the length of the vector if necessary.
@@ -340,15 +354,11 @@ mod vec {
 
     /// Write `src` to the vector at the current position and advance the position by `src.len()`.
     pub(super) fn write(inner: &mut Vec<u8>, pos: &mut usize, src: &[u8]) -> WriteResult<()> {
-        maybe_grow(inner, *pos, src.len())?;
-        // SAFETY: `maybe_grow` checked `*pos + src.len()` and ensured capacity
-        // for it, so `inner.capacity() >= *pos`; `zero_fill_gap` only writes
-        // `inner.len()..*pos`.
-        unsafe { zero_fill_gap(inner, *pos) };
-        // SAFETY: `maybe_grow` ensured at least `*pos + src.len()` capacity is
+        prepare_write(inner, *pos, src.len())?;
+        // SAFETY: `prepare_write` ensured at least `*pos + src.len()` capacity is
         // available.
         unsafe { ptr::copy_nonoverlapping(src.as_ptr(), inner.as_mut_ptr().add(*pos), src.len()) };
-        // SAFETY: `zero_fill_gap` initialized any gap before `*pos`, and we
+        // SAFETY: `prepare_write` initialized any gap before `*pos`, and we
         // just wrote `src.len()` bytes starting at `*pos`.
         unsafe { add_len(inner, pos, src.len()) };
         Ok(())
@@ -360,11 +370,7 @@ mod vec {
         pos: &'a mut usize,
         n_bytes: usize,
     ) -> WriteResult<impl Writer> {
-        maybe_grow(inner, *pos, n_bytes)?;
-        // SAFETY: `maybe_grow` checked `*pos + n_bytes` and ensured capacity
-        // for it, so `inner.capacity() >= *pos`; `zero_fill_gap` only writes
-        // `inner.len()..*pos`.
-        unsafe { zero_fill_gap(inner, *pos) };
+        prepare_write(inner, *pos, n_bytes)?;
         // SAFETY: by calling `as_trusted_for`, caller guarantees they
         // will fully initialize `n_bytes` of memory and will not write
         // beyond the bounds of the slice.

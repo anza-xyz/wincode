@@ -1,6 +1,5 @@
 use {
     crate::io::{WriteResult, Writer, slice::SliceMutUnchecked, write_size_limit},
-    core::mem::MaybeUninit,
     std::io::{BufWriter, Cursor, Write},
 };
 
@@ -134,36 +133,9 @@ fn cursor_vec_as_trusted_for(
     let Ok(pos) = usize::try_from(cursor.position()) else {
         return Err(write_size_limit(usize::MAX));
     };
-    let Some(next_pos) = pos.checked_add(n_bytes) else {
-        return Err(write_size_limit(n_bytes));
-    };
 
     let vec = cursor.get_mut().as_mut();
-    let cur_len = vec.len();
-    // Ensure total capacity is at least `next_pos`, so the reserved
-    // trusted window `[pos..next_pos)` is backed by the vector.
-    if next_pos > vec.capacity() {
-        #[expect(clippy::arithmetic_side_effects)]
-        // `next_pos > capacity && cur_len <= capacity` by invariant
-        vec.reserve(next_pos - cur_len);
-    }
-
-    // Zero-fill the gap between `cur_len` and `pos` (if any).
-    //
-    // Behaviorally consistent with `std::io::Write::write_all` for
-    // `Cursor<Vec<u8>>`.
-    if let Some(init_gap) = pos.checked_sub(cur_len) {
-        let spare = vec.spare_capacity_mut();
-        debug_assert!(spare.len() >= init_gap);
-        // SAFETY: after the optional reserve above, `capacity >= next_pos`.
-        // When `init_gap` exists, `init_gap = pos - cur_len` and `pos <= next_pos`,
-        // so `init_gap <= capacity - cur_len == spare.len()`.
-        unsafe {
-            spare
-                .get_unchecked_mut(..init_gap)
-                .fill(MaybeUninit::new(0))
-        }
-    }
+    crate::io::cursor::vec::prepare_write(vec, pos, n_bytes)?;
 
     // SAFETY: by calling `as_trusted_for`, caller guarantees they
     // will fully initialize `n_bytes` of memory and will not write
