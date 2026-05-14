@@ -754,7 +754,12 @@ struct ReplaceLifetimes<'a>(&'a str);
 impl ReplaceLifetimes<'_> {
     /// Replace the lifetime with `'de`, preserving the span.
     fn replace(&self, t: &mut Lifetime) {
-        t.ident = Ident::new(self.0, t.ident.span());
+        // `'static` is a concrete outlives guarantee, not a borrow parameter.
+        // Rewriting it to `'de` would allow data borrowed from the input buffer to be
+        // written into fields whose type declares a static reference.
+        if t.ident != "static" {
+            t.ident = Ident::new(self.0, t.ident.span());
+        }
     }
 
     fn new_from_reference(&self, t: &mut TypeReference) {
@@ -887,6 +892,21 @@ mod tests {
 
         let target: Type = parse_quote!(&'a str);
         assert_eq!(target.with_lifetime("de"), parse_quote!(&'de str));
+    }
+
+    #[test]
+    fn lifetime_override_doesnt_clobber_static() {
+        let target: Type = parse_quote!(Foo<'static>);
+        assert_eq!(target.with_lifetime("de"), parse_quote!(Foo<'static>));
+
+        let target: Type = parse_quote!(&'static str);
+        assert_eq!(target.with_lifetime("de"), parse_quote!(&'static str));
+
+        let target: Type = parse_quote!(Option<&'static str>);
+        assert_eq!(
+            target.with_lifetime("de"),
+            parse_quote!(Option<&'static str>)
+        );
     }
 
     #[test]
