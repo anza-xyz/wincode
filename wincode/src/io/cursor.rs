@@ -323,6 +323,7 @@ mod vec {
     ///
     /// # SAFETY:
     /// - Must be called after a successful write to the vector.
+    #[inline(always)]
     pub(super) unsafe fn add_len(inner: &mut Vec<u8>, pos: &mut usize, len: usize) {
         // SAFETY: We just wrote `len` bytes to the vector, so `pos + len` is valid.
         let next_pos = unsafe { pos.unchecked_add(len) };
@@ -394,11 +395,6 @@ impl<'a> CursorVecUnchecked<'a> {
 impl<'a> Writer for CursorVecUnchecked<'a> {
     #[inline]
     fn write(&mut self, src: &[u8]) -> WriteResult<()> {
-        let cur_len = self.inner.len();
-        let cur_pos = *self.pos;
-        #[expect(clippy::arithmetic_side_effects)]
-        let next_pos = cur_pos + src.len();
-
         // SAFETY:
         // - `as_trusted_for` ensured sufficient capacity for the trusted window before
         //   constructing this writer.
@@ -409,19 +405,15 @@ impl<'a> Writer for CursorVecUnchecked<'a> {
         unsafe {
             copy_nonoverlapping(
                 src.as_ptr(),
-                self.inner.as_mut_ptr().add(cur_pos),
+                self.inner.as_mut_ptr().add(*self.pos),
                 src.len(),
             );
         }
 
-        if next_pos > cur_len {
-            // SAFETY: any gap before the trusted window was initialized before
-            // constructing this writer, and this call just initialized the bytes
-            // from the previous cursor position through `next_pos`.
-            unsafe { self.inner.set_len(next_pos) }
-        }
-
-        *self.pos = next_pos;
+        // SAFETY: any gap before the trusted window was initialized before
+        // constructing this writer, and this call just initialized the bytes
+        // from the previous cursor position through `next_pos`.
+        unsafe { vec::add_len(self.inner, self.pos, src.len()) }
 
         Ok(())
     }
