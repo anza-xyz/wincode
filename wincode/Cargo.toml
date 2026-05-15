@@ -38,7 +38,7 @@ bytes = { version = "1.11.1", optional = true, default-features = false }
 bv = { version = "0.11.1", optional = true, default-features = false }
 ecow = { version = "0.2.6", optional = true, default-features = false }
 indexmap = { version = "2.13.1", optional = true, default-features = false }
-pastey = "0.2.1"
+pastey = "0.2.2"
 smallvec = { version = "1.15.1", optional = true, default-features = false, features = ["const_generics"] }
 solana-short-vec = { version = "3.2.0", default-features = false, optional = true }
 thiserror = { version = "2.0.18", default-features = false }
