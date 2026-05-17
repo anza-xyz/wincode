@@ -52,28 +52,27 @@ pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<T
 
     Ok(quote! {
         const _: () = {
-            use #crate_name::{config::ZeroCopy, SchemaRead, TypeMeta};
             // Assert the struct implements `SchemaRead`.
             const _assert_schema_read_impl: fn() = || {
-                fn assert_schema_read_impl<'de, T: SchemaRead<'de, #config_path>>() {}
+                fn assert_schema_read_impl<'de, T: #crate_name::SchemaRead<'de, #config_path>>() {}
                 assert_schema_read_impl::<#ident>()
             };
 
             // Assert the struct itself implements `ZeroCopy`.
             const _assert_struct_zerocopy_impl: fn() = || {
-                fn assert_struct_zerocopy_impl<T: ZeroCopy<#config_path>>() {}
+                fn assert_struct_zerocopy_impl<T: #crate_name::config::ZeroCopy<#config_path>>() {}
                 assert_struct_zerocopy_impl::<#ident>()
             };
 
             // Assert all fields implement `ZeroCopy`.
             const _assert_field_zerocopy_impl: fn() = || {
-                fn assert_field_zerocopy_impl<T: ZeroCopy<#config_path>>() {}
+                fn assert_field_zerocopy_impl<T: #crate_name::config::ZeroCopy<#config_path>>() {}
                 #(#zero_copy_field_asserts);*
             };
 
             // Assert the struct has no padding bytes.
             const _assert_no_padding: () = {
-                if let TypeMeta::Static { size, .. } = <#ident as SchemaRead<'_, #config_path>>::TYPE_META {
+                if let #crate_name::TypeMeta::Static { size, .. } = <#ident as #crate_name::SchemaRead<'_, #config_path>>::TYPE_META {
                     if size != core::mem::size_of::<#ident>() {
                         panic!("wincode(assert_zero_copy) was applied to a type with padding");
                     }
