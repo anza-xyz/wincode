@@ -569,7 +569,7 @@ mod tests {
         std::{
             alloc::Layout,
             borrow::Cow,
-            cell::Cell,
+            cell::{Cell, RefCell},
             collections::{BinaryHeap, HashMap, HashSet, VecDeque},
             hash::{BuildHasher, Hasher},
             mem::MaybeUninit,
@@ -760,6 +760,69 @@ mod tests {
             <StructNonStatic as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             expected
         );
+    }
+
+    #[test]
+    fn test_cell_roundtrip() {
+        let value = Cell::new(0x0123_4567_89ab_cdef_u64);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Cell<u64> = deserialize(&serialized).unwrap();
+
+        assert_eq!(value.get(), deserialized.get());
+        assert_eq!(
+            <Cell<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Cell<u64> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+    }
+
+    #[test]
+    fn test_refcell_roundtrip() {
+        let value = RefCell::new(String::from("hello from a refcell"));
+        let serialized = serialize(&value).unwrap();
+        let deserialized: RefCell<String> = deserialize(&serialized).unwrap();
+
+        assert_eq!(&*value.borrow(), &*deserialized.borrow());
+        assert_eq!(
+            <RefCell<String> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
+        assert_eq!(
+            <RefCell<String> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
+    }
+
+    #[test]
+    fn test_refcell_write_errors_while_mutably_borrowed() {
+        let value = RefCell::new(123_u32);
+        let _borrow = value.borrow_mut();
+
+        assert!(<RefCell<u32> as SchemaWrite<DefaultConfig>>::size_of(&value).is_err());
+
+        let mut bytes = Vec::new();
+        assert!(<RefCell<u32> as SchemaWrite<DefaultConfig>>::write(&mut bytes, &value).is_err());
+        assert!(serialize(&value).is_err());
+    }
+
+    #[test]
+    fn test_refcell_unsized_slice_write() {
+        let value = RefCell::new([1_u8, 2, 3, 4]);
+        let value: &RefCell<[u8]> = &value;
+
+        let serialized = <RefCell<[u8]> as Serialize>::serialize(value).unwrap();
+        let expected = serialize(&[1_u8, 2, 3, 4][..]).unwrap();
+
+        assert_eq!(serialized, expected);
     }
 
     thread_local! {

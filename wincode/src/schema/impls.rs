@@ -10,7 +10,7 @@ use {
         containers::decode_into_slice_t,
         context,
         error::{
-            ReadResult, WriteResult, invalid_bool_encoding, invalid_char_lead,
+            ReadResult, WriteError, WriteResult, invalid_bool_encoding, invalid_char_lead,
             invalid_tag_encoding, invalid_utf8_encoding, invalid_value, pointer_sized_decode_error,
             read_length_encoding_overflow, unaligned_pointer_read,
         },
@@ -23,6 +23,7 @@ use {
         tag_encoding::TagEncoding,
     },
     core::{
+        cell::{Cell, RefCell},
         marker::PhantomData,
         mem::{MaybeUninit, transmute},
         net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
@@ -2309,6 +2310,81 @@ where
             Cow::Owned(<<[T] as ToOwned>::Owned>::get_with_context(ctx, reader)?)
         };
         dst.write(cow);
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Cell<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Copy,
+{
+    type Src = Cell<T::Src>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        T::size_of(&src.get())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        T::write(writer, &src.get())
+    }
+}
+
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Cell<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = Cell<T::Dst>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        dst.write(T::get(reader).map(Self::Dst::new)?);
+        Ok(())
+    }
+}
+
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for RefCell<T>
+where
+    T: SchemaWrite<C> + ?Sized,
+{
+    type Src = RefCell<T::Src>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let val = src
+            .try_borrow()
+            .map_err(|_| WriteError::Custom("RefCell already mutably borrowed"))?;
+        T::size_of(&*val)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let val = src
+            .try_borrow()
+            .map_err(|_| WriteError::Custom("RefCell already mutably borrowed"))?;
+        T::write(writer, &*val)
+    }
+}
+
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for RefCell<T>
+where
+    T: SchemaRead<'de, C> + ?Sized,
+{
+    type Dst = RefCell<T::Dst>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        dst.write(T::get(reader).map(Self::Dst::new)?);
         Ok(())
     }
 }
