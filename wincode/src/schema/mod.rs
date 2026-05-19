@@ -581,7 +581,7 @@ mod tests {
             ops::{Bound, Deref, DerefMut, Range, RangeInclusive},
             rc::Rc,
             result::Result,
-            sync::Arc,
+            sync::{Arc, Mutex, RwLock},
             time::{Duration, SystemTime, UNIX_EPOCH},
         },
     };
@@ -4776,5 +4776,107 @@ mod tests {
         let serialized = serialize(&data).unwrap();
         let deserialized: Foo = deserialize(&serialized).unwrap();
         assert_eq!(data, deserialized);
+    }
+
+    #[test]
+    fn test_mutex_roundtrip() {
+        let value = Mutex::new(0x0123_4567_89ab_cdef_u64);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: Mutex<u64> = deserialize(&serialized).unwrap();
+
+        assert_eq!(*value.lock().unwrap(), *deserialized.lock().unwrap());
+        assert_eq!(
+            <Mutex<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <Mutex<u64> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+    }
+
+    #[test]
+    fn test_mutex_write_errors_when_poisoned() {
+        let value = Mutex::new(123_u32);
+
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = value.lock().unwrap();
+            panic!("poison mutex for serialization test");
+        });
+
+        assert!(value.is_poisoned());
+        assert!(<Mutex<u32> as SchemaWrite<DefaultConfig>>::size_of(&value).is_err());
+
+        let mut bytes = Vec::new();
+        assert!(<Mutex<u32> as SchemaWrite<DefaultConfig>>::write(&mut bytes, &value).is_err());
+        assert!(serialize(&value).is_err());
+    }
+
+    #[test]
+    fn test_mutex_unsized_slice_write() {
+        let value = Mutex::new([1_u8, 2, 3, 4]);
+        let value: &Mutex<[u8]> = &value;
+
+        let serialized = <Mutex<[u8]> as Serialize>::serialize(value).unwrap();
+        let expected = serialize(&[1_u8, 2, 3, 4][..]).unwrap();
+
+        assert_eq!(serialized, expected);
+    }
+
+    #[test]
+    fn test_rwlock_roundtrip() {
+        let value = RwLock::new(0x0123_4567_89ab_cdef_u64);
+        let serialized = serialize(&value).unwrap();
+        let deserialized: RwLock<u64> = deserialize(&serialized).unwrap();
+
+        assert_eq!(*value.read().unwrap(), *deserialized.read().unwrap());
+        assert_eq!(
+            <RwLock<u64> as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+        assert_eq!(
+            <RwLock<u64> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: size_of::<u64>(),
+                zero_copy: false
+            }
+        );
+    }
+
+    #[test]
+    fn test_rwlock_write_errors_when_poisoned() {
+        let value = RwLock::new(123_u32);
+
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = value.write().unwrap();
+            panic!("poison rwlock for serialization test");
+        });
+
+        assert!(value.is_poisoned());
+        assert!(<RwLock<u32> as SchemaWrite<DefaultConfig>>::size_of(&value).is_err());
+
+        let mut bytes = Vec::new();
+        assert!(<RwLock<u32> as SchemaWrite<DefaultConfig>>::write(&mut bytes, &value).is_err());
+        assert!(serialize(&value).is_err());
+    }
+
+    #[test]
+    fn test_rwlock_unsized_slice_write() {
+        let value = RwLock::new([1_u8, 2, 3, 4]);
+        let value: &RwLock<[u8]> = &value;
+
+        let serialized = <RwLock<[u8]> as Serialize>::serialize(value).unwrap();
+        let expected = serialize(&[1_u8, 2, 3, 4][..]).unwrap();
+
+        assert_eq!(serialized, expected);
     }
 }

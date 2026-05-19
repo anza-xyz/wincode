@@ -54,6 +54,7 @@ use {
     core::hash::{BuildHasher, Hash},
     std::{
         collections::{HashMap, HashSet},
+        sync::{Mutex, RwLock},
         time::{SystemTime, UNIX_EPOCH},
     },
 };
@@ -2379,6 +2380,90 @@ where
     T: SchemaRead<'de, C> + ?Sized,
 {
     type Dst = RefCell<T::Dst>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        dst.write(T::get(reader).map(Self::Dst::new)?);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for Mutex<T>
+where
+    T: SchemaWrite<C> + ?Sized,
+{
+    type Src = Mutex<T::Src>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let val = src
+            .lock()
+            .map_err(|_| WriteError::Custom("Mutex poisoned"))?;
+        T::size_of(&*val)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let val = src
+            .lock()
+            .map_err(|_| WriteError::Custom("Mutex poisoned"))?;
+        T::write(writer, &*val)
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for Mutex<T>
+where
+    T: SchemaRead<'de, C> + ?Sized,
+{
+    type Dst = Mutex<T::Dst>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        dst.write(T::get(reader).map(Self::Dst::new)?);
+        Ok(())
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<C: ConfigCore, T> SchemaWrite<C> for RwLock<T>
+where
+    T: SchemaWrite<C> + ?Sized,
+{
+    type Src = RwLock<T::Src>;
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        let val = src
+            .read()
+            .map_err(|_| WriteError::Custom("RwLock poisoned"))?;
+        T::size_of(&*val)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        let val = src
+            .read()
+            .map_err(|_| WriteError::Custom("RwLock poisoned"))?;
+        T::write(writer, &*val)
+    }
+}
+
+#[cfg(feature = "std")]
+unsafe impl<'de, C: ConfigCore, T> SchemaRead<'de, C> for RwLock<T>
+where
+    T: SchemaRead<'de, C> + ?Sized,
+{
+    type Dst = RwLock<T::Dst>;
 
     const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
 
