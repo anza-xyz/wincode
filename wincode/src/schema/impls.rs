@@ -2340,7 +2340,7 @@ where
 {
     type Dst = Cell<T::Dst>;
 
-    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+    const TYPE_META: TypeMeta = T::TYPE_META;
 
     #[inline]
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {

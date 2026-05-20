@@ -780,7 +780,7 @@ mod tests {
             <Cell<u64> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
             TypeMeta::Static {
                 size: size_of::<u64>(),
-                zero_copy: false
+                zero_copy: true
             }
         );
     }
