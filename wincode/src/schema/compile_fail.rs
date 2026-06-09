@@ -34,3 +34,33 @@
 /// # }
 /// ```
 fn static_derive_requires_static_input() {}
+
+/// A variant-level `with` requires the variant to have exactly one field.
+///
+/// ```compile_fail
+/// # #[cfg(feature = "derive")] {
+/// use wincode::{SchemaRead, SchemaWrite};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// enum Foo {
+///     #[wincode(with = "Bar")]
+///     Bar(u32, u32),
+/// }
+/// # }
+/// ```
+fn variant_with_requires_single_field() {}
+
+/// A `with` cannot be specified on both a variant and its field.
+///
+/// ```compile_fail
+/// # #[cfg(feature = "derive")] {
+/// use wincode::{SchemaRead, SchemaWrite};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// enum Foo {
+///     #[wincode(with = "Bar")]
+///     Bar(#[wincode(with = "Baz")] u32),
+/// }
+/// # }
+/// ```
+fn variant_with_conflicts_with_field_with() {}

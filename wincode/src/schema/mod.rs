@@ -44,6 +44,29 @@
 //! assert_eq!(my_struct, MyStruct::deserialize(&bytes).unwrap());
 //! # }
 //! ```
+//!
+//! # The `with` attribute on enum variants
+//!
+//! `#[wincode(with = "...")]` may also be placed on a single-field enum variant, as a convenience
+//! for newtype-style variants. It is exactly equivalent to annotating the inner field:
+//!
+//! ```
+//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
+//! # use wincode::{len::UseIntLen, containers};
+//! # use wincode_derive::{SchemaWrite, SchemaRead};
+//! #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+//! enum Message {
+//!     #[wincode(with = "containers::Vec<u32, UseIntLen<u16>>")]
+//!     Ids(Vec<u32>),
+//!     Empty,
+//! }
+//! # }
+//! ```
+//!
+//! Note this differs from serde's `#[serde(with = ...)]` on a variant, which is a whole-variant
+//! override accepting any number of fields. In wincode, `with` is a *type* override for a single
+//! value, so a variant-level `with` is simply shorthand for its sole field and requires the
+//! variant to have exactly one field.
 use {
     crate::{
         config::{self, ConfigCore, DefaultConfig},
@@ -1952,6 +1975,40 @@ mod tests {
                 Enum::C => 13,
             };
             prop_assert_eq!(&int.to_le_bytes(), &serialized[..4]);
+        });
+    }
+
+    #[test]
+    fn enum_variant_level_with() {
+        // A `with` placed on a single-field variant is lowered onto the inner field, and is
+        // exactly equivalent to annotating the field directly.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        enum Outer {
+            #[wincode(with = "containers::Vec<u32, crate::len::UseIntLen<u16>>")]
+            Bar(Vec<u32>),
+            Baz,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        enum Inner {
+            Bar(#[wincode(with = "containers::Vec<u32, crate::len::UseIntLen<u16>>")] Vec<u32>),
+            Baz,
+        }
+
+        // The variant-level annotation produces identical bytes to the field-level annotation,
+        // and a `u16` length prefix rather than bincode's default `u64`.
+        let val = Outer::Bar(vec![1, 2, 3]);
+        let serialized = serialize(&val).unwrap();
+        // 4 (u32 discriminant) + 2 (u16 len) + 12 (3 * u32) = 18 bytes.
+        assert_eq!(serialized.len(), 18);
+        assert_eq!(serialized, serialize(&Inner::Bar(vec![1, 2, 3])).unwrap());
+
+        proptest!(proptest_cfg(), |(e: Outer)| {
+            let serialized = serialize(&e).unwrap();
+            let deserialized: Outer = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
         });
     }
 

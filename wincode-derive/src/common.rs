@@ -328,6 +328,10 @@ pub(crate) struct Variant {
     pub(crate) fields: Fields<Field>,
     #[darling(default)]
     pub(crate) tag: Option<Expr>,
+
+    /// Variant-level `SchemaRead` and `SchemaWrite` override for single-field (newtype) variants.
+    #[darling(default)]
+    pub(crate) with: Option<Type>,
 }
 
 impl Variant {
@@ -599,6 +603,46 @@ pub(crate) struct SchemaArgs {
     /// The path is emitted as written and resolved from the derive expansion site.
     #[darling(rename = "crate", default)]
     pub(crate) crate_path: Option<Path>,
+}
+
+impl SchemaArgs {
+    /// Push variant-level attributes down onto each variant's sole field, returning the updated
+    /// args.
+    ///
+    /// Currently this handles `with`: a `with` placed on an enum variant is a convenience for
+    /// single-field (newtype) variants, equivalent to annotating the inner field. Pushing it down
+    /// onto that field means the rest of the derive (which only reads field-level `with`) needs no
+    /// special casing.
+    ///
+    /// Errors if a variant carrying such an attribute does not have exactly one field, or if both
+    /// the variant and its field specify `with`.
+    pub(crate) fn push_down_variant_attributes(mut self) -> Result<Self> {
+        let Data::Enum(variants) = &mut self.data else {
+            return Ok(self);
+        };
+        for variant in variants {
+            let Some(with) = variant.with.take() else {
+                continue;
+            };
+            let [field] = variant.fields.fields.as_mut_slice() else {
+                return Err(darling::Error::custom(
+                    "`with` on an enum variant is shorthand for annotating its single field, so \
+                     it requires a variant with exactly one field. Unlike serde, it is not a \
+                     whole-variant override; annotate the individual fields instead",
+                )
+                .with_span(&variant.ident));
+            };
+            if field.with.is_some() {
+                return Err(darling::Error::custom(
+                    "`with` is specified on both the variant and its field; it is shorthand for \
+                     the field, so specify it in only one place",
+                )
+                .with_span(&variant.ident));
+            }
+            field.with = Some(with);
+        }
+        Ok(self)
+    }
 }
 
 /// Configuration for zero-copy assertions.
