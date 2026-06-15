@@ -2,7 +2,7 @@
 use alloc::vec::Vec;
 use {
     crate::{
-        SchemaReadOwned,
+        SchemaReadContext, SchemaReadOwned,
         config::{self, DefaultConfig},
         error::{ReadResult, WriteResult},
         io::{Reader, Writer},
@@ -178,6 +178,29 @@ where
     T: SchemaRead<'de, DefaultConfig, Dst = T>,
 {
     config::deserialize_exact(src, DefaultConfig::default())
+}
+
+/// Deserialize a type from the given bytes using the provided context.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "bumpalo")] {
+/// use bumpalo::{Bump, collections::String};
+///
+/// let serialized = wincode::serialize("w1nc0d3").unwrap();
+///
+/// let bump = Bump::new();
+/// let value: String = wincode::deserialize_with_context(&bump, &serialized).unwrap();
+/// assert_eq!(value, "w1nc0d3");
+/// # }
+/// ```
+#[inline(always)]
+pub fn deserialize_with_context<'de, Ctx, T>(ctx: Ctx, src: &'de [u8]) -> ReadResult<T>
+where
+    T: SchemaReadContext<'de, DefaultConfig, Ctx, Dst = T>,
+{
+    config::deserialize_with_context(ctx, src, DefaultConfig::default())
 }
 
 /// Deserialize a type from the given bytes, with the ability
