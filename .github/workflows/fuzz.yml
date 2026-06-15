@@ -4,8 +4,8 @@ on:
   push:
     branches: [master]
 
-permissions:                                                                                                                                                                                                                          
-    contents: read
+permissions:
+  contents: read
 
 jobs:
   upload:
@@ -31,26 +31,22 @@ jobs:
         run: ./fuzz/build-fuzz-bundle.sh
 
       - name: Upload corpus to FuzzCorp
-        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b # v1.0.4
+        uses: asymmetric-research/fuzz-upload-action@0e367cafdc501772fd0fd7dc13bfa68d49222256 # v2.0.0
         with:
           upload_type: corpus
           upload_path: ./fuzz/corpus/roundtrip
           upload_args: --lineage roundtrip --kind seed
         env:
-          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
           FUZZ_ORGANIZATION: anza
           FUZZ_PROJECT: wincode
-          FUZZ_USER: ${{ secrets.FUZZ_USER }}
-          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
+          FUZZ_API_KEY: ${{ secrets.FUZZ_API_KEY }}
 
       - name: Upload bundle to FuzzCorp
-        uses: asymmetric-research/fuzz-upload-action@1140f6fc0fc9c59aa66f3a705c55c93f260f715b # v1.0.4
+        uses: asymmetric-research/fuzz-upload-action@0e367cafdc501772fd0fd7dc13bfa68d49222256 # v2.0.0
         with:
           upload_type: bundle
           upload_path: ./fuzz/target/bundle
         env:
-          FUZZ_API_ORIGIN: ${{ secrets.FUZZ_API_ORIGIN }}
           FUZZ_ORGANIZATION: anza
           FUZZ_PROJECT: wincode
-          FUZZ_USER: ${{ secrets.FUZZ_USER }}
-          FUZZ_PASSWORD: ${{ secrets.FUZZ_PASSWORD }}
+          FUZZ_API_KEY: ${{ secrets.FUZZ_API_KEY }}
