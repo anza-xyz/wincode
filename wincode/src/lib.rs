@@ -323,6 +323,7 @@
 //! |`derive`|disabled|Enables the derive macros for [`SchemaRead`] and [`SchemaWrite`].|
 //! |`uuid`|disabled|Enables support for the `uuid` crate.|
 //! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
+//! |`bumpalo`|disabled|Enables support for the `bumpalo` crate.|
 //!
 //! # Derive attributes
 //!

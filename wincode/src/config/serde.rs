@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use {
     crate::{
-        ReadResult, SchemaRead, SchemaReadOwned, SchemaWrite, WriteResult,
+        ReadResult, SchemaRead, SchemaReadContext, SchemaReadOwned, SchemaWrite, WriteResult,
         config::{Config, ConfigCore},
         error,
         io::{Reader, Writer},
@@ -183,6 +183,20 @@ where
     } else {
         Err(error::trailing_bytes())
     }
+}
+
+/// Like [`crate::deserialize_with_context`], but allows the caller to provide a custom configuration.
+#[inline(always)]
+#[expect(unused_variables)]
+pub fn deserialize_with_context<'de, Ctx, T, C: Config>(
+    ctx: Ctx,
+    src: &'de [u8],
+    config: C,
+) -> ReadResult<T>
+where
+    T: SchemaReadContext<'de, C, Ctx, Dst = T>,
+{
+    T::get_with_context(ctx, src)
 }
 
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.

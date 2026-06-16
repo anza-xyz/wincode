@@ -32,8 +32,10 @@ bytes = ["alloc", "dep:bytes"]
 bytes-extra-platforms = ["bytes", "bytes/extra-platforms"]
 ecow = ["alloc", "dep:ecow"]
 smallvec = ["alloc", "dep:smallvec"]
+bumpalo = ["alloc", "dep:bumpalo"]
 
 [dependencies]
+bumpalo = { version = "3.20.3", features = ["collections", "boxed"], optional = true }
 bytes = { version = "1.11.1", optional = true, default-features = false }
 bv = { version = "0.11.1", optional = true, default-features = false }
 ecow = { version = "0.2.6", optional = true, default-features = false }
