@@ -13,19 +13,20 @@ bincode_2 = { package = "bincode", version = "2.0", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
-# Solana crates in this target still derive against wincode 0.4.x.
-wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
+wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc"] }
 wincode-derive = { path = "../wincode-derive" }
 
-solana-address = { version = "2.6.0", features = ["wincode"] }
-solana-hash = { version = "4.3.0", features = ["wincode"] }
-solana-fee-calculator = { version = "3.2.0", features = ["wincode"] }
-solana-message = { version = "4.1.0", features = ["wincode"] }
-solana-nonce = { version = "3.1.0", features = ["wincode"] }
-solana-signature = { version = "3.4.0", features = ["wincode"] }
-solana-transaction = { version = "4.1.0", features = ["wincode"] }
-solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
-agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
+solana-address = { version = "2.6.1", features = ["wincode"] }
+solana-hash = { version = "4.4.0", features = ["wincode"] }
+solana-fee-calculator = { version = "3.2.1", features = ["wincode"] }
+solana-message = { version = "4.2.1", features = ["wincode"] }
+solana-nonce = { version = "3.2.0", features = ["wincode"] }
+solana-signature = { version = "3.4.1", features = ["wincode"] }
+solana-transaction = { version = "4.1.3", features = ["wincode"] }
+solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "18e98157ad4bd99a90bc48d48184ba0341630b18", features = ["agave-unstable-api"] }
+agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "18e98157ad4bd99a90bc48d48184ba0341630b18", features = ["agave-unstable-api"] }
+solana-gossip = { git = "https://github.com/anza-xyz/agave", rev = "18e98157ad4bd99a90bc48d48184ba0341630b18", features = ["agave-unstable-api"] }
+solana-version = { git = "https://github.com/anza-xyz/agave", rev = "18e98157ad4bd99a90bc48d48184ba0341630b18", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
