@@ -4879,4 +4879,87 @@ mod tests {
 
         assert_eq!(serialized, expected);
     }
+
+    // test using a struct that receives a T but only stores a T::SomeType
+    #[test]
+    fn test_generic_associated_type_only() {
+        trait HasAssoc {
+            type Value: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Value>
+                + SchemaWrite<DefaultConfig, Src = Self::Value>
+                + Clone
+                + core::fmt::Debug
+                + PartialEq;
+        }
+
+        #[derive(Debug, PartialEq)]
+        struct UsesU64;
+        impl HasAssoc for UsesU64 {
+            type Value = u64;
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct Wrapper<T: HasAssoc> {
+            inner: T::Value,
+        }
+
+        let original = Wrapper::<UsesU64> { inner: 42u64 };
+        let serialized = serialize(&original).unwrap();
+        let deserialized: Wrapper<UsesU64> = deserialize(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    // test using a struct that receives a T and stores it
+    #[test]
+    fn test_generic_direct_type() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct Wrapper<T> {
+            inner: T,
+        }
+
+        let original = Wrapper::<String> {
+            inner: "hello".into(),
+        };
+        let serialized = serialize(&original).unwrap();
+        let deserialized: Wrapper<String> = deserialize(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    // test using a struct that receives a T and stores it plus the T::SomeType
+    #[test]
+    fn test_generic_direct_and_associated_type() {
+        trait HasAssoc {
+            type Extra: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Extra>
+                + SchemaWrite<DefaultConfig, Src = Self::Extra>
+                + Clone
+                + core::fmt::Debug
+                + PartialEq;
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct Both<T: HasAssoc> {
+            direct: T,
+            assoc: T::Extra,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct MyData {
+            value: u32,
+        }
+
+        impl HasAssoc for MyData {
+            type Extra = String;
+        }
+
+        let original = Both::<MyData> {
+            direct: MyData { value: 42 },
+            assoc: "hello".into(),
+        };
+        let serialized = serialize(&original).unwrap();
+        let deserialized: Both<MyData> = deserialize(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
 }

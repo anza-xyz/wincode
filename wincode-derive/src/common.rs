@@ -845,6 +845,51 @@ impl Visit<'_> for HasLifetime {
     }
 }
 
+struct HasTypeParam {
+    type_params: std::collections::HashSet<Ident>,
+    found: bool,
+}
+
+impl Visit<'_> for HasTypeParam {
+    fn visit_ident(&mut self, i: &Ident) {
+        if self.type_params.contains(i) {
+            self.found = true;
+        }
+    }
+}
+
+pub(crate) fn generic_field_types(data: &Data<Variant, Field>, generics: &Generics) -> Vec<Type> {
+    let type_params: std::collections::HashSet<Ident> =
+        generics.type_params().map(|p| p.ident.clone()).collect();
+    if type_params.is_empty() {
+        return Vec::new();
+    }
+    let fields: Vec<&Field> = match data {
+        Data::Struct(fields) => fields.iter().collect(),
+        Data::Enum(variants) => variants.iter().flat_map(|v| v.fields.iter()).collect(),
+    };
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for field in &fields {
+        if field.skip.is_some() {
+            continue;
+        }
+        let target = field.target_resolved();
+        let mut visitor = HasTypeParam {
+            type_params: type_params.clone(),
+            found: false,
+        };
+        visitor.visit_type(&target);
+        if visitor.found {
+            let key = target.to_token_stream().to_string();
+            if seen.insert(key) {
+                result.push(target);
+            }
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
