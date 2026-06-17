@@ -1,7 +1,14 @@
 #![no_main]
 
 use {
-    agave_votor_messages::reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+    agave_votor_messages::{
+        consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
+        vote::{
+            FinalizationVote, GenesisVote, NotarizationFallbackVote, NotarizationVote,
+            SkipFallbackVote, SkipVote, Vote,
+        },
+    },
     libfuzzer_sys::fuzz_target,
     solana_address::Address,
     solana_entry::{
@@ -58,6 +65,17 @@ fuzz_target!(|data: &[u8]| {
     fuzz_roundtrip!(data, Entry);
     fuzz_roundtrip!(data, SkipRewardCertificate);
     fuzz_roundtrip!(data, NotarRewardCertificate);
+    fuzz_roundtrip!(data, NotarizationVote);
+    fuzz_roundtrip!(data, FinalizationVote);
+    fuzz_roundtrip!(data, SkipVote);
+    fuzz_roundtrip!(data, NotarizationFallbackVote);
+    fuzz_roundtrip!(data, SkipFallbackVote);
+    fuzz_roundtrip!(data, GenesisVote);
+    fuzz_roundtrip!(data, Vote);
+    fuzz_roundtrip!(data, VoteMessage);
+    fuzz_roundtrip!(data, CertificateType);
+    fuzz_roundtrip!(data, Certificate);
+    fuzz_roundtrip!(data, ConsensusMessage);
     fuzz_roundtrip!(data, BlockFooterV1);
     fuzz_roundtrip!(data, BlockHeaderV1);
     fuzz_roundtrip!(data, UpdateParentV1);
