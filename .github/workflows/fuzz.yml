@@ -12,17 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: fuzz
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
           toolchain: nightly
-
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
-        with:
-          cache-on-failure: true
+          rustflags: ""
 
       - uses: dtolnay/install@d0dc46e85ffd2c174b5ac0489e17f95dae84fa5a # cargo-fuzz
       - run: cargo +nightly fuzz build --no-trace-compares
