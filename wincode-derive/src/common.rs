@@ -845,12 +845,12 @@ impl Visit<'_> for HasLifetime {
     }
 }
 
-struct HasTypeParam {
-    type_params: std::collections::HashSet<Ident>,
+struct HasTypeParam<'a> {
+    type_params: &'a std::collections::HashSet<&'a Ident>,
     found: bool,
 }
 
-impl Visit<'_> for HasTypeParam {
+impl Visit<'_> for HasTypeParam<'_> {
     fn visit_ident(&mut self, i: &Ident) {
         if self.type_params.contains(i) {
             self.found = true;
@@ -858,36 +858,51 @@ impl Visit<'_> for HasTypeParam {
     }
 }
 
-pub(crate) fn generic_field_types(data: &Data<Variant, Field>, generics: &Generics) -> Vec<Type> {
-    let type_params: std::collections::HashSet<Ident> =
-        generics.type_params().map(|p| p.ident.clone()).collect();
+#[derive(Hash, PartialEq, Eq)]
+pub(crate) struct GenericField {
+    pub(crate) target: Type,
+    pub(crate) ty: Type,
+}
+
+pub(crate) fn generic_field_types(
+    data: &Data<Variant, Field>,
+    generics: &Generics,
+) -> std::collections::HashSet<GenericField> {
+    let type_params: std::collections::HashSet<&Ident> =
+        generics.type_params().map(|p| &p.ident).collect();
     if type_params.is_empty() {
-        return Vec::new();
+        return std::collections::HashSet::new();
     }
-    let fields: Vec<&Field> = match data {
-        Data::Struct(fields) => fields.iter().collect(),
-        Data::Enum(variants) => variants.iter().flat_map(|v| v.fields.iter()).collect(),
-    };
-    let mut result = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for field in &fields {
-        if field.skip.is_some() {
-            continue;
-        }
-        let target = field.target_resolved();
-        let mut visitor = HasTypeParam {
-            type_params: type_params.clone(),
-            found: false,
-        };
-        visitor.visit_type(&target);
-        if visitor.found {
-            let key = target.to_token_stream().to_string();
-            if seen.insert(key) {
-                result.push(target);
+
+    fn visit<'a>(
+        fields: impl Iterator<Item = &'a Field>,
+        type_params: &std::collections::HashSet<&Ident>,
+    ) -> std::collections::HashSet<GenericField> {
+        let mut result = std::collections::HashSet::new();
+        for field in fields {
+            if field.skip.is_some() {
+                continue;
+            }
+            let target = field.target_resolved();
+            let mut visitor = HasTypeParam {
+                type_params,
+                found: false,
+            };
+            visitor.visit_type(&target);
+            if visitor.found {
+                result.insert(GenericField {
+                    target,
+                    ty: field.ty.clone(),
+                });
             }
         }
+        result
     }
-    result
+
+    match data {
+        Data::Struct(fields) => visit(fields.iter(), &type_params),
+        Data::Enum(variants) => visit(variants.iter().flat_map(|v| v.fields.iter()), &type_params),
+    }
 }
 
 #[cfg(test)]

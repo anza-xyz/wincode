@@ -2,9 +2,9 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
-            default_tag_encoding, extract_repr, generic_field_types, get_crate_name, get_src_dst,
-            get_src_dst_fully_qualified, suppress_unused_fields,
+            Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant,
+            VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            get_src_dst, get_src_dst_fully_qualified, suppress_unused_fields,
         },
         uninit_builder::impl_uninit_builder,
     },
@@ -321,13 +321,13 @@ fn append_config(generics: &mut Generics, crate_name: &Path) {
 fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, crate_name: &Path) {
     let field_types = generic_field_types(data, generics);
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
-    for ty in &field_types {
+    for GenericField { target, ty } in &field_types {
         let mut bounds = Punctuated::new();
         bounds.push(parse_quote!(#crate_name::SchemaRead<'de, __WincodeConfig, Dst = #ty>));
 
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
-            bounded_ty: parse_quote!(#ty),
+            bounded_ty: parse_quote!(#target),
             colon_token: parse_quote![:],
             bounds,
         }));
