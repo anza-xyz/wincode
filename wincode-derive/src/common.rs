@@ -7,7 +7,7 @@ use {
     quote::{ToTokens as _, quote},
     std::{
         borrow::Cow,
-        collections::VecDeque,
+        collections::{HashSet, VecDeque},
         fmt::{self, Display},
     },
     syn::{
@@ -846,7 +846,7 @@ impl Visit<'_> for HasLifetime {
 }
 
 struct HasTypeParam<'a> {
-    type_params: &'a std::collections::HashSet<&'a Ident>,
+    type_params: &'a HashSet<&'a Ident>,
     found: bool,
 }
 
@@ -864,21 +864,71 @@ pub(crate) struct GenericField {
     pub(crate) ty: Type,
 }
 
+/// Find fields that mention one of the generic type parameters on the derived type.
+///
+/// The returned `GenericField` keeps two types:
+/// - `target`: the type whose `SchemaRead`/`SchemaWrite` impl will be called
+/// - `ty`: the actual type stored in the field
+///
+/// This is specifically based on the _fields_, not just the generic parameter list.
+/// For example, if a type parameter is only used to name an associated type, we return the
+/// associated type that is actually stored:
+///
+/// ```ignore
+/// trait HasValue {
+///     type Value;
+/// }
+///
+/// struct Wrapper<T: HasValue> {
+///     value: T::Value,
+/// }
+///
+/// // yields:
+/// // target = T::Value
+/// // ty     = T::Value
+///
+/// // does not yield T
+/// ```
+///
+/// The returned `GenericField` keeps both the schema type and the underlying field type.
+/// Usually those are the same:
+///
+/// ```ignore
+/// struct Wrapper<T> {
+///     value: T,
+/// }
+///
+/// // target = T
+/// // ty     = T
+/// ```
+///
+/// They differ when a field uses `#[wincode(with = ...)]`. In that case the
+/// generated code calls `SchemaRead`/`SchemaWrite` on the adapter type, but the
+/// adapter's `Src`/`Dst` must match the real field type:
+///
+/// ```ignore
+/// struct Wrapper<T> {
+///     #[wincode(with = "containers::Vec<_, BincodeLen>")]
+///     values: Vec<T>,
+/// }
+///
+/// // target = containers::Vec<T, BincodeLen>
+/// // ty     = Vec<T>
+/// ```
 pub(crate) fn generic_field_types(
     data: &Data<Variant, Field>,
     generics: &Generics,
-) -> std::collections::HashSet<GenericField> {
-    let type_params: std::collections::HashSet<&Ident> =
-        generics.type_params().map(|p| &p.ident).collect();
+) -> HashSet<GenericField> {
+    let type_params: HashSet<&Ident> = generics.type_params().map(|p| &p.ident).collect();
     if type_params.is_empty() {
-        return std::collections::HashSet::new();
+        return HashSet::new();
     }
 
     fn visit<'a>(
         fields: impl Iterator<Item = &'a Field>,
-        type_params: &std::collections::HashSet<&Ident>,
-    ) -> std::collections::HashSet<GenericField> {
-        let mut result = std::collections::HashSet::new();
+        type_params: &HashSet<&Ident>,
+    ) -> HashSet<GenericField> {
+        let mut result = HashSet::new();
         for field in fields {
             if field.skip.is_some() {
                 continue;

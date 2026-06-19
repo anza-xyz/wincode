@@ -4962,4 +4962,52 @@ mod tests {
         let deserialized: Both<MyData> = deserialize(&serialized).unwrap();
         assert_eq!(original, deserialized);
     }
+
+    #[test]
+    fn test_generic_type_with_container_adapter() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct Wrapper<T> {
+            #[wincode(with = "containers::Vec<_, BincodeLen>")]
+            inner: Vec<T>,
+        }
+
+        let original = Wrapper::<u8> {
+            inner: vec![1, 2, 3],
+        };
+        let serialized = serialize(&original).unwrap();
+        let deserialized: Wrapper<u8> = deserialize(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
+
+    #[test]
+    fn test_generic_type_with_container_adapter_assoc() {
+        trait HasAssoc {
+            type Value: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Value>
+                + SchemaWrite<DefaultConfig, Src = Self::Value>
+                + Clone
+                + core::fmt::Debug
+                + PartialEq;
+        }
+
+        #[derive(Debug, PartialEq)]
+        struct UsesU64;
+        impl HasAssoc for UsesU64 {
+            type Value = u64;
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Clone)]
+        #[wincode(internal)]
+        struct Wrapper<T: HasAssoc> {
+            #[wincode(with = "containers::Vec<_, BincodeLen>")]
+            inner: Vec<T::Value>,
+        }
+
+        let original = Wrapper::<UsesU64> {
+            inner: vec![42, 67],
+        };
+        let serialized = serialize(&original).unwrap();
+        let deserialized: Wrapper<UsesU64> = deserialize(&serialized).unwrap();
+        assert_eq!(original, deserialized);
+    }
 }
