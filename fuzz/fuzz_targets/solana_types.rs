@@ -33,11 +33,11 @@ use {
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
 };
-
 macro_rules! fuzz_roundtrip {
     ($data:expr, $ty:ty) => {
-        if let Ok(value) = wincode::deserialize::<$ty>($data) {
+        if let Ok(value) = wincode::deserialize_exact::<$ty>($data) {
             let serialized = wincode::serialize(&value).expect("serialize should succeed");
+            assert_eq!($data, serialized, "deserialize -> serialize != orignal_data for type {}\nserialized {:?}\noriginal   {:?}", stringify!($ty), serialized, $data,);
             let roundtrip: $ty =
                 wincode::deserialize(&serialized).expect("roundtrip deserialize should succeed");
             assert_eq!(value, roundtrip, "roundtrip failed for {}", stringify!($ty));
