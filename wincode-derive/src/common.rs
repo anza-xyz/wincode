@@ -7,7 +7,7 @@ use {
     quote::{ToTokens as _, quote},
     std::{
         borrow::Cow,
-        collections::VecDeque,
+        collections::{HashSet, VecDeque},
         fmt::{self, Display},
     },
     syn::{
@@ -842,6 +842,84 @@ struct HasLifetime(bool);
 impl Visit<'_> for HasLifetime {
     fn visit_lifetime(&mut self, _: &Lifetime) {
         self.0 = true;
+    }
+}
+
+struct HasTypeParam<'a> {
+    type_params: &'a HashSet<&'a Ident>,
+    found: bool,
+}
+
+impl Visit<'_> for HasTypeParam<'_> {
+    fn visit_ident(&mut self, i: &Ident) {
+        if self.type_params.contains(i) {
+            self.found = true;
+        }
+    }
+}
+
+#[derive(Hash, PartialEq, Eq)]
+pub(crate) struct GenericField {
+    pub(crate) target: Type,
+    pub(crate) ty: Type,
+}
+
+/// Find fields whose types mention a generic type parameter of the derived type.
+///
+/// The returned [`GenericField`] keeps two types:
+/// - `target`: the type whose `SchemaRead`/`SchemaWrite` impl will be called
+/// - `ty`: the actual type stored in the field
+///
+/// `target` will be the same as `ty`, except for when a field uses `#[wincode(with = ...)]`:
+///
+/// ```ignore
+/// struct Wrapper<T> {
+///     #[wincode(with = "containers::Vec<_, BincodeLen>")]
+///     values: Vec<T>,
+/// }
+/// // target = containers::Vec<T, BincodeLen>
+/// // ty     = Vec<T>
+/// ```
+///
+/// When this happens, the generated code calls `SchemaRead`/`SchemaWrite` on the adapter type,
+/// but the adapter's `Src`/`Dst` must match the real field type.
+pub(crate) fn generic_field_types(
+    data: &Data<Variant, Field>,
+    generics: &Generics,
+) -> HashSet<GenericField> {
+    let type_params: HashSet<&Ident> = generics.type_params().map(|p| &p.ident).collect();
+    if type_params.is_empty() {
+        return HashSet::new();
+    }
+
+    fn visit<'a>(
+        fields: impl Iterator<Item = &'a Field>,
+        type_params: &HashSet<&Ident>,
+    ) -> HashSet<GenericField> {
+        let mut result = HashSet::new();
+        for field in fields {
+            if field.skip.is_some() {
+                continue;
+            }
+            let target = field.target_resolved();
+            let mut visitor = HasTypeParam {
+                type_params,
+                found: false,
+            };
+            visitor.visit_type(&target);
+            if visitor.found {
+                result.insert(GenericField {
+                    target,
+                    ty: field.ty.clone(),
+                });
+            }
+        }
+        result
+    }
+
+    match data {
+        Data::Struct(fields) => visit(fields.iter(), &type_params),
+        Data::Enum(variants) => visit(variants.iter().flat_map(|v| v.fields.iter()), &type_params),
     }
 }
 

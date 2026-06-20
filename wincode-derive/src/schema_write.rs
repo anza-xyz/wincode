@@ -2,9 +2,9 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
-            default_tag_encoding, extract_repr, get_crate_name, get_src_dst,
-            suppress_unused_fields,
+            Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, Variant,
+            VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            get_src_dst, suppress_unused_fields,
         },
     },
     darling::{
@@ -256,16 +256,16 @@ fn append_config(generics: &mut Generics, crate_name: &Path) {
     ));
 }
 
-fn append_where_clause(generics: &mut Generics, crate_name: &Path) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, crate_name: &Path) {
+    let field_types = generic_field_types(data, generics);
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
-    for param in generics.type_params() {
-        let ident = &param.ident;
+    for GenericField { target, ty } in &field_types {
         let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(#crate_name::SchemaWrite<__WincodeConfig, Src = #ident>));
+        bounds.push(parse_quote!(#crate_name::SchemaWrite<__WincodeConfig, Src = #ty>));
 
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
-            bounded_ty: parse_quote!(#ident),
+            bounded_ty: parse_quote!(#target),
             colon_token: parse_quote![:],
             bounds,
         }));
@@ -278,9 +278,13 @@ fn append_where_clause(generics: &mut Generics, crate_name: &Path) {
     where_clause.predicates.extend(predicates);
 }
 
-fn append_generics(generics: &Generics, crate_name: &Path) -> Generics {
+fn append_generics(
+    generics: &Generics,
+    data: &Data<Variant, Field>,
+    crate_name: &Path,
+) -> Generics {
     let mut generics = generics.clone();
-    append_where_clause(&mut generics, crate_name);
+    append_where_clause(&mut generics, data, crate_name);
     append_config(&mut generics, crate_name);
     generics
 }
@@ -289,7 +293,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, "SchemaWrite")?;
     let args = SchemaArgs::from_derive_input(&input)?;
     let crate_name = get_crate_name(&args);
-    let appended_generics = append_generics(&args.generics, &crate_name);
+    let appended_generics = append_generics(&args.generics, &args.data, &crate_name);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
