@@ -72,7 +72,10 @@ use {
 use {
     crate::{
         context,
-        schema::{SchemaReadContext, size_of_elem_slice, write_elem_slice_prealloc_check},
+        schema::{
+            SchemaReadContext, size_of_elem_slice, write_elem_iter_prealloc_check,
+            write_elem_slice_prealloc_check,
+        },
     },
     alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
 };
@@ -577,6 +580,11 @@ impl<T, E, I> CollectResultExt<T, E> for I where I: Iterator<Item = Result<T, E>
 /// container relies on the collection's [`FromIterator`] impl rather than
 /// writing directly into preallocated memory.
 ///
+/// For manual [`SchemaWrite`] implementations that emit a sequence from an
+/// ad-hoc iterator rather than a concrete collection, see
+/// [`encode_from_iter_prealloc_check`] (and its check-skipping counterpart
+/// [`encode_from_iter`]).
+///
 /// # Allocation efficiency
 ///
 /// During deserialization, the iterator passed to [`FromIterator`] has a
@@ -753,4 +761,124 @@ where
 
     mem::forget(guard);
     Ok(())
+}
+
+/// Encode a sequence of `T` from an iterator into the [`Writer`].
+///
+/// Writes the sequence length (encoded per `Len`) followed by each item
+/// yielded by `src`. This is the encoding counterpart of the full sequence
+/// read performed by container types such as [`Vec`]: the produced wire format
+/// is identical to serializing a `Vec<T::Src>` (or any other sequence) with the
+/// same element type `T`, length encoding `Len`, and configuration `C`.
+///
+/// `src` is any [`IntoIterator`] whose iterator is an [`ExactSizeIterator`], so
+/// a sequence can be encoded directly from a lazily-produced iterator (a range,
+/// a `map`/`filter` chain, borrowed views into several sources, …) without
+/// first materializing it into a collection.
+///
+/// # Comparison with [`FromIntoIterator`]
+///
+/// [`FromIntoIterator`] is a [`with`](crate)-adapter: it plugs an existing
+/// collection type that exposes the standard [`IntoIterator`]/[`FromIterator`]
+/// trait shape into a derived [`SchemaWrite`]/[`SchemaRead`] impl. Reach for it
+/// when you have a concrete container to (de)serialize through a field
+/// attribute.
+///
+/// `encode_from_iter_prealloc_check` is the lower-level building block for
+/// *manual* [`SchemaWrite`] implementations: it lets you emit a sequence from an
+/// ad-hoc iterator without needing a collection that implements those traits.
+///
+/// # Preallocation check
+///
+/// Before encoding, this validates the length against the configured
+/// preallocation limit (see [`SeqLen::prealloc_check`]) and returns an error if
+/// it would be exceeded. This mirrors [`SeqLen::read_prealloc_check`], which is
+/// applied on deserialization, so a wire format produced here is guaranteed to
+/// be accepted on read-back under the *same* configuration `C` and length
+/// encoding `Len`. This is the recommended entry point; use
+/// [`encode_from_iter`] only when the check is undesirable or has already been
+/// performed.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "alloc")] {
+/// use wincode::config::{Config, DefaultConfig};
+/// use wincode::containers::encode_from_iter_prealloc_check;
+/// use wincode::io::Writer;
+///
+/// type C = DefaultConfig;
+/// type Len = <C as Config>::LengthEncoding;
+///
+/// // Encode 0², 1², … 5² straight from a lazy iterator — the sequence is
+/// // never materialized into an intermediate `Vec`.
+/// let mut buf = Vec::new();
+/// encode_from_iter_prealloc_check::<u32, Len, C>(buf.by_ref(), (0u32..6).map(|i| i * i))
+///     .unwrap();
+///
+/// assert_eq!(wincode::deserialize::<Vec<u32>>(&buf).unwrap(), [0, 1, 4, 9, 16, 25]);
+/// # }
+/// ```
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn encode_from_iter_prealloc_check<T, Len, C>(
+    writer: impl Writer,
+    src: impl IntoIterator<IntoIter: ExactSizeIterator, Item: Borrow<T::Src>>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
+{
+    write_elem_iter_prealloc_check::<T, Len, C>(writer, src.into_iter())
+}
+
+/// Like [`encode_from_iter_prealloc_check`], but **skips** the preallocation
+/// size check.
+///
+/// Use this only when the check is undesirable, or when you have already
+/// validated the length yourself via [`SeqLen::prealloc_check`]. Because no
+/// check is performed here, the produced length may exceed the configured
+/// preallocation limit and be rejected on deserialization by
+/// [`SeqLen::read_prealloc_check`]; prefer [`encode_from_iter_prealloc_check`]
+/// unless you specifically need to bypass the check.
+///
+/// See [`encode_from_iter_prealloc_check`] for details on the wire format and
+/// how this relates to [`FromIntoIterator`].
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(feature = "alloc")] {
+/// use wincode::config::{Config, DefaultConfig};
+/// use wincode::containers::encode_from_iter;
+/// use wincode::io::Writer;
+/// use wincode::len::SeqLen;
+///
+/// type C = DefaultConfig;
+/// type Len = <C as Config>::LengthEncoding;
+///
+/// let squares = (0u32..6).map(|i| i * i);
+///
+/// // The caller is responsible for the preallocation check when using this
+/// // variant, so the same configuration accepts the result on deserialization.
+/// assert!(<Len as SeqLen<C>>::prealloc_check::<u32>(squares.len()).is_ok());
+///
+/// let mut buf = Vec::new();
+/// encode_from_iter::<u32, Len, C>(buf.by_ref(), squares).unwrap();
+///
+/// assert_eq!(wincode::deserialize::<Vec<u32>>(&buf).unwrap(), [0, 1, 4, 9, 16, 25]);
+/// # }
+/// ```
+#[inline]
+pub fn encode_from_iter<T, Len, C>(
+    writer: impl Writer,
+    src: impl IntoIterator<IntoIter: ExactSizeIterator, Item: Borrow<T::Src>>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaWrite<C>,
+{
+    write_elem_iter::<T, Len, C>(writer, src.into_iter())
 }

@@ -489,14 +489,14 @@ where
 
 #[inline(always)]
 #[cfg(feature = "alloc")]
-fn write_elem_iter_prealloc_check<'a, T, Len, C>(
+fn write_elem_iter_prealloc_check<T, Len, C>(
     writer: impl Writer,
-    src: impl ExactSizeIterator<Item = &'a T::Src>,
+    src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    T: SchemaWrite<C> + 'a,
+    T: SchemaWrite<C>,
 {
     Len::prealloc_check::<T>(src.len())?;
     write_elem_iter::<T, Len, C>(writer, src)
