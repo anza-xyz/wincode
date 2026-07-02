@@ -12,7 +12,7 @@ use {
         Error, FromDeriveInput, Result,
         ast::{Data, Fields, Style},
     },
-    proc_macro2::TokenStream,
+    proc_macro2::{Literal, TokenStream},
     quote::{quote, quote_spanned},
     syn::{
         DeriveInput, GenericParam, Generics, Path, PredicateType, Token, Type, WhereClause,
@@ -95,7 +95,7 @@ fn impl_struct(
                     ::core::ptr::drop_in_place(&raw mut (*dst_ptr).#ident);
                 }
             });
-        let cnt = i as u8;
+        let cnt = Literal::usize_unsuffixed(i);
         if i == 0 {
             quote! {
                 0 => {}
@@ -108,6 +108,14 @@ fn impl_struct(
             }
         }
     });
+
+    let counter_ty: Type = match fields.len().saturating_sub(1) {
+        len if len <= u8::MAX as usize => parse_quote! { u8 },
+        len if len <= u16::MAX as usize => parse_quote! { u16 },
+        len if len <= u32::MAX as usize => parse_quote! { u32 },
+        len if len <= u64::MAX as usize => parse_quote! { u64 },
+        _ => panic!("Unsupported number of fields: {}", fields.len()),
+    };
 
     let dst = get_src_dst_fully_qualified(args);
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
@@ -122,7 +130,7 @@ fn impl_struct(
     (
         quote! {
             struct __WincodeDropGuard #impl_generics #where_clause {
-                init_count: u8,
+                init_count: #counter_ty,
                 dst_ptr: *mut #dst,
             }
 
