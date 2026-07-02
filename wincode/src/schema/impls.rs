@@ -828,7 +828,7 @@ where
 {
     type Src = &'a T::Src;
 
-    const TYPE_META: TypeMeta = T::TYPE_META;
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
