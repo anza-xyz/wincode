@@ -5012,4 +5012,44 @@ mod tests {
         let deserialized: Wrapper<UsesU64> = deserialize(&serialized).unwrap();
         assert_eq!(original, deserialized);
     }
+
+    #[test]
+    fn test_bool_write_is_zero_copy_and_roundtrips() {
+        // Write is zero-copy: the in-memory `bool` byte matches its serialized form.
+        assert!(matches!(
+            <bool as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: true
+            }
+        ));
+
+        // Exercises the bulk `write_slice_t` zero-copy branch for a contiguous `&[bool]`.
+        let v: Vec<bool> = vec![true, false, true, true, false, false, true];
+        let bytes = serialize(&v).unwrap();
+        assert_eq!(bytes.len() - 8, v.len()); // 8-byte length prefix + one byte per bool
+        assert_eq!(deserialize::<Vec<bool>>(&bytes).unwrap(), v);
+
+        let a: [bool; 5] = [true, false, false, true, true];
+        let bytes = serialize(&a).unwrap();
+        assert_eq!(deserialize::<[bool; 5]>(&bytes).unwrap(), a);
+    }
+
+    #[test]
+    fn test_invalid_bool_byte_still_rejected_on_read() {
+        // Read must stay non-zero-copy: arbitrary bytes are invalid `bool` bit patterns
+        // and require validation.
+        assert!(matches!(
+            <bool as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 1,
+                zero_copy: false
+            }
+        ));
+
+        // Zero-copy write does not weaken read validation.
+        let mut bytes = serialize(&vec![true, false]).unwrap();
+        *bytes.last_mut().unwrap() = 2; // corrupt the second bool
+        assert!(deserialize::<Vec<bool>>(&bytes).is_err());
+    }
 }
