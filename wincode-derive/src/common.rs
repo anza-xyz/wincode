@@ -11,9 +11,8 @@ use {
         fmt::{self, Display},
     },
     syn::{
-        DeriveInput, Expr, ExprLit, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt,
-        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
-        Visibility, parse_quote,
+        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, LitInt, Member, Path, Type,
+        TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility, parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
@@ -327,7 +326,7 @@ pub(crate) struct Variant {
     pub(crate) ident: Ident,
     pub(crate) fields: Fields<Field>,
     #[darling(default)]
-    pub(crate) tag: Option<Expr>,
+    pub(crate) tag: Option<LitInt>,
 }
 
 impl Variant {
@@ -335,13 +334,11 @@ impl Variant {
     ///
     /// If the variant has a `tag` attribute, return it.
     /// Otherwise, return an integer literal with the given field index (the bincode default).
-    pub(crate) fn discriminant(&self, field_index: usize) -> Cow<'_, Expr> {
-        self.tag.as_ref().map(Cow::Borrowed).unwrap_or_else(|| {
-            Cow::Owned(Expr::Lit(ExprLit {
-                lit: Lit::Int(LitInt::new(&field_index.to_string(), Span::call_site())),
-                attrs: vec![],
-            }))
-        })
+    pub(crate) fn discriminant(&self, field_index: usize) -> Cow<'_, LitInt> {
+        self.tag
+            .as_ref()
+            .map(Cow::Borrowed)
+            .unwrap_or_else(|| Cow::Owned(LitInt::new(&field_index.to_string(), self.ident.span())))
     }
 }
 
@@ -599,6 +596,41 @@ pub(crate) struct SchemaArgs {
     /// The path is emitted as written and resolved from the derive expansion site.
     #[darling(rename = "crate", default)]
     pub(crate) crate_path: Option<Path>,
+}
+
+impl SchemaArgs {
+    /// Ensure any specified enum variant tags are unique.
+    pub(crate) fn validate_variant_tags(&self) -> Result<()> {
+        match &self.data {
+            Data::Enum(variants) => {
+                let mut seen = HashSet::new();
+
+                for (idx, variant) in variants.iter().enumerate() {
+                    let (tag, span) = match &variant.tag {
+                        Some(tag) => (
+                            tag.base10_parse::<u128>().map_err(darling::Error::from)?,
+                            tag.span(),
+                        ),
+                        None => (idx as u128, variant.ident.span()),
+                    };
+                    if !seen.insert(tag) {
+                        return Err(darling::Error::custom(format!(
+                            "duplicate enum discriminant {tag}"
+                        ))
+                        .with_span(&span));
+                    }
+                }
+
+                Ok(())
+            }
+            Data::Struct(_) => Ok(()),
+        }
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.validate_variant_tags()?;
+        Ok(())
+    }
 }
 
 /// Configuration for zero-copy assertions.
