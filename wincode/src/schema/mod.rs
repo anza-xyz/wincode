@@ -58,7 +58,7 @@ mod adapter;
 mod compile_fail;
 pub mod containers;
 pub mod context;
-pub use adapter::FromInto;
+pub use adapter::{DefaultOnEmptyRead, FromInto};
 mod external;
 mod impls;
 pub mod int_encoding;

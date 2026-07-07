@@ -5,8 +5,8 @@ use {
     crate::{
         TypeMeta,
         config::ConfigCore,
-        error::{ReadResult, WriteResult},
-        io::{Reader, Writer},
+        error::{ReadError, ReadResult, WriteResult},
+        io::{ReadError as IoReadError, Reader, Writer},
         schema::{SchemaRead, SchemaWrite},
     },
     core::{marker::PhantomData, mem::MaybeUninit},
@@ -113,9 +113,118 @@ where
     }
 }
 
+/// Deserializes using the wire schema `T` normally, but yields
+/// `T::Dst::default()` when the reader is exhausted (hits EOF) instead of
+/// erroring.
+///
+/// The purpose is backward compatibility when new fields are appended to the
+/// tail of a persisted struct: older, shorter encodings that predate those
+/// fields still decode, with the missing trailing fields filled from their
+/// [`Default`] value. Reading a full encoding is unaffected.
+///
+/// Writing is unchanged — the value is serialized exactly as `T` would,
+/// producing bytes that decode identically with or without this adapter. Only
+/// the read path differs, so this is purely a decode-time compatibility shim.
+///
+/// Apply it via the `with` attribute on the (necessarily trailing) fields it
+/// covers, naming the field's own schema as `T`:
+///
+/// ```
+/// # #[cfg(feature = "derive")] {
+/// # use wincode::DefaultOnEmptyRead;
+/// # use wincode_derive::{SchemaWrite, SchemaRead};
+/// #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+/// struct Record {
+///     id: u32,
+///     // Appended in a later version; older encodings omit it entirely.
+///     #[wincode(with = "DefaultOnEmptyRead<u64>")]
+///     added_later: u64,
+/// }
+///
+/// // A full encoding round-trips as usual.
+/// let record = Record { id: 7, added_later: 42 };
+/// let bytes = wincode::serialize(&record).unwrap();
+/// assert_eq!(record, wincode::deserialize(&bytes).unwrap());
+///
+/// // An older encoding that predates `added_later` decodes to its default.
+/// let legacy = wincode::serialize(&7u32).unwrap();
+/// let decoded: Record = wincode::deserialize(&legacy).unwrap();
+/// assert_eq!(decoded, Record { id: 7, added_later: 0 });
+/// # }
+/// ```
+///
+/// # Warning
+///
+/// The fallback is driven purely by running out of bytes, so it is only sound
+/// where "no more bytes" unambiguously means "this optional tail is absent":
+///
+/// - **Do not use it on sequence elements.** When more items follow, a missing
+///   field does not produce EOF — the read simply continues into the bytes that
+///   encode the *next* item. Instead of defaulting the absent field, the decoder
+///   consumes the following item's data, desynchronizing the rest of the
+///   sequence. The fallback only helps when the missing bytes are genuinely the
+///   end of input.
+/// - **Do not use it on a middle field followed by an always-present field.**
+///   The fallback catches *any* size-limit error from `T`, including a
+///   partially-present value, so a genuinely truncated field is masked instead
+///   of reported and the fields after it are misaligned. It is only safe on a
+///   trailing run of fields where every field from the first
+///   `DefaultOnEmptyRead` onward is itself optional-on-EOF.
+///
+/// Prefer applying it to trailing fields of a **top-level struct** decoded with
+/// [`deserialize_exact`](crate::deserialize_exact), where reaching EOF exactly
+/// at a field boundary is well defined and the end-of-input check is
+/// straightforward and cheap.
+pub struct DefaultOnEmptyRead<T>(PhantomData<T>);
+
+unsafe impl<'de, C, T> SchemaRead<'de, C> for DefaultOnEmptyRead<T>
+where
+    C: ConfigCore,
+    T: SchemaRead<'de, C>,
+    T::Dst: Default,
+{
+    type Dst = T::Dst;
+
+    // TYPE_META is intentionally left at the default `Dynamic`: decoding may read
+    // either 0 bytes (the EOF fallback) or `T`'s full encoding, so the decoded
+    // size is not fixed and a reader must not prefetch a static size.
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        match <T as SchemaRead<'de, C>>::read(reader, dst) {
+            Ok(()) => Ok(()),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(_))) => {
+                dst.write(Self::Dst::default());
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+unsafe impl<C, T> SchemaWrite<C> for DefaultOnEmptyRead<T>
+where
+    C: ConfigCore,
+    T: SchemaWrite<C>,
+{
+    type Src = T::Src;
+
+    const TYPE_META: TypeMeta = <T as SchemaWrite<C>>::TYPE_META;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        <T as SchemaWrite<C>>::size_of(src)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        <T as SchemaWrite<C>>::write(writer, src)
+    }
+}
+
 #[cfg(all(test, feature = "derive"))]
 mod tests {
-    use crate::{FromInto, SchemaRead, SchemaWrite, deserialize, serialize};
+    use crate::{DefaultOnEmptyRead, FromInto, SchemaRead, SchemaWrite, deserialize, serialize};
 
     /// A self-describing wire schema: the wire value is a plain `u32`.
     #[test]
@@ -188,5 +297,54 @@ mod tests {
         // u16 length prefix + the raw bytes.
         assert_eq!(bytes.len(), 2 + "wincode".len());
         assert_eq!(msg, deserialize(&bytes).unwrap());
+    }
+
+    #[test]
+    fn default_on_empty_read() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Record {
+            id: u32,
+            #[wincode(with = "DefaultOnEmptyRead<u64>")]
+            added_later: u64,
+        }
+
+        // Full encoding round-trips unchanged, and writing is identical to a
+        // plain `u32` + `u64`.
+        let record = Record {
+            id: 7,
+            added_later: 42,
+        };
+        let bytes = serialize(&record).unwrap();
+        assert_eq!(bytes.len(), 4 + 8);
+        assert_eq!(record, deserialize(&bytes).unwrap());
+
+        // A legacy encoding that stops after `id` decodes `added_later` to its
+        // default rather than erroring on EOF.
+        let legacy = serialize(&7u32).unwrap();
+        assert_eq!(
+            deserialize::<Record>(&legacy).unwrap(),
+            Record {
+                id: 7,
+                added_later: 0,
+            }
+        );
+
+        // The fallback triggers on any `ReadSizeLimit`, so a *partially* present
+        // inner value (not just a clean field boundary) also decodes to the
+        // default. This is partly deliberate and partly a consequence of the
+        // reader interface: readers do not expose how many bytes remain, and
+        // probing that is neither efficient nor guaranteed to work across all
+        // reader implementations, so we cannot distinguish a clean boundary from
+        // a truncated field. Here 4 bytes cover `id` and the stray tail is too
+        // short for the `u64`.
+        let truncated = [0u8; 6];
+        assert_eq!(
+            deserialize::<Record>(&truncated).unwrap(),
+            Record {
+                id: 0,
+                added_later: 0,
+            }
+        );
     }
 }
