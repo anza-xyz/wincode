@@ -121,6 +121,28 @@ impl Configuration {
 
 pub type DefaultConfig = Configuration;
 
+impl<const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding, ByteOrder, IntEncoding, TagEncoding>
+    Configuration<
+        true,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+    >
+{
+    // This impl is deliberately bounded to `ZERO_COPY_ALIGN_CHECK == true` rather than
+    // being generic over it.
+    //
+    // If `new` were available for `false`, safe code could write
+    // `Configuration::<false>::new()` to obtain an alignment-check-disabled config,
+    // bypassing the `unsafe disable_zero_copy_align_check` gate.
+    #[expect(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        generate()
+    }
+}
+
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
@@ -138,11 +160,6 @@ impl<
         TagEncoding,
     >
 {
-    #[expect(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        generate()
-    }
-
     /// Use the given [`SeqLen`] implementation for sequence length encoding.
     ///
     /// Default is [`BincodeLen`].
