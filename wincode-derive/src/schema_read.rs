@@ -405,6 +405,8 @@ fn append_generics(
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, "SchemaRead")?;
     let args = SchemaArgs::from_derive_input(&input)?;
+    args.validate()?;
+
     let crate_name = get_crate_name(&args);
     let appended_generics = append_generics(&args.generics, &args.data, &crate_name);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();

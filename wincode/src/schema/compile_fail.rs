@@ -34,3 +34,47 @@
 /// # }
 /// ```
 fn static_derive_requires_static_input() {}
+
+/// ```compile_fail
+/// # #[cfg(all(feature = "derive"))] {
+/// use wincode::{SchemaRead, SchemaWrite};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// enum MyEnum {
+///     #[wincode(tag = 1)]
+///     Foo,
+///     #[wincode(tag = 1)]
+///     Bar,
+/// }
+/// # }
+/// ```
+fn derive_tag_uniqueness() {}
+
+/// ```compile_fail
+/// # #[cfg(all(feature = "derive"))] {
+/// use wincode::{SchemaRead, SchemaWrite};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// enum MyEnum {
+///     #[wincode(tag = 1)]
+///     Foo,
+///     #[wincode(tag = 0x1)]
+///     Bar,
+/// }
+/// # }
+/// ```
+fn derive_tag_uniqueness_repr_normalization() {}
+
+/// ```compile_fail
+/// # #[cfg(all(feature = "derive"))] {
+/// use wincode::{SchemaRead, SchemaWrite};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// enum MyEnum {
+///     Foo,
+///     #[wincode(tag = 0)]
+///     Bar,
+/// }
+/// # }
+/// ```
+fn derive_tag_uniqueness_implicit_collision() {}
