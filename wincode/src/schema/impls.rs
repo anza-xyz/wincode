@@ -301,9 +301,12 @@ impl_byte!(u8, i8);
 unsafe impl<C: ConfigCore> SchemaWrite<C> for bool {
     type Src = bool;
 
+    // A valid `bool` is exactly one byte (`0x00`/`0x01`) with no padding, matching its
+    // serialized form byte-for-byte, so writing is zero-copy eligible. (Reading is not:
+    // arbitrary input bytes are invalid `bool` bit patterns and must be validated.)
     const TYPE_META: TypeMeta = TypeMeta::Static {
         size: size_of::<bool>(),
-        zero_copy: false,
+        zero_copy: true,
     };
 
     #[inline]
