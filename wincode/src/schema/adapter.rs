@@ -35,7 +35,7 @@ use {
 ///
 /// ```
 /// # #[cfg(feature = "derive")] {
-/// # use wincode::FromInto;
+/// # use wincode::adapter::FromInto;
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// // Our in-memory type with a layout we don't want to serialize directly.
 /// #[derive(Debug, PartialEq, Clone, Copy)]
@@ -131,7 +131,7 @@ where
 ///
 /// ```
 /// # #[cfg(feature = "derive")] {
-/// # use wincode::DefaultOnEmptyRead;
+/// # use wincode::adapter::DefaultOnEmptyRead;
 /// # use wincode_derive::{SchemaWrite, SchemaRead};
 /// #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
 /// struct Record {
@@ -224,7 +224,11 @@ where
 
 #[cfg(all(test, feature = "derive"))]
 mod tests {
-    use crate::{DefaultOnEmptyRead, FromInto, SchemaRead, SchemaWrite, deserialize, serialize};
+    use crate::{
+        SchemaRead, SchemaWrite,
+        adapter::{DefaultOnEmptyRead, FromInto},
+        deserialize, serialize,
+    };
 
     /// A self-describing wire schema: the wire value is a plain `u32`.
     #[test]
