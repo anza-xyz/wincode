@@ -46,6 +46,7 @@ unsafe impl<C: Config, Block: BlockType + SchemaWrite<C, Src = Block>> SchemaWri
         if n_blocks == 0 {
             writer.write(&[0])?; // None
         } else {
+            C::LengthEncoding::prealloc_check::<Block>(n_blocks)?;
             writer.write(&[1])?; // Some
             C::LengthEncoding::write(writer.by_ref(), n_blocks)?;
             if let TypeMeta::Static { size, zero_copy: _ } = Block::TYPE_META {

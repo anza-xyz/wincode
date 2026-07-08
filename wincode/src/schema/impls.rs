@@ -1145,7 +1145,7 @@ macro_rules! impl_seq_kv {
                 if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     let len = src.len();
                     #[allow(clippy::arithmetic_side_effects)]
-                    let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key, $value)>(len)? + (key_size + value_size) * len;
+                    let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key::Src, $value::Src)>(len)? + (key_size + value_size) * len;
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
                     // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
                     let mut writer = unsafe { writer.as_trusted_for(needed) }?;
@@ -1157,7 +1157,9 @@ macro_rules! impl_seq_kv {
                     writer.finish()?;
                     return Ok(());
                 }
-                C::LengthEncoding::write(writer.by_ref(), src.len())?;
+                let len = src.len();
+                C::LengthEncoding::prealloc_check::<($key::Src, $value::Src)>(len)?;
+                C::LengthEncoding::write(writer.by_ref(), len)?;
                 for (k, v) in src.iter() {
                     $key::write(writer.by_ref(), k)?;
                     $value::write(writer.by_ref(), v)?;

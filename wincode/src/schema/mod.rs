@@ -514,8 +514,9 @@ where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
+    T::Src: Sized,
 {
-    Len::prealloc_check::<T>(src.len())?;
+    Len::prealloc_check::<T::Src>(src.len())?;
     write_elem_iter::<T, Len, C>(writer, src)
 }
 
@@ -561,7 +562,7 @@ where
     T: SchemaWrite<C>,
     T::Src: Sized,
 {
-    Len::prealloc_check::<T>(src.len())?;
+    Len::prealloc_check::<T::Src>(src.len())?;
     write_elem_slice::<T, Len, C>(writer, src)
 }
 

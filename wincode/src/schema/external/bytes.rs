@@ -3,6 +3,7 @@ use {
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
         io::{Reader, Writer},
+        len::SeqLen,
     },
     alloc::boxed::Box,
     bytes::{Bytes, BytesMut},
@@ -28,6 +29,7 @@ unsafe impl<C: Config> SchemaWrite<C> for Bytes {
     }
 
     fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::prealloc_check::<u8>(src.len())?;
         <[u8] as SchemaWrite<C>>::write(writer, src.as_ref())
     }
 }
@@ -53,6 +55,7 @@ unsafe impl<C: Config> SchemaWrite<C> for BytesMut {
     }
 
     fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        C::LengthEncoding::prealloc_check::<u8>(src.len())?;
         <[u8] as SchemaWrite<C>>::write(writer, src.as_ref())
     }
 }

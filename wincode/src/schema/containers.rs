@@ -429,7 +429,8 @@ where
         } = T::TYPE_META
         {
             #[allow(clippy::arithmetic_side_effects)]
-            let needed = Len::write_bytes_needed_prealloc_check::<T>(src.len())? + src.len() * size;
+            let needed =
+                Len::write_bytes_needed_prealloc_check::<T::Src>(src.len())? + src.len() * size;
             // SAFETY: `needed` is the size of the encoded length plus the size of the items.
             // `Len::write` and `len` writes of `T::Src` will write `needed` bytes,
             // fully initializing the trusted window.
@@ -450,7 +451,7 @@ where
             return Ok(());
         }
 
-        write_elem_iter::<T, Len, C>(writer, src.iter())
+        write_elem_iter_prealloc_check::<T, Len, C>(writer, src.iter())
     }
 }
 
@@ -829,6 +830,7 @@ where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
+    T::Src: Sized,
 {
     write_elem_iter_prealloc_check::<T, Len, C>(writer, src.into_iter())
 }
