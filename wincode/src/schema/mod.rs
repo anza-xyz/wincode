@@ -458,32 +458,49 @@ where
 #[inline(always)]
 fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
+    mut src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
 {
+    #[cold]
+    fn short_iter() -> crate::WriteError {
+        crate::WriteError::Custom(
+            "ExactSizeIterator yielded fewer elements than its reported len()",
+        )
+    }
+
+    // Drive everything from the reported length rather than trusting the iterator to
+    // stop on its own: `0..len` caps writes at `len` (no over-run of the trusted
+    // window), and `short_iter` errors on early exhaustion (no partially initialized
+    // window, no length prefix disagreeing with the payload).
+    let len = src.len();
+    macro_rules! write_elems {
+        ($w:expr) => {{
+            Len::write($w.by_ref(), len)?;
+            for _ in 0..len {
+                let item = src.next().ok_or_else(short_iter)?;
+                T::write($w.by_ref(), item.borrow())?;
+            }
+        }};
+    }
+
     if let TypeMeta::Static { size, .. } = T::TYPE_META {
         #[allow(clippy::arithmetic_side_effects)]
-        let needed = Len::write_bytes_needed(src.len())? + size * src.len();
-        // SAFETY: `needed` is the size of the encoded length plus the size of the items.
-        // `Len::write` and len writes of `T::Src` will write `needed` bytes,
-        // fully initializing the trusted window.
+        let needed = Len::write_bytes_needed(len)? + size * len;
+        // SAFETY: `needed` covers the encoded length plus exactly `len` items, which is
+        // what `write_elems!` writes, fully initializing the trusted window. It writes
+        // at most `len` items (never past the window) and errors before `finish` if the
+        // iterator is short, satisfying the "no error implies fully initialized" contract.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-        Len::write(writer.by_ref(), src.len())?;
-        for item in src {
-            T::write(writer.by_ref(), item.borrow())?;
-        }
+        write_elems!(writer);
         writer.finish()?;
         return Ok(());
     }
 
-    Len::write(writer.by_ref(), src.len())?;
-    for item in src {
-        T::write(writer.by_ref(), item.borrow())?;
-    }
+    write_elems!(writer);
     Ok(())
 }
 
