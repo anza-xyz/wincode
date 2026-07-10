@@ -20,6 +20,7 @@ use {
 };
 
 fn impl_struct(
+    args: &SchemaArgs,
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
@@ -53,7 +54,8 @@ fn impl_struct(
         })
         .collect::<Vec<_>>();
 
-    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name);
+    let src_dst = get_src_dst(args);
+    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name, &src_dst);
 
     (
         quote! {
@@ -310,7 +312,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             }
             // Only structs are eligible being marked zero-copy, so only the struct
             // impl needs the repr.
-            impl_struct(fields, &repr, &crate_name)
+            impl_struct(&args, fields, &repr, &crate_name)
         }
         Data::Enum(v) => {
             let enum_ident = match &args.from {

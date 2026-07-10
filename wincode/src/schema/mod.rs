@@ -1614,6 +1614,35 @@ mod tests {
     }
 
     #[test]
+    fn test_from_mapping_type_meta_zero_copy_flag() {
+        #[repr(C)]
+        struct Foreign {
+            a: u64,
+            b: u64,
+            c: u64,
+        }
+
+        #[derive(SchemaWrite, SchemaRead)]
+        #[wincode(internal, from = "Foreign")]
+        #[repr(C)]
+        struct Mismatched {
+            a: u64,
+            b: u64,
+        }
+
+        // `Mismatched` does not cover all of `Foreign`, so the flag must be cleared:
+        // it is computed against the reinterpret target `Foreign`, not the schema struct.
+        let expected = TypeMeta::Static {
+            size: 16,
+            zero_copy: false,
+        };
+        let read_meta = <Mismatched as SchemaRead<'_, DefaultConfig>>::TYPE_META;
+        let write_meta = <Mismatched as SchemaWrite<DefaultConfig>>::TYPE_META;
+        assert_eq!(read_meta, expected);
+        assert_eq!(read_meta, write_meta);
+    }
+
+    #[test]
     fn test_uninit_builder_builder_fully_initialized() {
         #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]

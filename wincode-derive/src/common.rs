@@ -203,6 +203,7 @@ pub(crate) trait FieldsExt {
         trait_impl: TraitImpl,
         repr: &StructRepr,
         crate_name: &Path,
+        dst: &Type,
     ) -> TokenStream;
     /// Get an iterator over the fields and their identifiers for the struct members.
     ///
@@ -232,6 +233,7 @@ impl FieldsExt for Fields<Field> {
         trait_impl: TraitImpl,
         repr: &StructRepr,
         crate_name: &Path,
+        dst: &Type,
     ) -> TokenStream {
         let tuple_expansion = match trait_impl {
             TraitImpl::SchemaRead => {
@@ -263,7 +265,11 @@ impl FieldsExt for Fields<Field> {
                 // the fields must be equal to the in-memory size of the type. This is because zero-copy types
                 // may be read/written directly using their in-memory representation; padding disqualifies a type
                 // from this kind of optimization.
-                let no_padding = serialized_size == core::mem::size_of::<Self>();
+                //
+                // The zero-copy readers reinterpret the input bytes as `Dst`/`Src` (the
+                // `#[wincode(from = "T")]` target when a mapping is used, otherwise `Self`),
+                // so the size must be compared against that target rather than `Self`.
+                let no_padding = serialized_size == core::mem::size_of::<#dst>();
                 #crate_name::TypeMeta::Static { size: serialized_size, zero_copy: no_padding && #is_zero_copy_eligible && zero_copy }
             } else {
                 #crate_name::TypeMeta::Dynamic

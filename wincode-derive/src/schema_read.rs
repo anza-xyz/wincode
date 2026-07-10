@@ -81,7 +81,8 @@ fn impl_struct(
         })
         .collect::<Vec<_>>();
 
-    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name);
+    let src_dst = get_src_dst(args);
+    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name, &src_dst);
 
     let drop_guard = (0..fields.len()).map(|i| {
         // Generate code to drop already initialized fields in reverse order.
@@ -463,6 +464,14 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 && args.generics.lifetimes().next().is_none() =>
         {
             let field_tys = fields.iter().map(|field| &field.ty);
+            // The zero-copy readers reinterpret the input bytes as `Dst` (the
+            // `#[wincode(from = "T")]` target when a mapping is used, otherwise
+            // `Self`), so the no-padding assertion must be tied to `Dst`.
+            let zero_copy_target = args
+                .from
+                .as_ref()
+                .map(|from| quote!(#from))
+                .unwrap_or_else(|| quote!(#ident));
             let mut bounds = Punctuated::new();
             bounds.push(parse_quote!(__WincodeIsTrue));
             let no_pad_predicate = WherePredicate::Type(PredicateType {
@@ -472,7 +481,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 bounded_ty: parse_quote!(
                     __WincodeAssert<
                         {
-                            #(core::mem::size_of::<#field_tys>())+* == core::mem::size_of::<#ident>()
+                            #(core::mem::size_of::<#field_tys>())+* == core::mem::size_of::<#zero_copy_target>()
                         },
                     >
                 ),
