@@ -3164,6 +3164,19 @@ mod tests {
         }
 
         #[test]
+        fn test_single_element_tuple(value in any::<u8>()) {
+            let tuple = (value,);
+            let bincode_serialized = bincode::serialize(&tuple).unwrap();
+            let schema_serialized = serialize(&tuple).unwrap();
+
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
+            let bincode_deserialized: (u8,) = bincode::deserialize(&bincode_serialized).unwrap();
+            let schema_deserialized: (u8,) = deserialize(&schema_serialized).unwrap();
+            prop_assert_eq!(tuple, bincode_deserialized);
+            prop_assert_eq!(tuple, schema_deserialized);
+        }
+
+        #[test]
         fn test_tuple_static(
             tuple in (
                 any::<StructStatic>(),

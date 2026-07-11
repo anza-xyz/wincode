@@ -489,6 +489,41 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for () {
     }
 }
 
+unsafe impl<T, C: ConfigCore> SchemaWrite<C> for (T,)
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    type Src = (T::Src,);
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn size_of(value: &Self::Src) -> WriteResult<usize> {
+        T::size_of(&value.0)
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, value: &Self::Src) -> WriteResult<()> {
+        T::write(writer, &value.0)
+    }
+}
+
+unsafe impl<'de, T, C: ConfigCore> SchemaRead<'de, C> for (T,)
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = (T::Dst,);
+
+    const TYPE_META: TypeMeta = T::TYPE_META.keep_zero_copy(false);
+
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let slot = unsafe { &mut *(&raw mut (*dst.as_mut_ptr()).0).cast() };
+        T::read(reader, slot)
+    }
+}
+
 #[cfg(feature = "alloc")]
 unsafe impl<T, C: Config> SchemaWrite<C> for Vec<T>
 where
