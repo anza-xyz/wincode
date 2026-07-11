@@ -4,7 +4,6 @@ use {
         common::{
             Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant,
             VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
-            get_src_dst, get_src_dst_fully_qualified, suppress_unused_fields,
         },
         uninit_builder::impl_uninit_builder,
     },
@@ -117,7 +116,7 @@ fn impl_struct(
         _ => panic!("Unsupported number of fields: {}", fields.len()),
     };
 
-    let dst = get_src_dst_fully_qualified(args);
+    let ident = &args.ident;
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
@@ -131,7 +130,7 @@ fn impl_struct(
         quote! {
             struct __WincodeDropGuard #impl_generics #where_clause {
                 init_count: #counter_ty,
-                dst_ptr: *mut #dst,
+                dst_ptr: *mut #ident #ty_generics,
             }
 
             impl #impl_generics ::core::ops::Drop for __WincodeDropGuard #ty_generics #where_clause {
@@ -172,7 +171,6 @@ fn impl_struct(
 }
 
 fn impl_enum(
-    enum_ident: &Type,
     variants: &[Variant],
     tag_encoding_override: Option<&Type>,
     crate_name: &Path,
@@ -231,11 +229,11 @@ fn impl_enum(
 
                 let constructor = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#construct_idents),*}
+                        Self::#variant_ident{#(#construct_idents),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#construct_idents),*)
+                        Self::#variant_ident(#(#construct_idents),*)
                     }
                 };
 
@@ -259,7 +257,7 @@ fn impl_enum(
 
             Style::Unit => quote! {
                 #discriminant => {
-                    dst.write(#enum_ident::#variant_ident);
+                    dst.write(Self::#variant_ident);
                 }
             },
         }
@@ -412,8 +410,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
-    let src_dst = get_src_dst(&args);
-    let field_suppress = suppress_unused_fields(&args);
     let struct_extensions = if args.struct_extensions {
         let tokens = impl_uninit_builder(&args, &crate_name)?;
         let deprecation = quote_spanned! {args.ident.span()=>
@@ -442,13 +438,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             // impl needs the repr.
             impl_struct(&args, fields, &repr, &crate_name)
         }
-        Data::Enum(v) => {
-            let enum_ident = match &args.from {
-                Some(from) => from,
-                None => &parse_quote!(Self),
-            };
-            impl_enum(enum_ident, v, args.tag_encoding.as_ref(), &crate_name)
-        }
+        Data::Enum(v) => impl_enum(v, args.tag_encoding.as_ref(), &crate_name),
     };
 
     // Provide a `ZeroCopy` impl for the type if its `repr` is eligible and all its fields are zero-copy.
@@ -528,7 +518,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             #zero_copy_impl
 
             unsafe impl #impl_generics #crate_name::SchemaRead<'de, __WincodeConfig> for #ident #ty_generics #where_clause {
-                type Dst = #src_dst;
+                type Dst = Self;
 
                 #[allow(clippy::arithmetic_side_effects)]
                 const TYPE_META: #crate_name::TypeMeta = #type_meta_impl;
@@ -542,6 +532,5 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         };
         #zero_copy_asserts
         #struct_extensions
-        #field_suppress
     })
 }
