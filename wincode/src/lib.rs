@@ -69,98 +69,6 @@
 //! `wincode` makes in-place initialization a first class design goal, and fundamentally
 //! operates on [traits](#traits) that facilitate direct writes of memory.
 //!
-//! # Adapting foreign types
-//!
-//! `wincode` can also be used to implement serialization/deserialization
-//! on foreign types, where serialization/deserialization schemes on those types are unoptimized (and
-//! out of your control as a foreign type). For example, consider the following struct,
-//! defined outside of your crate:
-//! ```
-//! use serde::{Serialize, Deserialize};
-//!
-//! # #[derive(PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy, Serialize, Deserialize)]
-//! struct Address([u8; 32]);
-//!
-//! # #[derive(PartialEq, Eq, Debug)]
-//! #[repr(transparent)]
-//! #[derive(Clone, Copy, Serialize, Deserialize)]
-//! struct Hash([u8; 32]);
-//!
-//! #[derive(Serialize, Deserialize)]
-//! pub struct A {
-//!     pub addresses: Vec<Address>,
-//!     pub hash: Hash,
-//! }
-//! ```
-//!
-//! `serde`'s default, naive, implementation will perform per-element visitation of all bytes
-//! in `Vec<Address>` and `Hash`. Because these fields are "plain old data", ideally we would
-//! avoid per-element visitation entirely and read / write these fields in a single pass.
-//! The situation worsens if this struct needs to be written into a heap allocated data structure,
-//! like a `Vec<A>` or `Box<[A]>`. As discussed in [motivation](#motivation), all
-//! those bytes will be initialized on the stack before being copied into the heap allocation.
-//!
-//! `wincode` can solve this with the following:
-//! ```
-//! # #[cfg(all(feature = "alloc", feature = "derive"))] {
-//! # use wincode::{Serialize as _, Deserialize as _, containers};
-//! # use wincode_derive::{SchemaWrite, SchemaRead};
-//! mod foreign_crate {
-//!     // Defined in some foreign crate...
-//!     use serde::{Serialize, Deserialize};
-//!
-//!     # #[derive(PartialEq, Eq, Debug)]
-//!     #[repr(transparent)]
-//!     #[derive(Clone, Copy, Serialize, Deserialize)]
-//!     pub struct Address(pub [u8; 32]);
-//!
-//!     # #[derive(PartialEq, Eq, Debug)]
-//!     #[repr(transparent)]
-//!     #[derive(Clone, Copy, Serialize, Deserialize)]
-//!     pub struct Hash(pub [u8; 32]);
-//!
-//!     # #[derive(PartialEq, Eq, Debug)]
-//!     #[derive(Serialize, Deserialize)]
-//!     pub struct A {
-//!         pub addresses: Vec<Address>,
-//!         pub hash: Hash,
-//!     }
-//! }
-//!
-//! wincode::pod_wrapper! {
-//!     unsafe struct PodAddress(foreign_crate::Address);
-//!     unsafe struct PodHash(foreign_crate::Hash);
-//! }
-//!
-//! #[derive(SchemaWrite, SchemaRead)]
-//! #[wincode(from = "foreign_crate::A")]
-//! pub struct MyA {
-//!     addresses: Vec<PodAddress>,
-//!     hash: PodHash,
-//! }
-//!
-//! let val = foreign_crate::A {
-//!     addresses: vec![foreign_crate::Address([0; 32]), foreign_crate::Address([1; 32])],
-//!     hash: foreign_crate::Hash([0; 32]),
-//! };
-//! let bincode_serialize = bincode::serialize(&val).unwrap();
-//! let wincode_serialize = MyA::serialize(&val).unwrap();
-//! assert_eq!(bincode_serialize, wincode_serialize);
-//!
-//! let bincode_deserialize: foreign_crate::A = bincode::deserialize(&bincode_serialize).unwrap();
-//! let wincode_deserialize = MyA::deserialize(&bincode_serialize).unwrap();
-//! assert_eq!(val, bincode_deserialize);
-//! assert_eq!(val, wincode_deserialize);
-//! # }
-//! ```
-//!
-//! Now, when deserializing `A`:
-//! - All initialization is done in-place, including heap-allocated memory
-//!   (true of all supported contiguous heap-allocated structures in `wincode`).
-//! - Byte fields are read and written in a single pass.
-//!
 //! # Compatibility
 //!
 //! - Produces the same bytes as `bincode` for the covered shapes when using bincode's
@@ -330,25 +238,10 @@
 //! ## Top level
 //! |Attribute|Type|Default|Description
 //! |---|---|---|---|
-//! |`from`|`Type`|`None`|Indicates that type is a mapping from another type (example in previous section)|
-//! |`no_suppress_unused`|`bool`|`false`|Disable unused field lints suppression. Only usable on structs with `from`.|
 //! |`struct_extensions` (DEPRECATED)|`bool`|`false`|Generates placement initialization helpers on `SchemaRead` struct implementations. DEPRECATED; Use `#[derive(UninitBuilder)]` instead.|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
 //! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
 //! |`crate`|`Path`|`::wincode`|Specifies the path to the `wincode` crate. Useful when `wincode` is renamed in `Cargo.toml` or re-exported from another module. The path is emitted as written and resolved from the derive expansion site.|
-//!
-//! ### `no_suppress_unused`
-//!
-//! When creating a mapping type with `#[wincode(from = "AnotherType")]`, fields are typically
-//! comprised of [`containers`] (of course not strictly always true). As a result, these structs
-//! purely exist for the compiler to generate optimized implementations, and are never actually
-//! constructed. As a result, unused field lints will be triggered, which can be annoying.
-//! By default, when `from` is used, the derive macro will generate dummy function that references all
-//! the struct fields, which suppresses those lints. This function will ultimately be compiled out of your
-//! build, but you can disable this by setting `no_suppress_unused` to `true`. You can also avoid
-//! these lint errors with visibility modifiers (e.g., `pub`).
-//!
-//! Note that this only works on structs, as it is not possible to construct an arbitrary enum variant.
 //!
 //! ### `tag_encoding`
 //!

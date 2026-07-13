@@ -1582,38 +1582,6 @@ mod tests {
     }
 
     #[test]
-    fn test_uninit_builder_with_mapped_type() {
-        #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        struct Test {
-            a: Vec<u8>,
-            b: [u8; 32],
-            c: u64,
-        }
-
-        #[derive(UninitBuilder)]
-        #[wincode(internal, from = "Test")]
-        #[allow(unused)]
-        struct TestMapped {
-            a: containers::Vec<u8, BincodeLen>,
-            b: [u8; 32],
-            c: u64,
-        }
-
-        proptest!(proptest_cfg(), |(test: Test)| {
-            let mut uninit = MaybeUninit::<Test>::uninit();
-            let mut builder = TestMappedUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
-            builder
-                .write_a(test.a.clone())
-                .write_b(test.b)
-                .write_c(test.c);
-            prop_assert!(builder.is_init());
-            builder.finish();
-            let init = unsafe { uninit.assume_init() };
-            prop_assert_eq!(test, init);
-        });
-    }
-
-    #[test]
     fn test_uninit_builder_builder_fully_initialized() {
         #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]

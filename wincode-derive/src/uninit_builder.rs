@@ -1,7 +1,5 @@
 use {
-    crate::common::{
-        SchemaArgs, TypeExt, extract_repr, get_crate_name, get_src_dst_fully_qualified,
-    },
+    crate::common::{SchemaArgs, TypeExt, extract_repr, get_crate_name},
     darling::{Error, FromDeriveInput, Result, ast::Data},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
@@ -33,8 +31,10 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         parse_quote!(__WincodeConfig: #crate_name::config::Config),
     ));
 
-    let builder_dst = get_src_dst_fully_qualified(args);
-
+    let builder_dst = {
+        let (_, ty_generics, _) = args.generics.split_for_impl();
+        quote!(#struct_ident #ty_generics)
+    };
     let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
         builder_generics.split_for_impl();
     // Determine how many bits are needed to track the initialization state of the fields.

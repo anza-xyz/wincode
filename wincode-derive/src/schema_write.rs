@@ -4,7 +4,6 @@ use {
         common::{
             Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, Variant,
             VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
-            get_src_dst, suppress_unused_fields,
         },
     },
     darling::{
@@ -88,7 +87,6 @@ fn impl_struct(
 }
 
 fn impl_enum(
-    enum_ident: &Type,
     variants: &[Variant],
     tag_encoding_override: Option<&Type>,
     crate_name: &Path,
@@ -162,11 +160,11 @@ fn impl_enum(
                     .collect::<Vec<_>>();
                 let match_case = if style.is_struct() {
                     quote! {
-                        #enum_ident::#variant_ident{#(#pattern_fragments),*}
+                        Self::#variant_ident{#(#pattern_fragments),*}
                     }
                 } else {
                     quote! {
-                        #enum_ident::#variant_ident(#(#pattern_fragments),*)
+                        Self::#variant_ident(#(#pattern_fragments),*)
                     }
                 };
 
@@ -216,12 +214,12 @@ fn impl_enum(
 
             Style::Unit => (
                 quote! {
-                    #enum_ident::#variant_ident => {
+                    Self::#variant_ident => {
                         Ok(#size_of_discriminant)
                     }
                 },
                 quote! {
-                    #enum_ident::#variant_ident => {
+                    Self::#variant_ident => {
                         #write_discriminant;
                         Ok(())
                     }
@@ -299,8 +297,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
-    let src_dst = get_src_dst(&args);
-    let field_suppress = suppress_unused_fields(&args);
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
     let (size_of_impl, write_impl, type_meta_impl) = match &args.data {
@@ -312,19 +308,13 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             // impl needs the repr.
             impl_struct(fields, &repr, &crate_name)
         }
-        Data::Enum(v) => {
-            let enum_ident = match &args.from {
-                Some(from) => from,
-                None => &parse_quote!(Self),
-            };
-            impl_enum(enum_ident, v, args.tag_encoding.as_ref(), &crate_name)
-        }
+        Data::Enum(v) => impl_enum(v, args.tag_encoding.as_ref(), &crate_name),
     };
 
     Ok(quote! {
         const _: () = {
             unsafe impl #impl_generics #crate_name::SchemaWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
-                type Src = #src_dst;
+                type Src = Self;
 
                 #[allow(clippy::arithmetic_side_effects)]
                 const TYPE_META: #crate_name::TypeMeta = #type_meta_impl;
@@ -341,6 +331,5 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             }
         };
         #zero_copy_asserts
-        #field_suppress
     })
 }
