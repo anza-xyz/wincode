@@ -495,11 +495,6 @@ pub(crate) struct SchemaArgs {
     /// Otherwise, it will use the `wincode` path.
     #[darling(default)]
     pub(crate) internal: bool,
-    /// Specifies whether to generate placement initialization struct helpers on `SchemaRead` implementations.
-    ///
-    /// DEPRECATED; use `#[derive(UninitBuilder)]` instead.
-    #[darling(default)]
-    pub(crate) struct_extensions: bool,
     /// Specifies the encoding to use for enum discriminants.
     ///
     /// If specified, the enum discriminants will be encoded using the given type's `SchemaWrite`

@@ -5,14 +5,13 @@ use {
             Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant,
             VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
         },
-        uninit_builder::impl_uninit_builder,
     },
     darling::{
         Error, FromDeriveInput, Result,
         ast::{Data, Fields, Style},
     },
     proc_macro2::{Literal, TokenStream},
-    quote::{quote, quote_spanned},
+    quote::quote,
     syn::{
         DeriveInput, GenericParam, Generics, Path, PredicateType, Token, Type, WhereClause,
         WherePredicate, parse_quote, punctuated::Punctuated,
@@ -410,23 +409,6 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
-    let struct_extensions = if args.struct_extensions {
-        let tokens = impl_uninit_builder(&args, &crate_name)?;
-        let deprecation = quote_spanned! {args.ident.span()=>
-            const _: () = {
-                #[deprecated(note = "#[wincode(struct_extensions)] is deprecated; use #[derive(UninitBuilder)] instead")]
-                const __WINCODE_STRUCT_EXTENSIONS_DEPRECATED: () = ();
-                const _: () = __WINCODE_STRUCT_EXTENSIONS_DEPRECATED;
-            };
-        };
-
-        quote! {
-            #deprecation
-            #tokens
-        }
-    } else {
-        quote!()
-    };
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
     let (read_impl, type_meta_impl) = match &args.data {
@@ -531,6 +513,5 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             }
         };
         #zero_copy_asserts
-        #struct_extensions
     })
 }
