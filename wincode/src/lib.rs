@@ -229,6 +229,8 @@
 //! |`alloc`|enabled automatically when `std` is enabled|Enables `alloc` support.|
 //! |`solana-short-vec`|disabled|**Deprecated since 0.5.4, to be removed in 0.6.0.** Enables `solana-short-vec` support. Use the `wincode` feature on the `solana-short-vec` dependency directly instead (available since `solana-short-vec` 3.2.1).|
 //! |`derive`|disabled|Enables the derive macros for [`SchemaRead`] and [`SchemaWrite`].|
+//! |`bv`|disabled|Enables support for the `bv` crate. Encoded values can be decoded by its `serde` implementation.|
+//! |`bv-strict`|disabled|Enables `bv` support with canonical encoding and strict decoding. This masks unused padding bits when encoding and rejects non-canonical block counts or padding when decoding.|
 //! |`uuid`|disabled|Enables support for the `uuid` crate.|
 //! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
 //! |`bumpalo`|disabled|Enables support for the `bumpalo` crate.|
