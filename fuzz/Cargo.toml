@@ -14,7 +14,7 @@ serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
 # Solana crates in this target still derive against wincode 0.4.x.
-wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc", "solana-short-vec"] }
+wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc"] }
 wincode-derive = { path = "../wincode-derive" }
 
 solana-address = { version = "2.6.0", features = ["wincode"] }
@@ -24,8 +24,8 @@ solana-message = { version = "4.1.0", features = ["wincode"] }
 solana-nonce = { version = "3.1.0", features = ["wincode"] }
 solana-signature = { version = "3.4.0", features = ["wincode"] }
 solana-transaction = { version = "4.1.0", features = ["wincode"] }
-solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
-agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "7f7933dee045c49665e5b53a4bd56009cdd93ab3", features = ["agave-unstable-api"] }
+solana-entry = { version = "4.1.2", features = ["agave-unstable-api"] }
+agave-votor-messages = { version = "4.1.2", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }

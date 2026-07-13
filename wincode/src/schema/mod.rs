@@ -1636,46 +1636,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "solana-short-vec")]
-    fn test_uninit_builder_with() {
-        use crate::len::ShortU16;
-
-        #[derive(
-            SchemaWrite,
-            UninitBuilder,
-            Debug,
-            PartialEq,
-            Eq,
-            proptest_derive::Arbitrary,
-            serde::Serialize,
-            serde::Deserialize,
-        )]
-        #[wincode(internal)]
-        struct Test {
-            #[wincode(with = "containers::Vec<u8, ShortU16>")]
-            #[serde(with = "solana_short_vec")]
-            foo: Vec<u8>,
-        }
-
-        proptest!(proptest_cfg(), |(test: Test)| {
-            let serialized = serialize(&test).unwrap();
-            let bincode_serialized = bincode::serialize(&test).unwrap();
-            prop_assert_eq!(&serialized, &bincode_serialized);
-
-            let bincode_deserialized: Test = bincode::deserialize(&bincode_serialized).unwrap();
-            let mut uninit = MaybeUninit::<Test>::uninit();
-            let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
-            let mut reader = serialized.as_slice();
-            builder.read_foo(reader.by_ref())?;
-            builder.finish();
-            let deserialized = unsafe { uninit.assume_init() };
-
-            prop_assert_eq!(&test, &bincode_deserialized);
-            prop_assert_eq!(test, deserialized);
-        });
-    }
-
-    #[test]
     fn test_struct_with_reference_equivalence() {
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,
