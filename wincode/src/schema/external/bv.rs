@@ -186,6 +186,8 @@ mod tests {
 
         let bincode_deserialized: BitVec<u8> = bincode::deserialize(&wincode_bytes).unwrap();
         assert_eq!(bincode_deserialized, bv);
+        let wincode_deserialized: BitVec<u8> = deserialize(&wincode_bytes).unwrap();
+        assert_eq!(wincode_deserialized, bv);
 
         let bincode_bytes = bincode::serialize(&bv).unwrap();
 
@@ -196,6 +198,43 @@ mod tests {
         {
             let deserialized: BitVec<u8> = deserialize(&bincode_bytes).unwrap();
             assert_eq!(deserialized, bv);
+        }
+    }
+
+    #[test]
+    fn test_bitvec_varint_dirty_padding() {
+        let mut bv = BitVec::<usize>::from(vec![usize::MAX]);
+        bv.truncate(3);
+
+        let c = Configuration::default().with_varint_encoding();
+        let bincode_c = bincode::DefaultOptions::new().with_varint_encoding();
+
+        let schema_serialized = config::serialize(&bv, c).unwrap();
+        assert_eq!(
+            config::serialized_size(&bv, c).unwrap() as usize,
+            schema_serialized.len()
+        );
+
+        let bincode_deserialized: BitVec = bincode_c.deserialize(&schema_serialized).unwrap();
+        assert_eq!(bincode_deserialized, bv);
+        let schema_deserialized: BitVec = config::deserialize(&schema_serialized, c).unwrap();
+        assert_eq!(schema_deserialized, bv);
+
+        let bincode_serialized = bincode_c.serialize(&bv).unwrap();
+
+        #[cfg(feature = "bv-strict")]
+        {
+            assert_ne!(schema_serialized, bincode_serialized);
+            assert!(config::deserialize::<BitVec, _>(&bincode_serialized, c).is_err());
+        }
+
+        #[cfg(not(feature = "bv-strict"))]
+        {
+            assert_eq!(schema_serialized, bincode_serialized);
+            assert_eq!(
+                config::deserialize::<BitVec, _>(&bincode_serialized, c).unwrap(),
+                bv
+            );
         }
     }
 
@@ -270,6 +309,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&bv).unwrap();
             let schema_serialized = serialize(&bv).unwrap();
             prop_assert_eq!(serialized_size(&bv).unwrap() as usize, schema_serialized.len());
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: BitVec = bincode::deserialize(&schema_serialized).unwrap();
             let schema_deserialized: BitVec = deserialize(&bincode_serialized).unwrap();
@@ -284,6 +324,7 @@ mod tests {
             let bincode_serialized = bincode::serialize(&bv).unwrap();
             let schema_serialized = serialize(&bv).unwrap();
             prop_assert_eq!(serialized_size(&bv).unwrap() as usize, schema_serialized.len());
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: BitVec<u8> = bincode::deserialize(&schema_serialized).unwrap();
             let schema_deserialized: BitVec<u8> = deserialize(&bincode_serialized).unwrap();
@@ -301,6 +342,7 @@ mod tests {
             let bincode_serialized = bincode_c.serialize(&bv).unwrap();
             let schema_serialized = config::serialize(&bv, c).unwrap();
             prop_assert_eq!(config::serialized_size(&bv, c).unwrap() as usize, schema_serialized.len());
+            prop_assert_eq!(&bincode_serialized, &schema_serialized);
 
             let bincode_deserialized: BitVec = bincode_c.deserialize(&schema_serialized).unwrap();
             let schema_deserialized: BitVec = config::deserialize(&bincode_serialized, c).unwrap();
