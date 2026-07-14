@@ -555,7 +555,7 @@ mod tests {
     use {
         crate::{
             Deserialize, ReadError, ReadResult, SchemaRead, SchemaReadContext, SchemaWrite,
-            Serialize, TypeMeta, UninitBuilder, WriteResult, ZeroCopy,
+            Serialize, TypeMeta, UninitBuilder, WriteError, WriteResult, ZeroCopy,
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
@@ -2344,6 +2344,40 @@ mod tests {
             let deserialized: Enum = config::deserialize(&serialized, config).unwrap();
             prop_assert_eq!(deserialized, e);
         });
+    }
+
+    #[test]
+    fn test_enum_tag_overflow_size_of_matches_write() {
+        // `size_of`/`serialized_size` must reject a discriminant that overflows the tag
+        // encoding, just like `serialize`/`serialize_into` do.
+        let u8_tag_cfg = Configuration::default().with_tag_encoding::<u8>();
+
+        #[derive(SchemaWrite)]
+        #[wincode(internal)]
+        enum NarrowTagEnum {
+            #[wincode(tag = 0)]
+            Fits(u8),
+            #[wincode(tag = 256)]
+            Overflows(u8),
+        }
+
+        let fits = NarrowTagEnum::Fits(1);
+        assert_eq!(config::serialized_size(&fits, u8_tag_cfg).unwrap(), 2);
+        assert_eq!(config::serialize(&fits, u8_tag_cfg).unwrap(), [0, 1]);
+
+        let overflow = NarrowTagEnum::Overflows(1);
+        assert!(matches!(
+            config::serialize(&overflow, u8_tag_cfg),
+            Err(WriteError::TagEncodingOverflow(_))
+        ));
+        assert!(matches!(
+            config::serialize_into(&mut vec![], &overflow, u8_tag_cfg),
+            Err(WriteError::TagEncodingOverflow(_))
+        ));
+        assert!(matches!(
+            config::serialized_size(&overflow, u8_tag_cfg),
+            Err(WriteError::TagEncodingOverflow(_))
+        ));
     }
 
     #[test]
