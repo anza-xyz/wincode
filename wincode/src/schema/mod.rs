@@ -1466,6 +1466,31 @@ mod tests {
     }
 
     #[test]
+    fn test_uninit_builder_with_type_then_const_default_generics() {
+        #[derive(UninitBuilder)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct Foo<T = u16, const N: usize = 4>
+        where
+            T: Copy,
+        {
+            marker: PhantomData<T>,
+            bytes: [u8; N],
+        }
+
+        let mut uninit = MaybeUninit::<Foo<u16, 4>>::uninit();
+        let mut builder =
+            FooUninitBuilder::<u16, 4, DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+        builder.write_marker(PhantomData).write_bytes([1, 2, 3, 4]);
+        assert!(builder.is_init());
+        builder.finish();
+
+        // SAFETY: Both fields were initialized by the builder before it was finished.
+        let initialized = unsafe { uninit.assume_init() };
+        assert_eq!(initialized.bytes, [1, 2, 3, 4]);
+    }
+
+    #[test]
     fn test_uninit_builder_uninit_ref() {
         #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]

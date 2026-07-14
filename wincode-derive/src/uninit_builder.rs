@@ -51,12 +51,6 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         }
     };
     let builder_struct_decl = {
-        // `split_for_impl` will strip default type and const parameters, so we collect them manually
-        // to preserve the declarations on the original struct.
-        let generic_type_params = builder_generics.type_params();
-        let generic_lifetimes = builder_generics.lifetimes();
-        let generic_const = builder_generics.const_params();
-        let where_clause = builder_generics.where_clause.as_ref();
         quote! {
             /// A helper struct that provides convenience methods for reading and writing to a `MaybeUninit` struct
             /// with a bit-set tracking the initialization state of the fields.
@@ -65,7 +59,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
             /// you **must** call `finish` or `into_assume_init_mut` to forget the builder. Otherwise, all the
             /// initialized fields will be dropped when the builder is dropped.
             #[must_use]
-            #vis struct #builder_ident < #(#generic_lifetimes,)* #(#generic_const,)* #(#generic_type_params,)* > #where_clause {
+            #vis struct #builder_ident #builder_impl_generics #builder_where_clause {
                 inner: &'_wincode_inner mut core::mem::MaybeUninit<#builder_dst>,
                 init_set: #builder_bit_set_ty,
                 _config: core::marker::PhantomData<__WincodeConfig>,
