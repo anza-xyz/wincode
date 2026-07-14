@@ -1499,10 +1499,11 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_struct_extensions_sanity() {
-        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
-        #[wincode(internal, struct_extensions)]
+    fn test_uninit_builder_sanity() {
+        #[derive(
+            SchemaWrite, SchemaRead, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
         struct Test {
             a: Vec<u8>,
             b: [u8; 32],
