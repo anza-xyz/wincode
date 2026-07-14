@@ -42,16 +42,16 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for EcoString {
 
         if len <= EcoString::INLINE_LIMIT {
             let mut buf = [MaybeUninit::uninit(); EcoString::INLINE_LIMIT];
-            reader.copy_into_slice(&mut buf[..len])?;
-            // SAFETY: `copy_into_slice` initialized the first `len` bytes of `buf`.
+            reader.copy_into_uninit_slice(&mut buf[..len])?;
+            // SAFETY: `copy_into_uninit_slice` initialized the first `len` bytes of `buf`.
             let bytes = unsafe { core::slice::from_raw_parts(buf.as_ptr().cast::<u8>(), len) };
             let string = str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
             dst.write(EcoString::from(string));
             Ok(())
         } else {
             let mut bytes = Vec::with_capacity(len);
-            reader.copy_into_slice(&mut bytes.spare_capacity_mut()[..len])?;
-            // SAFETY: `copy_into_slice` fills the entire spare-capacity slice.
+            reader.copy_into_uninit_slice(&mut bytes.spare_capacity_mut()[..len])?;
+            // SAFETY: `copy_into_uninit_slice` fills the entire spare-capacity slice.
             unsafe { bytes.set_len(len) };
             let string = str::from_utf8(&bytes).map_err(invalid_utf8_encoding)?;
             dst.write(EcoString::from(string));

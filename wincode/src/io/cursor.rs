@@ -130,20 +130,31 @@ where
     }
 }
 
-impl<'a, T> Reader<'a> for Cursor<T>
+unsafe impl<'a, T> Reader<'a> for Cursor<T>
 where
     T: AsRef<[u8]>,
 {
     const BORROW_KINDS: u8 = BorrowKind::CallSite.mask();
 
     #[inline]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         let src = self.advance_slice_checked(dst.len())?;
         // SAFETY:
         // - `advance_slice_checked` guarantees that `src` is exactly `dst.len()` bytes.
         // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
         //   with the internal buffer.
         unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), dst.len()) }
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        let src = self.advance_slice_checked(dst.len())?;
+        // SAFETY:
+        // - `advance_slice_checked` guarantees that `src` is exactly `dst.len()` bytes.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
+        //   with the internal buffer.
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) }
         Ok(())
     }
 
@@ -517,7 +528,7 @@ mod tests {
             let mut cursor = Cursor::new_at(&bytes, pos);
 
             let mut dst = Vec::with_capacity(bytes.len());
-            let res = cursor.copy_into_slice(dst.spare_capacity_mut());
+            let res = cursor.copy_into_uninit_slice(dst.spare_capacity_mut());
             if pos > bytes.len() && !bytes.is_empty() {
                 prop_assert!(matches!(res, Err(ReadError::ReadSizeLimit(x)) if x == bytes.len()));
             } else {
@@ -532,7 +543,7 @@ mod tests {
             let start = cursor.position();
 
             let mut buf: [MaybeUninit::<u8>; 0] = [];
-            cursor.copy_into_slice(&mut buf).unwrap();
+            cursor.copy_into_uninit_slice(&mut buf).unwrap();
             prop_assert_eq!(cursor.position(), start);
 
             unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
@@ -562,7 +573,7 @@ mod tests {
             // Zero-length ops still succeed and do not advance.
             let mut buf: [MaybeUninit::<u8>; 0] = [];
             let start = cursor.position();
-            prop_assert!(cursor.copy_into_slice(&mut buf).is_ok());
+            prop_assert!(cursor.copy_into_uninit_slice(&mut buf).is_ok());
             {
                 let _trusted = unsafe { <Cursor<_> as Reader>::as_trusted_for(&mut cursor, 0) }.unwrap();
             }

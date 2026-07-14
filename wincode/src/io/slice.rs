@@ -70,20 +70,34 @@ impl<'a, T> SliceUnchecked<'a, T> {
     }
 }
 
-impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
+unsafe impl<'a> Reader<'a> for SliceUnchecked<'a, u8> {
     const BORROW_KINDS: u8 = BorrowKind::Backing.mask() | BorrowKind::CallSite.mask();
 
     #[inline]
-    fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         // SAFETY: by constructing `SliceUnchecked`, caller guarantees
         // they will read within the bounds of the slice.
-        let chunk = unsafe { advance_slice_unchecked(&mut self.buf, buf.len()) };
+        let chunk = unsafe { advance_slice_unchecked(&mut self.buf, dst.len()) };
         // SAFETY:
         // -  Given the previous assumption that the caller guarantees the underlying
-        //    slice in bounds for the next `buf.len()` bytes, we assume that `chunk` is a valid,
-        //    in bounds, `buf.len()` bytes slice.
-        // - Given Rust's aliasing rules, we can assume that `buf` does not overlap with the internal buffer.
-        unsafe { copy_nonoverlapping(chunk.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        //    slice in bounds for the next `dst.len()` bytes, we assume that `chunk` is a valid,
+        //    in bounds, `dst.len()` bytes slice.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(chunk.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        // SAFETY: by constructing `SliceUnchecked`, caller guarantees
+        // they will read within the bounds of the slice.
+        let chunk = unsafe { advance_slice_unchecked(&mut self.buf, dst.len()) };
+        // SAFETY:
+        // -  Given the previous assumption that the caller guarantees the underlying
+        //    slice in bounds for the next `dst.len()` bytes, we assume that `chunk` is a valid,
+        //    in bounds, `dst.len()` bytes slice.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(chunk.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) };
         Ok(())
     }
 
@@ -153,21 +167,35 @@ impl<'a, T> SliceMutUnchecked<'a, T> {
     }
 }
 
-impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
+unsafe impl<'a> Reader<'a> for SliceMutUnchecked<'a, u8> {
     const BORROW_KINDS: u8 =
         BorrowKind::Backing.mask() | BorrowKind::BackingMut.mask() | BorrowKind::CallSite.mask();
 
     #[inline]
-    fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
         // they will read within the bounds of the slice.
-        let chunk = unsafe { advance_slice_mut_unchecked(&mut self.buf, buf.len()) };
+        let chunk = unsafe { advance_slice_mut_unchecked(&mut self.buf, dst.len()) };
         // SAFETY:
         // -  Given the previous assumption that the caller guarantees the underlying
-        //    slice in bounds for the next `buf.len()` bytes, we assume that `chunk` is a valid,
-        //    in bounds, `buf.len()` bytes slice.
-        // - Given Rust's aliasing rules, we can assume that `buf` does not overlap with the internal buffer.
-        unsafe { copy_nonoverlapping(chunk.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+        //    slice in bounds for the next `dst.len()` bytes, we assume that `chunk` is a valid,
+        //    in bounds, `dst.len()` bytes slice.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(chunk.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        // SAFETY: by constructing `SliceMutUnchecked`, caller guarantees
+        // they will read within the bounds of the slice.
+        let chunk = unsafe { advance_slice_mut_unchecked(&mut self.buf, dst.len()) };
+        // SAFETY:
+        // -  Given the previous assumption that the caller guarantees the underlying
+        //    slice in bounds for the next `dst.len()` bytes, we assume that `chunk` is a valid,
+        //    in bounds, `dst.len()` bytes slice.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(chunk.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) };
         Ok(())
     }
 
@@ -226,12 +254,17 @@ impl<'b, T> SliceScopedUnchecked<'_, 'b, T> {
     }
 }
 
-impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
+unsafe impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     const BORROW_KINDS: u8 = BorrowKind::CallSite.mask();
 
     #[inline(always)]
-    fn copy_into_slice(&mut self, buf: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
-        self.inner.copy_into_slice(buf)
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
+        self.inner.copy_into_slice(dst)
+    }
+
+    #[inline(always)]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        self.inner.copy_into_uninit_slice(dst)
     }
 
     #[inline(always)]
@@ -245,7 +278,7 @@ impl<'a> Reader<'a> for SliceScopedUnchecked<'a, '_, u8> {
     }
 }
 
-impl<'a> Reader<'a> for &'a [u8] {
+unsafe impl<'a> Reader<'a> for &'a [u8] {
     const BORROW_KINDS: u8 = BorrowKind::Backing.mask() | BorrowKind::CallSite.mask();
 
     #[inline]
@@ -262,7 +295,7 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         let Some(src) = advance_slice_checked(self, dst.len()) else {
             return Err(read_size_limit(dst.len()));
         };
@@ -270,7 +303,20 @@ impl<'a> Reader<'a> for &'a [u8] {
         // - `advance_slice_checked` guarantees that `src` is exactly `dst.len()` bytes.
         // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
         //   with the internal buffer.
-        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), dst.len()) };
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        let Some(src) = advance_slice_checked(self, dst.len()) else {
+            return Err(read_size_limit(dst.len()));
+        };
+        // SAFETY:
+        // - `advance_slice_checked` guarantees that `src` is exactly `dst.len()` bytes.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
+        //   with the internal buffer.
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) };
         Ok(())
     }
 
@@ -294,7 +340,7 @@ impl<'a> Reader<'a> for &'a [u8] {
     }
 }
 
-impl<'a> Reader<'a> for &'a mut [u8] {
+unsafe impl<'a> Reader<'a> for &'a mut [u8] {
     const BORROW_KINDS: u8 =
         BorrowKind::Backing.mask() | BorrowKind::BackingMut.mask() | BorrowKind::CallSite.mask();
 
@@ -327,12 +373,22 @@ impl<'a> Reader<'a> for &'a mut [u8] {
     }
 
     #[inline]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         let src = self.take_borrowed(dst.len())?;
         // SAFETY:
-        // - `borrow_exact` guarantees that `src` is exactly dst.len() bytes.
-        // - Given Rust's aliasing rules, we can assume that `buf` does not overlap with the internal buffer.
-        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), dst.len()) }
+        // - `take_borrowed` guarantees that `src` is exactly `dst.len()` bytes.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), dst.len()) }
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        let src = self.take_borrowed(dst.len())?;
+        // SAFETY:
+        // - `take_borrowed` guarantees that `src` is exactly `dst.len()` bytes.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap with the internal buffer.
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) }
         Ok(())
     }
 
@@ -354,7 +410,7 @@ impl Writer for SliceMutUnchecked<'_, u8> {
         let dst = unsafe { advance_slice_mut_unchecked(&mut self.buf, src.len()) };
         // SAFETY:
         // -  Given the previous assumption that the caller guarantees the underlying
-        //    slice in bounds for the next `buf.len()` bytes, we assume that `dst` is a valid,
+        //    slice in bounds for the next `src.len()` bytes, we assume that `dst` is a valid,
         //    in bounds, `src.len()` bytes slice.
         // - Given Rust's aliasing rules, we can assume that `src` does not overlap with the internal buffer.
         unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) }
@@ -370,7 +426,7 @@ impl Writer for SliceMutUnchecked<'_, MaybeUninit<u8>> {
         let dst = unsafe { advance_slice_mut_unchecked(&mut self.buf, src.len()) };
         // SAFETY:
         // -  Given the previous assumption that the caller guarantees the underlying
-        //    slice in bounds for the next `buf.len()` bytes, we assume that `dst` is a valid,
+        //    slice in bounds for the next `src.len()` bytes, we assume that `dst` is a valid,
         //    in bounds, `src.len()` bytes slice.
         // - Given Rust's aliasing rules, we can assume that `src` does not overlap with the internal buffer.
         unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), src.len()) }
@@ -527,17 +583,36 @@ mod tests {
 
         #[test]
         fn test_reader_copy_into_slice(bytes in any::<Vec<u8>>()) {
+            let len = bytes.len();
             with_readers!(&bytes, |reader| {
-                let mut vec = Vec::with_capacity(bytes.len());
-                let half = bytes.len() / 2;
-                let dst = vec.spare_capacity_mut();
+                let mut dst = alloc::vec![0; len];
+                let half = len / 2;
                 reader.copy_into_slice(&mut dst[..half]).unwrap();
-                unsafe { reader.as_trusted_for(bytes.len() - half) }
+                // SAFETY: the returned reader is used to read exactly the requested number of bytes.
+                unsafe { Reader::as_trusted_for(&mut reader, len - half) }
                     .unwrap()
                     .copy_into_slice(&mut dst[half..])
                     .unwrap();
-                unsafe { vec.set_len(bytes.len()) };
-                prop_assert_eq!(&vec, &bytes);
+                prop_assert_eq!(&dst, &bytes);
+            });
+        }
+
+        #[test]
+        fn test_reader_copy_into_uninit_slice(bytes in any::<Vec<u8>>()) {
+            let len = bytes.len();
+            with_readers!(&bytes, |reader| {
+                let mut dst = Vec::with_capacity(len);
+                let half = len / 2;
+                let spare = dst.spare_capacity_mut();
+                reader.copy_into_uninit_slice(&mut spare[..half]).unwrap();
+                // SAFETY: the returned reader is used to read exactly the requested number of bytes.
+                unsafe { Reader::as_trusted_for(&mut reader, len - half) }
+                    .unwrap()
+                    .copy_into_uninit_slice(&mut spare[half..])
+                    .unwrap();
+                // SAFETY: both copy operations succeeded and initialized every byte in the allocation.
+                unsafe { dst.set_len(len) };
+                prop_assert_eq!(&dst, &bytes);
             });
         }
 
@@ -558,10 +633,19 @@ mod tests {
 
         #[test]
         fn test_reader_copy_into_slice_input_too_large(bytes in any::<Vec<u8>>()) {
+            let requested = bytes.len() + 1;
             with_untrusted_readers!(&bytes, |reader| {
-                let mut vec = Vec::with_capacity(bytes.len() + 1);
-                let dst = vec.spare_capacity_mut();
-                prop_assert!(matches!(reader.copy_into_slice(dst), Err(ReadError::ReadSizeLimit(x)) if x == bytes.len() + 1));
+                let mut dst = alloc::vec![0; requested];
+                prop_assert!(matches!(reader.copy_into_slice(&mut dst), Err(ReadError::ReadSizeLimit(x)) if x == requested));
+            });
+        }
+
+        #[test]
+        fn test_reader_copy_into_uninit_slice_input_too_large(bytes in any::<Vec<u8>>()) {
+            let requested = bytes.len() + 1;
+            with_untrusted_readers!(&bytes, |reader| {
+                let mut dst = Vec::with_capacity(requested);
+                prop_assert!(matches!(reader.copy_into_uninit_slice(dst.spare_capacity_mut()), Err(ReadError::ReadSizeLimit(x)) if x == requested));
             });
         }
 
