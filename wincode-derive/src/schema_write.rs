@@ -178,11 +178,12 @@ fn impl_enum(
                 (
                     quote! {
                         #match_case => {
+                            // Validate the discriminant before the static-size fast path returns.
+                            let mut total = #size_of_discriminant;
                             if let #crate_name::TypeMeta::Static { size, .. } = #crate_name::TypeMeta::join_types([<#tag_encoding as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META #(,#static_targets)*]) {
                                 return Ok(size);
                             }
 
-                            let mut total = #size_of_discriminant;
                             #(
                                 total += <#unskipped_targets as #crate_name::SchemaWrite<__WincodeConfig>>::size_of(#size_count_idents)?;
                             )*
