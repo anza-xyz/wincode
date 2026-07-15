@@ -1719,15 +1719,10 @@ unsafe impl<C: ConfigCore> SchemaWrite<C> for SystemTime {
 
     #[inline]
     fn size_of(src: &Self::Src) -> WriteResult<usize> {
-        match <Self as SchemaWrite<C>>::TYPE_META {
-            TypeMeta::Static { size, .. } => Ok(size),
-            TypeMeta::Dynamic => {
-                let duration = src.duration_since(UNIX_EPOCH).map_err(|_| {
-                    crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH")
-                })?;
-                <Duration as SchemaWrite<C>>::size_of(&duration)
-            }
-        }
+        let duration = src
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| crate::error::WriteError::Custom("SystemTime before UNIX_EPOCH"))?;
+        <Duration as SchemaWrite<C>>::size_of(&duration)
     }
 
     #[inline]
