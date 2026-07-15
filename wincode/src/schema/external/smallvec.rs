@@ -38,15 +38,41 @@ where
     #[inline]
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let mut values = SmallVec::with_capacity(len);
-        let ptr: *mut T::Dst = values.as_mut_ptr();
-        // SAFETY: `values` has capacity for `len` elements and `decode_into_slice_t`
-        // initializes all elements on success.
+
+        // Reserve capacity through `dst` in place. Moving a `SmallVec::with_capacity(len)`
+        // local into `dst` would memcpy its whole `[T::Dst; N]` inline region;
+        // building empty in `dst` and growing in place leaves that region uninit.
+        let values = dst.write(SmallVec::new());
+        values.reserve_exact(len);
+
+        // `dst` now owns a reserved (possibly heap) allocation, but the caller
+        // still treats it as uninitialized and will not drop it. Free it on any
+        // early exit -- an `Err` return *or* a panic while decoding -- so the
+        // allocation cannot leak. The guard is disarmed only once `dst` holds the
+        // fully initialized value.
+        struct Guard<'a, U>(&'a mut MaybeUninit<U>);
+        impl<U> Drop for Guard<'_, U> {
+            fn drop(&mut self) {
+                // SAFETY: the guard is only live while `dst` holds an empty
+                // `SmallVec` (length 0 until the guard is disarmed), so this drops
+                // just the reserved allocation, never any element.
+                unsafe { self.0.assume_init_drop() };
+            }
+        }
+        let guard = Guard(dst);
+
+        // SAFETY: `dst` was initialized with the empty `SmallVec` above.
+        let ptr: *mut T::Dst = unsafe { guard.0.assume_init_mut() }.as_mut_ptr();
+        // SAFETY: the buffer has capacity for `len` elements. On error (or panic)
+        // `decode_into_slice_t` drops any elements it initialized; on success it
+        // initializes all `len` of them.
         let slice = unsafe { from_raw_parts_mut(ptr.cast::<MaybeUninit<T::Dst>>(), len) };
         decode_into_slice_t::<T, C>(reader, slice)?;
+
         // SAFETY: `decode_into_slice_t` initialized all `len` elements on success.
-        unsafe { values.set_len(len) };
-        dst.write(values);
+        unsafe { guard.0.assume_init_mut().set_len(len) };
+        // `dst` now fully owns the value; keep it rather than dropping via `guard`.
+        core::mem::forget(guard);
         Ok(())
     }
 }
