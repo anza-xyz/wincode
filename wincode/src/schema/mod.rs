@@ -1214,6 +1214,27 @@ mod tests {
         });
     }
 
+    /// Test that reading a `SmallVec` drops the elements it initialized before an
+    /// error (via `SliceDropGuard`) and frees the reserved backing allocation
+    /// (via the in-place guard in the `SchemaRead` impl). The element leak is
+    /// caught by `TLDropGuard`; the allocation leak is only caught under Miri.
+    #[cfg(feature = "smallvec")]
+    #[test]
+    fn test_smallvec_handles_partial_drop() {
+        use smallvec::SmallVec;
+        // Inline capacity spans both the inline (`len <= 4`) and spilled cases.
+        type SmallVec4<T> = SmallVec<[T; 4]>;
+
+        let _guard = TLDropGuard::new();
+        proptest!(proptest_cfg(), |(vec in proptest::collection::vec(any::<DropCountedMaybeError>(), 0..16).prop_map(SmallVec4::from_vec))| {
+            let serialized = serialize(&vec).unwrap();
+            let deserialized = <SmallVec4<DropCountedMaybeError>>::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(vec, deserialized);
+            }
+        });
+    }
+
     #[test]
     fn test_vec_deque_handles_partial_drop() {
         let _guard = TLDropGuard::new();
