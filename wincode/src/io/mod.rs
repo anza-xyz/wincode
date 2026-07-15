@@ -70,7 +70,29 @@ pub(super) const fn transpose<const N: usize, T>(
 /// - Callers should prefer [`Reader::copy_into_slice`] or `take_*` methods to remain
 ///   compatible with readers that don't support borrowing, if possible.
 /// - Returns [`ReadError::UnsupportedBorrow`] for readers that do not support borrowing.
-pub trait Reader<'a> {
+///
+/// # Performance
+///
+/// The default [`Reader::copy_into_uninit_slice`] implementation initializes
+/// the destination before delegating to [`Reader::copy_into_slice`].
+/// Implementors that can safely write directly into `MaybeUninit<u8>` storage
+/// should override it to avoid this initialization. Such overrides must still
+/// initialize every destination byte before returning `Ok(())`.
+///
+/// # Safety
+///
+/// Implementors must ensure that:
+///
+/// - If `copy_into_uninit_slice` returns `Ok(())`, every element of the
+///   destination has been initialized.
+/// - All safe methods uphold Rust's validity, aliasing, and lifetime rules for
+///   every safe input. Callers are not responsible for proving that destination
+///   buffers do not overlap internal storage.
+/// - References returned by borrowing methods remain valid for their documented
+///   lifetimes.
+/// - Any unchecked reader returned by `as_trusted_for` obeys that method's
+///   documented bounds contract.
+pub unsafe trait Reader<'a> {
     /// Borrow capabilities of this reader.
     ///
     /// A bitmask of [`BorrowKind`] values indicating which kinds of borrows are supported.
@@ -107,7 +129,10 @@ pub trait Reader<'a> {
     fn take_array<const N: usize>(&mut self) -> ReadResult<[u8; N]> {
         let mut ar = MaybeUninit::<[u8; N]>::uninit();
 
-        self.copy_into_slice(transpose(&mut ar))?;
+        self.copy_into_uninit_slice(transpose(&mut ar))?;
+
+        // SAFETY: `copy_into_uninit_slice` returned successfully, which guarantees
+        // every element of `ar` was initialized.
         Ok(unsafe { ar.assume_init() })
     }
 
@@ -176,10 +201,10 @@ pub trait Reader<'a> {
     /// that `n_bytes` window.
     ///
     /// Implementors must:
-    /// - Ensure that either at least `n_bytes` bytes are available backing the
-    ///   returned reader, or return an error.
     /// - Arrange that the returned `Trusted` reader's methods operate within
     ///   that `n_bytes` window (it may buffer or prefetch arbitrarily).
+    /// - Ensure that the returned reader either continues checking its bounds
+    ///   normally or is backed by at least `n_bytes`; otherwise, return an error.
     ///
     /// Note:
     /// - `as_trusted_for` is intended for callers that know they will operate
@@ -260,44 +285,82 @@ pub trait Reader<'a> {
         self
     }
 
-    /// Copy and consume exactly `dst.len()` bytes from the [`Reader`] into `dst`.
+    /// Attempts to copy and consume exactly `dst.len()` bytes.
     ///
-    /// # Safety
-    ///
-    /// - `dst` must not overlap with the internal buffer.
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()>;
+    /// On success, exactly `dst.len()` bytes are consumed and every element of
+    /// `dst` contains the corresponding byte. On error, some bytes may have been
+    /// consumed; `dst` remains initialized, but its contents are unspecified.
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()>;
 
-    /// Copy and consume exactly `size_of::<T>()` bytes from the [`Reader`] into `dst`.
+    /// Attempts to copy and consume exactly `dst.len()` bytes into potentially
+    /// uninitialized storage.
+    ///
+    /// On success, exactly `dst.len()` bytes are consumed and every element of
+    /// `dst` is initialized. On error, some bytes may have been consumed; the
+    /// initialization state and contents of `dst` are unspecified.
+    ///
+    /// The default implementation initializes the destination before calling
+    /// [`Reader::copy_into_slice`]. Implementations may override it to write directly
+    /// into uninitialized storage.
+    ///
+    /// # Implementor requirements
+    ///
+    /// Before returning `Ok(())`, implementations must initialize every element of
+    /// `dst`. This postcondition is required for soundness. Methods such as `take_array`
+    /// treat the entire destination as initialized after `Ok(())`.
+    /// Returning `Ok(())` while any destination byte remains uninitialized may cause undefined behavior.
+    #[inline(always)]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        dst.fill(MaybeUninit::new(0));
+        // SAFETY: Every element is initialized with a valid `u8`, and
+        // `MaybeUninit<u8>` has the same layout as `u8`.
+        let dst = unsafe { transmute::<&mut [MaybeUninit<u8>], &mut [u8]>(dst) };
+        self.copy_into_slice(dst)
+    }
+
+    /// Attempts to copy and consume exactly `size_of::<T>()` bytes from the
+    /// [`Reader`] into `dst`.
     ///
     /// # Safety
     ///
-    /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
-    /// - `dst` must not overlap with the internal buffer.
+    /// - The caller must ensure that, if this method returns `Ok(())`, the bytes
+    ///   copied into `dst` form a valid representation of `T` before `dst` is
+    ///   treated as initialized. This includes all validity and provenance
+    ///   requirements of `T`.
+    /// - The caller must ensure that the memory occupied by `dst` does not overlap
+    ///   the source bytes accessed by the reader.
     #[inline]
     unsafe fn copy_into_t<T>(&mut self, dst: &mut MaybeUninit<T>) -> ReadResult<()> {
-        // SAFETY: Caller ensures that `T` is initialized by reads of `size_of::<T>()` bytes.
+        // SAFETY: `dst` provides `size_of::<T>()` contiguous writable bytes, and
+        // `MaybeUninit<u8>` has alignment 1.
         let dst = unsafe {
             from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>())
         };
-        self.copy_into_slice(dst)
+        self.copy_into_uninit_slice(dst)
     }
 
-    /// Copy and consume exactly `dst.len() * size_of::<T>()` bytes from the [`Reader`] into `dst`.
+    /// Attempts to copy and consume exactly `dst.len() * size_of::<T>()` bytes
+    /// from the [`Reader`] into `dst`.
     ///
     /// # Safety
     ///
-    /// - `T` must be initialized by reads of `size_of::<T>()` bytes.
-    /// - `dst` must not overlap with the internal buffer.
+    /// - The caller must ensure that, if this method returns `Ok(())`, each
+    ///   consecutive `size_of::<T>()` byte region copied into `dst` forms a valid
+    ///   representation of `T` before the elements are treated as initialized.
+    ///   This includes all validity and provenance requirements of `T`.
+    /// - The caller must ensure that the memory occupied by `dst` does not overlap
+    ///   the source bytes accessed by the reader.
     #[inline]
     unsafe fn copy_into_slice_t<T>(&mut self, dst: &mut [MaybeUninit<T>]) -> ReadResult<()> {
         let len = size_of_val(dst);
-        // SAFETY: Caller ensures that `T` is initialized by reads of `size_of::<T>()` bytes.
+        // SAFETY: `dst` provides `size_of_val(dst)` contiguous writable bytes,
+        // and `MaybeUninit<u8>` has alignment 1.
         let dst = unsafe { from_raw_parts_mut(dst.as_mut_ptr().cast::<MaybeUninit<u8>>(), len) };
-        self.copy_into_slice(dst)
+        self.copy_into_uninit_slice(dst)
     }
 }
 
-impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
+unsafe impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     const BORROW_KINDS: u8 = R::BORROW_KINDS;
 
     #[inline(always)]
@@ -350,8 +413,13 @@ impl<'a, R: Reader<'a> + ?Sized> Reader<'a> for &mut R {
     }
 
     #[inline(always)]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         (*self).copy_into_slice(dst)
+    }
+
+    #[inline(always)]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        (*self).copy_into_uninit_slice(dst)
     }
 
     #[inline(always)]

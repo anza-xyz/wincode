@@ -1,9 +1,6 @@
 use {
     crate::io::{BorrowKind, ReadResult, Reader, read_size_limit, slice::SliceScopedUnchecked},
-    core::{
-        mem::{MaybeUninit, transmute},
-        ptr::copy_nonoverlapping,
-    },
+    core::{mem::MaybeUninit, ptr::copy_nonoverlapping},
     std::io::{self, BufReader, Cursor, Read},
 };
 
@@ -34,10 +31,7 @@ impl<R: Read> ReadAdapter<R> {
 }
 
 #[inline]
-fn copy_into_slice<R: Read + ?Sized>(
-    reader: &mut R,
-    dst: &mut [MaybeUninit<u8>],
-) -> ReadResult<()> {
+fn copy_into_slice<R: Read + ?Sized>(reader: &mut R, dst: &mut [u8]) -> ReadResult<()> {
     #[cold]
     fn maybe_eof_to_read_size_limit(err: io::Error, len: usize) -> ReadResult<()> {
         if err.kind() == io::ErrorKind::UnexpectedEof {
@@ -46,25 +40,22 @@ fn copy_into_slice<R: Read + ?Sized>(
             Err(err.into())
         }
     }
-
-    // SAFETY: `read_exact` only writes to the buffer.
-    let buf = unsafe { transmute::<&mut [MaybeUninit<u8>], &mut [u8]>(dst) };
-    if let Err(e) = reader.read_exact(buf) {
-        return maybe_eof_to_read_size_limit(e, buf.len());
+    if let Err(e) = reader.read_exact(dst) {
+        return maybe_eof_to_read_size_limit(e, dst.len());
     };
     Ok(())
 }
 
-impl<R: Read + ?Sized> Reader<'_> for ReadAdapter<R> {
+unsafe impl<R: Read + ?Sized> Reader<'_> for ReadAdapter<R> {
     #[inline(always)]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         copy_into_slice(&mut self.0, dst)
     }
 }
 
-impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
+unsafe impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
     #[inline(always)]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         copy_into_slice(self, dst)
     }
 }
@@ -86,20 +77,31 @@ fn cursor_advance(cursor: &mut Cursor<impl AsRef<[u8]>>, n: usize) -> ReadResult
     Ok(&inner[pos..next_pos])
 }
 
-impl<'a, T> Reader<'a> for Cursor<T>
+unsafe impl<'a, T> Reader<'a> for Cursor<T>
 where
     T: AsRef<[u8]>,
 {
     const BORROW_KINDS: u8 = BorrowKind::CallSite.mask();
 
     #[inline]
-    fn copy_into_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+    fn copy_into_slice(&mut self, dst: &mut [u8]) -> ReadResult<()> {
         let src = cursor_advance(self, dst.len())?;
         // SAFETY:
         // - `cursor_advance` guarantees that `src` is exactly `dst.len()` bytes.
         // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
         //   with the internal buffer.
-        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast(), dst.len()) };
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), dst.len()) };
+        Ok(())
+    }
+
+    #[inline]
+    fn copy_into_uninit_slice(&mut self, dst: &mut [MaybeUninit<u8>]) -> ReadResult<()> {
+        let src = cursor_advance(self, dst.len())?;
+        // SAFETY:
+        // - `cursor_advance` guarantees that `src` is exactly `dst.len()` bytes.
+        // - Given Rust's aliasing rules, we can assume that `dst` does not overlap
+        //   with the internal buffer.
+        unsafe { copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), dst.len()) };
         Ok(())
     }
 
@@ -124,5 +126,67 @@ where
         // SAFETY: by calling `as_trusted_for`, caller guarantees they
         // will will not read beyond the bounds of the slice, `n_bytes`.
         Ok(unsafe { SliceScopedUnchecked::new(buf) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A safe `Read` implementation that inspects the destination before writing.
+    ///
+    /// This catches adapters passing uninitialized storage to `Read::read`: inspecting
+    /// such storage would trigger undefined behavior under Miri.
+    struct InspectingReader {
+        data: Vec<u8>,
+        pos: usize,
+        observed: Vec<u8>,
+    }
+
+    impl InspectingReader {
+        fn new(data: Vec<u8>) -> Self {
+            Self {
+                data,
+                pos: 0,
+                observed: Vec::new(),
+            }
+        }
+    }
+
+    impl Read for InspectingReader {
+        fn read(&mut self, dst: &mut [u8]) -> io::Result<usize> {
+            self.observed.extend_from_slice(dst);
+
+            let remaining = &self.data[self.pos..];
+            let len = dst.len().min(remaining.len());
+            dst[..len].copy_from_slice(&remaining[..len]);
+            self.pos = self.pos.checked_add(len).unwrap();
+            Ok(len)
+        }
+    }
+
+    #[test]
+    fn read_adapter_initializes_destination_before_reading() {
+        let expected = 0x0123_4567_89ab_cdef_u64;
+        let data = crate::serialize(&expected).unwrap();
+        let mut reader = InspectingReader::new(data.clone());
+
+        let actual: u64 = crate::deserialize_from(ReadAdapter::new(&mut reader)).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(reader.observed, vec![0; data.len()]);
+    }
+
+    #[test]
+    fn buf_reader_initializes_destination_before_reading() {
+        let expected = 0x0123_4567_89ab_cdef_u64;
+        let data = crate::serialize(&expected).unwrap();
+        let mut reader = InspectingReader::new(data.clone());
+
+        let actual: u64 =
+            crate::deserialize_from(BufReader::with_capacity(1, &mut reader)).unwrap();
+
+        assert_eq!(actual, expected);
+        assert_eq!(reader.observed, vec![0; data.len()]);
     }
 }
