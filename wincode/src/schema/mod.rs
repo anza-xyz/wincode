@@ -3889,6 +3889,9 @@ mod tests {
 
         let before_epoch = UNIX_EPOCH.checked_sub(Duration::from_secs(1)).unwrap();
         assert!(serialize(&before_epoch).is_err());
+        // `serialized_size` must agree with `serialize`: a value that cannot be
+        // written must not report a size.
+        assert!(crate::serialized_size(&before_epoch).is_err());
     }
 
     #[test]
