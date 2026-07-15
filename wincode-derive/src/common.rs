@@ -86,9 +86,6 @@ pub(crate) trait TypeExt {
     /// ```
     fn with_infer(&self, infer: &Type) -> Type;
 
-    /// Gather all the lifetimes on this type.
-    fn lifetimes(&self) -> Vec<&Lifetime>;
-
     /// Return whether the type contains a lifetime parameter.
     fn has_lifetime(&self) -> bool;
 }
@@ -114,12 +111,6 @@ impl TypeExt for Type {
         let mut infer = InferGeneric::from(stack);
         infer.visit_type_mut(&mut this);
         this
-    }
-
-    fn lifetimes(&self) -> Vec<&Lifetime> {
-        let mut lifetimes = Vec::new();
-        GatherLifetimes(&mut lifetimes).visit_type(self);
-        lifetimes
     }
 
     fn has_lifetime(&self) -> bool {
@@ -782,14 +773,6 @@ impl VisitMut for ReplaceLifetimes<'_> {
     }
 }
 
-struct GatherLifetimes<'a, 'ast>(&'a mut Vec<&'ast Lifetime>);
-
-impl<'ast> Visit<'ast> for GatherLifetimes<'_, 'ast> {
-    fn visit_lifetime(&mut self, l: &'ast Lifetime) {
-        self.0.push(l);
-    }
-}
-
 struct HasLifetime(bool);
 
 impl Visit<'_> for HasLifetime {
@@ -967,17 +950,6 @@ mod tests {
         assert_eq!(iter.nth(25).unwrap().to_string(), "a0");
         assert_eq!(iter.next().unwrap().to_string(), "b0");
         assert_eq!(iter.nth(24).unwrap().to_string(), "a1");
-    }
-
-    #[test]
-    fn test_gather_lifetimes() {
-        let ty: Type = parse_quote!(&'a Foo);
-        let lt: Lifetime = parse_quote!('a);
-        assert_eq!(ty.lifetimes(), vec![&lt]);
-
-        let ty: Type = parse_quote!(&'a Foo<'b, 'c>);
-        let (a, b, c) = (parse_quote!('a), parse_quote!('b), parse_quote!('c));
-        assert_eq!(ty.lifetimes(), vec![&a, &b, &c]);
     }
 
     #[test]

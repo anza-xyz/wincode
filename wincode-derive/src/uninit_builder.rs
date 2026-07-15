@@ -1,5 +1,5 @@
 use {
-    crate::common::{SchemaArgs, TypeExt, extract_repr, get_crate_name},
+    crate::common::{SchemaArgs, extract_repr, get_crate_name},
     darling::{Error, FromDeriveInput, Result, ast::Data},
     proc_macro2::{Span, TokenStream},
     quote::{format_ident, quote},
@@ -151,7 +151,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
     // Generate the helper methods for the builder.
     let builder_helpers = fields.iter().enumerate().map(|(i, field)| {
         let ty = &field.ty;
-        let target_reader_bound = field.target_resolved().with_lifetime("de");
+        let target_reader_bound = field.target_resolved();
         let ident = field.struct_member_ident(i);
         let ident_string = field.struct_member_ident_to_string(i);
         let uninit_mut_ident = format_ident!("uninit_{ident_string}_mut");
@@ -160,21 +160,6 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         let write_uninit_field_ident = format_ident!("write_{ident_string}");
         let assume_init_field_ident = format_ident!("assume_init_{ident_string}");
         let init_with_field_ident = format_ident!("init_{ident_string}_with");
-        let lifetimes = ty.lifetimes();
-        // We must always extract the `Dst` from the type because `SchemaRead` implementations need
-        // not necessarily write to `Self` -- they write to `Self::Dst`, which isn't necessarily `Self`
-        // (e.g., in the case of container types).
-        let field_projection_type = if lifetimes.is_empty() {
-            quote!(<#ty as #crate_name::SchemaRead<'_, __WincodeConfig>>::Dst)
-        } else {
-            let lt = lifetimes[0];
-            // Even though a type may have multiple distinct lifetimes, we force them to be uniform
-            // for a `SchemaRead` cast because an implementation of `SchemaRead` must bind all lifetimes
-            // to the lifetime of the reader (and will not be implemented over multiple distinct lifetimes).
-            let ty = ty.with_lifetime(&lt.ident.to_string());
-            quote!(<#ty as #crate_name::SchemaRead<#lt, __WincodeConfig>>::Dst)
-        };
-
         // The bit index for the field.
         let index_bit = LitInt::new(&(1u128 << i).to_string(), Span::call_site());
         let set_index_bit = quote! {
@@ -184,20 +169,20 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         quote! {
             /// Get a mutable reference to the maybe uninitialized field.
             #[inline]
-            #vis const fn #uninit_mut_ident(&mut self) -> &mut ::core::mem::MaybeUninit<#field_projection_type> {
+            #vis const fn #uninit_mut_ident(&mut self) -> &mut ::core::mem::MaybeUninit<#ty> {
                 // SAFETY:
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
-                // - We return the field as `&mut MaybeUninit<#target>`, so
+                // - We return the field as `&mut MaybeUninit<#ty>`, so
                 //   the field is never exposed as initialized.
                 unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
             }
 
             /// Get a reference to the maybe uninitialized field.
             #[inline]
-            #vis const fn #uninit_ref_ident(&self) -> &::core::mem::MaybeUninit<#field_projection_type> {
+            #vis const fn #uninit_ref_ident(&self) -> &::core::mem::MaybeUninit<#ty> {
                 // SAFETY:
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
-                // - We return the field as `&MaybeUninit<#target>`, so
+                // - We return the field as `&MaybeUninit<#ty>`, so
                 //   the field is never exposed as initialized.
                 unsafe { &*(&raw const (*self.inner.as_ptr()).#ident).cast() }
             }
@@ -205,7 +190,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
             /// Write a value to the maybe uninitialized field.
             // This method can be marked `const` in the future when MSRV is >= 1.85.
             #[inline]
-            #vis fn #write_uninit_field_ident(&mut self, val: #field_projection_type) -> &mut Self {
+            #vis fn #write_uninit_field_ident(&mut self, val: #ty) -> &mut Self {
                 self.#uninit_mut_ident().write(val);
                 #set_index_bit
                 self
@@ -213,13 +198,14 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
 
             /// Read a value from the reader into the maybe uninitialized field.
             #[inline]
-            #vis fn #read_field_ident <'de>(&mut self, reader: impl #crate_name::io::Reader<'de>) -> #crate_name::ReadResult<&mut Self> {
-                // SAFETY:
-                // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
-                // - We return the field as `&mut MaybeUninit<#target>`, so
-                //   the field is never exposed as initialized.
-                let proj = unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() };
-                <#target_reader_bound as #crate_name::SchemaRead<'de, __WincodeConfig>>::read(reader, proj)?;
+            #vis fn #read_field_ident <'de>(&mut self, reader: impl #crate_name::io::Reader<'de>) -> #crate_name::ReadResult<&mut Self>
+            where
+                #target_reader_bound: #crate_name::SchemaRead<'de, __WincodeConfig, Dst = #ty>,
+            {
+                <#target_reader_bound as #crate_name::SchemaRead<'de, __WincodeConfig>>::read(
+                    reader,
+                    self.#uninit_mut_ident(),
+                )?;
                 #set_index_bit
                 Ok(self)
             }
@@ -230,7 +216,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
             ///
             /// The caller must guarantee that the initializer function fully initializes the field.
             #[inline]
-            #vis unsafe fn #init_with_field_ident(&mut self, mut initializer: impl FnMut(&mut ::core::mem::MaybeUninit<#field_projection_type>) -> #crate_name::ReadResult<()>) -> #crate_name::ReadResult<&mut Self> {
+            #vis unsafe fn #init_with_field_ident(&mut self, mut initializer: impl FnMut(&mut ::core::mem::MaybeUninit<#ty>) -> #crate_name::ReadResult<()>) -> #crate_name::ReadResult<&mut Self> {
                 initializer(self.#uninit_mut_ident())?;
                 #set_index_bit
                 Ok(self)
