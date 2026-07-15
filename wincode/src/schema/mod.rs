@@ -1607,6 +1607,40 @@ mod tests {
         });
     }
 
+    // Reading borrowed fields from a longer-lived reader is sound; the `'de: 'a` bound only
+    // rejects the reverse (see the `uninit_builder_read_forbids_lifetime_launder` doctest).
+    #[test]
+    fn test_uninit_builder_read_borrowed() {
+        #[derive(SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: Option<String>,
+        }
+
+        #[derive(UninitBuilder, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct TestRef<'a> {
+            a: &'a [u8],
+            b: Option<&'a str>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<TestRef>::uninit();
+            let mut reader = serialized.as_slice();
+            let mut builder = TestRefUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            // `reader` (borrowing `serialized`) outlives `uninit`, so `read_<field>` is allowed.
+            builder
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?;
+            prop_assert!(builder.is_init());
+            let init = unsafe { builder.into_assume_init_mut() };
+            prop_assert_eq!(test.a.as_slice(), init.a);
+            prop_assert_eq!(test.b.as_deref(), init.b);
+        });
+    }
+
     #[test]
     fn test_uninit_builder_builder_fully_initialized() {
         #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]

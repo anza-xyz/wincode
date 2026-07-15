@@ -148,6 +148,16 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         }
     };
 
+    // The reader lifetime `'de` used by `read_<field>` must outlive every lifetime the
+    // destination struct is generic over. Otherwise a reader borrowing shorter-lived data
+    // could be stored into a longer-lived (e.g. `'static`) borrowed field.
+    let struct_lifetimes: Vec<_> = args.generics.lifetimes().map(|lt| &lt.lifetime).collect();
+    let read_de_bound = if struct_lifetimes.is_empty() {
+        quote!()
+    } else {
+        quote!(where #('de: #struct_lifetimes),*)
+    };
+
     // Generate the helper methods for the builder.
     let builder_helpers = fields.iter().enumerate().map(|(i, field)| {
         let ty = &field.ty;
@@ -213,7 +223,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
 
             /// Read a value from the reader into the maybe uninitialized field.
             #[inline]
-            #vis fn #read_field_ident <'de>(&mut self, reader: impl #crate_name::io::Reader<'de>) -> #crate_name::ReadResult<&mut Self> {
+            #vis fn #read_field_ident <'de>(&mut self, reader: impl #crate_name::io::Reader<'de>) -> #crate_name::ReadResult<&mut Self> #read_de_bound {
                 // SAFETY:
                 // - `self.inner` is a valid reference to a `MaybeUninit<#builder_dst>`.
                 // - We return the field as `&mut MaybeUninit<#target>`, so
