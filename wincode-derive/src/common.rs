@@ -1,6 +1,6 @@
 use {
     darling::{
-        FromDeriveInput, FromField, FromMeta, FromVariant, Result,
+        Error, FromDeriveInput, FromField, FromMeta, FromVariant, Result,
         ast::{Data, Fields, NestedMeta, Style},
     },
     proc_macro2::{Span, TokenStream},
@@ -20,7 +20,7 @@ use {
 };
 
 #[derive(FromField)]
-#[darling(attributes(wincode), forward_attrs)]
+#[darling(attributes(wincode), forward_attrs, and_then = Self::validate)]
 pub(crate) struct Field {
     pub(crate) ident: Option<Ident>,
     pub(crate) ty: Type,
@@ -86,6 +86,13 @@ pub(crate) trait TypeExt {
     /// ```
     fn with_infer(&self, infer: &Type) -> Type;
 
+    /// Like [`Self::with_infer`], but return `None` if this type has more inference tokens
+    /// than the `infer` type has generic arguments to supply.
+    ///
+    /// [`Field::validate`] rejects such types up front, so [`Self::with_infer`] can assume
+    /// the substitution always succeeds.
+    fn with_infer_checked(&self, infer: &Type) -> Option<Type>;
+
     /// Gather all the lifetimes on this type.
     fn lifetimes(&self) -> Vec<&Lifetime>;
 
@@ -101,6 +108,14 @@ impl TypeExt for Type {
     }
 
     fn with_infer(&self, infer: &Type) -> Type {
+        // `Field::validate` rejects unsatisfiable inference up front. If it somehow slips
+        // through, fall back to the unsubstituted type: the leftover `_` surfaces as a
+        // normal rustc "type annotations needed" error rather than a proc-macro panic.
+        self.with_infer_checked(infer)
+            .unwrap_or_else(|| self.clone())
+    }
+
+    fn with_infer_checked(&self, infer: &Type) -> Option<Type> {
         let mut this = self.clone();
 
         // First, collect the generic arguments of the `infer` type.
@@ -113,7 +128,7 @@ impl TypeExt for Type {
         // Perform the replacement.
         let mut infer = InferGeneric::from(stack);
         infer.visit_type_mut(&mut this);
-        this
+        (!infer.exhausted).then_some(this)
     }
 
     fn lifetimes(&self) -> Vec<&Lifetime> {
@@ -142,6 +157,27 @@ impl Display for TraitImpl {
 }
 
 impl Field {
+    /// Reject `with` types whose inference tokens cannot be resolved against the field type.
+    ///
+    /// `with` types may use `_` to stand in for the field type's generic arguments, as in
+    /// `#[wincode(with = "Pod<_>")]` on a `[u8; 32]` field. Writing more `_` than the field
+    /// type can supply (e.g. `Pod<_, _>` on `[u8; 4]`) has no resolution, so report it as a
+    /// compile error on the offending attribute instead of leaving `target_resolved` to
+    /// panic the proc-macro server.
+    fn validate(self) -> Result<Self> {
+        if let Some(with) = &self.with
+            && with.with_infer_checked(&self.ty).is_none()
+        {
+            return Err(Error::custom(
+                "`with` type has more inference tokens (`_`) than the field type provides generic \
+                 arguments to resolve them",
+            )
+            .with_span(with));
+        }
+
+        Ok(self)
+    }
+
     /// Get the target type for a field.
     ///
     /// If the field has a `with` attribute, return it.
@@ -688,34 +724,50 @@ impl<'ast> Visit<'ast> for GenericStack<'ast> {
 }
 
 /// Visitor to recursively replace inference tokens with the collected generic arguments.
-struct InferGeneric<'ast>(VecDeque<&'ast Type>);
+///
+/// If the collected arguments run out before every `_` is substituted, `exhausted` is set
+/// and the remaining tokens are left in place. Callers report this as a compile error
+/// rather than panicking the proc-macro server.
+struct InferGeneric<'ast> {
+    stack: VecDeque<&'ast Type>,
+    exhausted: bool,
+}
+
 impl<'ast> From<GenericStack<'ast>> for InferGeneric<'ast> {
     fn from(stack: GenericStack<'ast>) -> Self {
-        Self(stack.0)
+        Self {
+            stack: stack.0,
+            exhausted: false,
+        }
+    }
+}
+
+impl<'ast> InferGeneric<'ast> {
+    /// Take the next collected type, recording exhaustion if none remain.
+    fn next_ty(&mut self) -> Option<&'ast Type> {
+        let next = self.stack.pop_front();
+        if next.is_none() {
+            self.exhausted = true;
+        }
+        next
     }
 }
 
 impl VisitMut for InferGeneric<'_> {
     fn visit_generic_argument_mut(&mut self, ga: &mut GenericArgument) {
-        if let GenericArgument::Type(Type::Infer(_)) = ga {
-            let ty = self
-                .0
-                .pop_front()
-                .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
-                .clone();
-            *ga = GenericArgument::Type(ty);
+        if let GenericArgument::Type(Type::Infer(_)) = ga
+            && let Some(ty) = self.next_ty()
+        {
+            *ga = GenericArgument::Type(ty.clone());
         }
         visit_mut::visit_generic_argument_mut(self, ga);
     }
 
     fn visit_type_array_mut(&mut self, array: &mut syn::TypeArray) {
-        if let Type::Infer(_) = &*array.elem {
-            let ty = self
-                .0
-                .pop_front()
-                .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
-                .clone();
-            *array.elem = ty;
+        if let Type::Infer(_) = &*array.elem
+            && let Some(ty) = self.next_ty()
+        {
+            *array.elem = ty.clone();
         }
         visit_mut::visit_type_array_mut(self, array);
     }
@@ -934,6 +986,37 @@ mod tests {
                 Pair<containers::Box<[containers::Pod<Foo<Bar<u8>>>]>, containers::Pod<u16>>
             )
         )
+    }
+
+    #[test]
+    fn test_infer_generic_arity_mismatch() {
+        // More inference tokens than the field type can supply. Previously panicked.
+        let src: Type = parse_quote!(Pod<_, _>);
+        let infer: Type = parse_quote!([u8; 4]);
+        assert_eq!(src.with_infer_checked(&infer), None);
+
+        // Exhaustion nested inside another generic argument.
+        let src: Type = parse_quote!(containers::Vec<containers::Pod<_, _>>);
+        let infer: Type = parse_quote!(Vec<u8>);
+        assert_eq!(src.with_infer_checked(&infer), None);
+
+        // Exhaustion in array element position.
+        let src: Type = parse_quote!(Pair<Pod<[_; 32]>, Pod<[_; 32]>>);
+        let infer: Type = parse_quote!(Pair<[u8; 32]>);
+        assert_eq!(src.with_infer_checked(&infer), None);
+
+        // Resolvable arity still succeeds.
+        let src: Type = parse_quote!(Pod<_>);
+        let infer: Type = parse_quote!([u8; 4]);
+        assert_eq!(
+            src.with_infer_checked(&infer),
+            Some(parse_quote!(Pod<[u8; 4]>))
+        );
+
+        // Fewer inference tokens than available arguments is not a mismatch.
+        let src: Type = parse_quote!(Foo<_>);
+        let infer: Type = parse_quote!(Bar<u8, u16>);
+        assert_eq!(src.with_infer_checked(&infer), Some(parse_quote!(Foo<u8>)));
     }
 
     #[test]

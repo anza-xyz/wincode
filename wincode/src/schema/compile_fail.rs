@@ -78,3 +78,36 @@ fn derive_tag_uniqueness_repr_normalization() {}
 /// # }
 /// ```
 fn derive_tag_uniqueness_implicit_collision() {}
+
+/// A `with` type may not contain more inference tokens than the field type can resolve.
+///
+/// `Vec<u8>` supplies a single generic argument (`u8`), so the second `_` here has nothing
+/// to resolve to (the length encoding must be named explicitly). This must be reported as a
+/// compile error rather than panicking the proc-macro server.
+///
+/// ```compile_fail
+/// # #[cfg(all(feature = "derive", feature = "alloc"))] {
+/// use wincode::{SchemaWrite, containers};
+///
+/// #[derive(SchemaWrite)]
+/// struct Bad {
+///     #[wincode(with = "containers::Vec<_, _>")]
+///     x: Vec<u8>,
+/// }
+/// # }
+/// ```
+///
+/// The resolvable arity still compiles:
+///
+/// ```
+/// # #[cfg(all(feature = "derive", feature = "alloc"))] {
+/// use wincode::{SchemaWrite, containers, len::UseIntLen};
+///
+/// #[derive(SchemaWrite)]
+/// struct Good {
+///     #[wincode(with = "containers::Vec<_, UseIntLen<u16>>")]
+///     x: Vec<u8>,
+/// }
+/// # }
+/// ```
+fn derive_with_infer_arity_mismatch() {}
