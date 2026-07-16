@@ -577,7 +577,7 @@ mod tests {
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
             io::{Reader, Writer, test_util::NoBorrowReader},
-            len::{BincodeLen, FixIntLen},
+            len::{BincodeLen, FixIntLen, UseIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
             serialize,
@@ -1574,22 +1574,26 @@ mod tests {
 
     #[test]
     fn test_uninit_builder_with_container() {
-        #[derive(UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[derive(SchemaWrite, UninitBuilder, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
         #[wincode(internal)]
         struct Test {
-            #[wincode(with = "containers::Vec<_, BincodeLen>")]
+            #[wincode(with = "containers::Vec<_, UseIntLen<u16>>")]
             a: Vec<u8>,
             b: [u8; 32],
             c: u64,
         }
 
         proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let encoded_len = u16::try_from(test.a.len()).unwrap().to_le_bytes();
+            prop_assert_eq!(&serialized[..encoded_len.len()], &encoded_len);
+            let mut reader = serialized.as_slice();
             let mut uninit = MaybeUninit::<Test>::uninit();
             let mut builder = TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
             builder
-                .write_a(test.a.clone())
-                .write_b(test.b)
-                .write_c(test.c);
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?
+                .read_c(reader)?;
             prop_assert!(builder.is_init());
             let init_mut = unsafe { builder.into_assume_init_mut() };
             prop_assert_eq!(&test, init_mut);
@@ -1626,6 +1630,72 @@ mod tests {
             prop_assert_eq!(test.a.as_slice(), init.a);
             prop_assert_eq!(test.b.as_deref(), init.b);
         });
+    }
+
+    #[test]
+    fn test_uninit_builder_read_borrowed() {
+        #[derive(SchemaWrite, Debug, PartialEq, Eq, proptest_derive::Arbitrary)]
+        #[wincode(internal)]
+        struct Test {
+            a: Vec<u8>,
+            b: Option<String>,
+        }
+
+        #[derive(UninitBuilder, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct TestRef<'a> {
+            a: &'a [u8],
+            b: Option<&'a str>,
+        }
+
+        proptest!(proptest_cfg(), |(test: Test)| {
+            let serialized = serialize(&test).unwrap();
+            let mut uninit = MaybeUninit::<TestRef>::uninit();
+            let mut reader = serialized.as_slice();
+            let mut builder = TestRefUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .read_a(reader.by_ref())?
+                .read_b(reader.by_ref())?;
+            prop_assert!(builder.is_init());
+            let init = unsafe { builder.into_assume_init_mut() };
+            prop_assert_eq!(test.a.as_slice(), init.a);
+            prop_assert_eq!(test.b.as_deref(), init.b);
+        });
+    }
+
+    #[test]
+    fn test_uninit_builder_read_owned_with_unrelated_lifetime() {
+        #[derive(UninitBuilder, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct Test<'a> {
+            marker: PhantomData<&'a ()>,
+            value: u8,
+        }
+
+        fn read_short_lived(reader: &[u8]) -> Test<'static> {
+            let mut uninit = MaybeUninit::<Test<'static>>::uninit();
+            let mut builder =
+                TestUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
+            builder
+                .write_marker(PhantomData)
+                .read_value(reader)
+                .unwrap();
+            builder.finish();
+            // SAFETY: Both fields were initialized by the builder.
+            unsafe { uninit.assume_init() }
+        }
+
+        let short_lived = vec![42];
+        let test = read_short_lived(&short_lived);
+        drop(short_lived);
+
+        assert_eq!(
+            test,
+            Test {
+                marker: PhantomData,
+                value: 42,
+            }
+        );
     }
 
     #[test]
