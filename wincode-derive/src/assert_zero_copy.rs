@@ -1,5 +1,5 @@
 use {
-    crate::common::{SchemaArgs, StructRepr, get_crate_name},
+    crate::common::{SchemaArgs, StructRepr, TraitImpl, get_crate_name},
     darling::{Error, Result, ast::Data},
     proc_macro2::TokenStream,
     quote::quote,
@@ -13,14 +13,18 @@ use {
 /// requirements for implementing the `ZeroCopy` trait:
 ///   1. The item is indeed a struct (not an enum or union).
 ///   2. The struct representation is eligible for zero-copy.
-///   3. The struct implements `SchemaRead`.
+///   3. The struct implements the trait currently being derived.
 ///   4. Each field of the struct implements `ZeroCopy`.
 ///   5. The struct itself has no padding bytes.
 ///   6. The struct implements `ZeroCopy`.
 ///
 /// These assertions are enforced at compile-time, providing feedback
 /// of any violations of the `ZeroCopy` requirements.
-pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<TokenStream> {
+pub(crate) fn assert_zero_copy(
+    args: &SchemaArgs,
+    repr: &StructRepr,
+    trait_impl: TraitImpl,
+) -> Result<TokenStream> {
     let Some(config) = &args.assert_zero_copy else {
         return Ok(quote! {});
     };
@@ -32,7 +36,28 @@ pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<T
         .as_ref()
         .map(Cow::Borrowed)
         .unwrap_or_else(|| Cow::Owned(parse_quote!(#crate_name::config::DefaultConfig)));
-
+    let trait_assertion = match trait_impl {
+        TraitImpl::SchemaRead => quote! {
+            const _assert_schema_read_impl: fn() = || {
+                fn assert_schema_read_impl<'de, T: #crate_name::SchemaRead<'de, #config_path>>() {}
+                assert_schema_read_impl::<#ident>()
+            };
+        },
+        TraitImpl::SchemaWrite => quote! {
+            const _assert_schema_write_impl: fn() = || {
+                fn assert_schema_write_impl<T: #crate_name::SchemaWrite<#config_path>>() {}
+                assert_schema_write_impl::<#ident>()
+            };
+        },
+    };
+    let type_meta = match trait_impl {
+        TraitImpl::SchemaRead => {
+            quote! { <#ident as #crate_name::SchemaRead<'_, #config_path>>::TYPE_META }
+        }
+        TraitImpl::SchemaWrite => {
+            quote! { <#ident as #crate_name::SchemaWrite<#config_path>>::TYPE_META }
+        }
+    };
     // Assert the item is a struct.
     let zero_copy_field_asserts = match &args.data {
         Data::Struct(fields) => fields.iter().map(|field| {
@@ -52,11 +77,8 @@ pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<T
 
     Ok(quote! {
         const _: () = {
-            // Assert the struct implements `SchemaRead`.
-            const _assert_schema_read_impl: fn() = || {
-                fn assert_schema_read_impl<'de, T: #crate_name::SchemaRead<'de, #config_path>>() {}
-                assert_schema_read_impl::<#ident>()
-            };
+            // Assert the struct implements the trait currently being derived.
+            #trait_assertion
 
             // Assert the struct itself implements `ZeroCopy`.
             const _assert_struct_zerocopy_impl: fn() = || {
@@ -72,7 +94,7 @@ pub(crate) fn assert_zero_copy(args: &SchemaArgs, repr: &StructRepr) -> Result<T
 
             // Assert the struct has no padding bytes.
             const _assert_no_padding: () = {
-                if let #crate_name::TypeMeta::Static { size, .. } = <#ident as #crate_name::SchemaRead<'_, #config_path>>::TYPE_META {
+                if let #crate_name::TypeMeta::Static { size, .. } = #type_meta {
                     if size != core::mem::size_of::<#ident>() {
                         panic!("wincode(assert_zero_copy) was applied to a type with padding");
                     }

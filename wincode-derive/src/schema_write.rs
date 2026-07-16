@@ -302,7 +302,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
-    let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
+    let zero_copy_asserts = assert_zero_copy(&args, &repr, TraitImpl::SchemaWrite)?;
 
     let (size_of_impl, write_impl, type_meta_impl) = match &args.data {
         Data::Struct(fields) => {
