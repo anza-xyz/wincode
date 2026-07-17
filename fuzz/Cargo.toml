@@ -13,8 +13,9 @@ bincode_2 = { package = "bincode", version = "2.0", features = ["serde"] }
 serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
-# Solana crates in this target still derive against wincode 0.4.x.
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc"] }
+# Keep the Solana fuzz target on 0.5.5 until the Solana SDK supports wincode 0.6.x.
+wincode_0_5 = { package = "wincode", version = "=0.5.5" }
 wincode-derive = { path = "../wincode-derive" }
 
 solana-address = { version = "2.6.0", features = ["wincode"] }
