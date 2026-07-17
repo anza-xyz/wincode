@@ -1,5 +1,7 @@
 #![no_main]
 
+// Solana crates still derive against wincode 0.5.x. Keep this target on that
+// exact release until the Solana dependency stack supports wincode 0.6.x.
 use {
     agave_votor_messages::{
         consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
@@ -32,7 +34,9 @@ use {
     },
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
+    wincode_0_5 as wincode,
 };
+
 macro_rules! fuzz_roundtrip {
     ($data:expr, $ty:ty) => {
         if let Ok(value) = wincode::deserialize_exact::<$ty>($data) {
