@@ -1239,4 +1239,12 @@ mod tests {
         assert!(config.schema.includes(TraitImpl::SchemaRead));
         assert!(config.schema.includes(TraitImpl::SchemaWrite));
     }
+
+    #[test]
+    fn assert_zero_copy_empty_options_match_bare_form() {
+        let config = AssertZeroCopyConfig::from_meta(&parse_quote!(assert_zero_copy())).unwrap();
+
+        assert_eq!(config.config, None);
+        assert_eq!(config.schema, ZeroCopySchema::Both);
+    }
 }
