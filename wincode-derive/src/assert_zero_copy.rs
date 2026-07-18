@@ -28,11 +28,14 @@ pub(crate) fn assert_zero_copy(
     let Some(config) = &args.assert_zero_copy else {
         return Ok(quote! {});
     };
+    if !config.schema.includes(trait_impl) {
+        return Ok(quote! {});
+    }
 
     let crate_name = get_crate_name(args);
     let ident = &args.ident;
     let config_path = config
-        .0
+        .config
         .as_ref()
         .map(Cow::Borrowed)
         .unwrap_or_else(|| Cow::Owned(parse_quote!(#crate_name::config::DefaultConfig)));

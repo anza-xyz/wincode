@@ -240,7 +240,7 @@
 //! |Attribute|Type|Default|Description
 //! |---|---|---|---|
 //! |`tag_encoding`|`Type`|`None`|Specifies the encoding/decoding schema to use for the variant discriminant. Only usable on enums.|
-//! |`assert_zero_copy`|`bool`\|`Path`|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. Can specify a custom config path, will use the [`DefaultConfig`](config::DefaultConfig) if `bool` form is used.|
+//! |`assert_zero_copy`|`bool`\|`Path`\|options|`false`|Generates compile-time asserts to ensure the type meets zero-copy requirements. A custom config path may be supplied positionally or as `config = MyConfig`; `schema = "read"`, `"write"`, or `"both"` selects which metadata is checked (`"both"` by default).|
 //! |`crate`|`Path`|`::wincode`|Specifies the path to the `wincode` crate. Useful when `wincode` is renamed in `Cargo.toml` or re-exported from another module. The path is emitted as written and resolved from the derive expansion site.|
 //! |`context`|`Type`|`None`|Makes `SchemaRead` derive [`SchemaReadContext`] for the given context type instead of [`SchemaRead`].|
 //!

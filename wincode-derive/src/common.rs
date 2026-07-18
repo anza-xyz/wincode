@@ -13,8 +13,9 @@ use {
         rc::Rc,
     },
     syn::{
-        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, LitInt, Member, Path, Type,
-        TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility, parse_quote,
+        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt, Member, Path,
+        Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility,
+        parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
@@ -587,6 +588,7 @@ pub(crate) struct SchemaArgs {
     /// Supports both flag-style and explicit path specification:
     /// - `#[wincode(assert_zero_copy)]` - uses default config
     /// - `#[wincode(assert_zero_copy(MyConfig))]` - uses custom config path
+    /// - `#[wincode(assert_zero_copy(schema = "read"))]` - checks only read metadata
     #[darling(default)]
     pub(crate) assert_zero_copy: Option<AssertZeroCopyConfig>,
     /// Specifies the path to the `wincode` crate.
@@ -693,25 +695,87 @@ impl SchemaArgs {
 ///
 /// This type enables optional path specification for `assert_zero_copy`:
 /// - `#[wincode(assert_zero_copy)]` - flag style, uses default config (`None` inner value)
-/// - `#[wincode(assert_zero_copy(MyConfig))]` - explicit path (`Some(path)` inner value)
+/// - `#[wincode(assert_zero_copy(MyConfig))]` - explicit path
+/// - `#[wincode(assert_zero_copy(schema = "read"))]` - read metadata only
 #[derive(Debug, Clone)]
-pub(crate) struct AssertZeroCopyConfig(pub(crate) Option<Path>);
+pub(crate) struct AssertZeroCopyConfig {
+    pub(crate) config: Option<Path>,
+    pub(crate) schema: ZeroCopySchema,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ZeroCopySchema {
+    Read,
+    Write,
+    Both,
+}
+
+impl ZeroCopySchema {
+    pub(crate) fn includes(self, trait_impl: TraitImpl) -> bool {
+        matches!(
+            (self, trait_impl),
+            (Self::Both, _)
+                | (Self::Read, TraitImpl::SchemaRead)
+                | (Self::Write, TraitImpl::SchemaWrite)
+        )
+    }
+}
 
 impl FromMeta for AssertZeroCopyConfig {
     fn from_word() -> darling::Result<Self> {
         // #[wincode(assert_zero_copy)] - use default config
-        Ok(AssertZeroCopyConfig(None))
+        Ok(AssertZeroCopyConfig {
+            config: None,
+            schema: ZeroCopySchema::Both,
+        })
     }
 
     fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
-        // #[wincode(assert_zero_copy(MyConfig))]
-        if items.len() != 1 {
-            return Err(darling::Error::too_many_items(1));
+        let mut config = None;
+        let mut schema = ZeroCopySchema::Both;
+        let mut schema_seen = false;
+
+        for item in items {
+            match item {
+                NestedMeta::Meta(syn::Meta::Path(path)) if config.is_none() => {
+                    config = Some(path.clone());
+                }
+                NestedMeta::Meta(syn::Meta::NameValue(value)) if value.path.is_ident("config") => {
+                    let Expr::Path(path) = &value.value else {
+                        return Err(darling::Error::unexpected_type("path"));
+                    };
+                    if config.replace(path.path.clone()).is_some() {
+                        return Err(darling::Error::duplicate_field("config"));
+                    }
+                }
+                NestedMeta::Meta(syn::Meta::NameValue(value)) if value.path.is_ident("schema") => {
+                    if schema_seen {
+                        return Err(darling::Error::duplicate_field("schema"));
+                    }
+                    schema_seen = true;
+                    let Expr::Lit(expr) = &value.value else {
+                        return Err(darling::Error::unexpected_type("string"));
+                    };
+                    let Lit::Str(value) = &expr.lit else {
+                        return Err(darling::Error::unexpected_type("string"));
+                    };
+                    schema = match value.value().as_str() {
+                        "read" => ZeroCopySchema::Read,
+                        "write" => ZeroCopySchema::Write,
+                        "both" => ZeroCopySchema::Both,
+                        _ => {
+                            return Err(darling::Error::custom(format!(
+                                "unknown schema `{}`; expected `read`, `write`, or `both`",
+                                value.value()
+                            )));
+                        }
+                    };
+                }
+                _ => return Err(darling::Error::unexpected_type("path or named option")),
+            }
         }
-        match &items[0] {
-            NestedMeta::Meta(syn::Meta::Path(path)) => Ok(AssertZeroCopyConfig(Some(path.clone()))),
-            _ => Err(darling::Error::unexpected_type("path")),
-        }
+
+        Ok(AssertZeroCopyConfig { config, schema })
     }
 }
 
@@ -1144,5 +1208,35 @@ mod tests {
         assert!(ty.contains_lifetime(&parse_quote!('b)));
         assert!(ty.contains_lifetime(&parse_quote!('static)));
         assert!(!ty.contains_lifetime(&parse_quote!('c)));
+    }
+
+    #[test]
+    fn assert_zero_copy_options_preserve_positional_config() {
+        let meta = parse_quote!(assert_zero_copy(MyConfig, schema = "read"));
+        let config = AssertZeroCopyConfig::from_meta(&meta).unwrap();
+
+        assert_eq!(config.config, Some(parse_quote!(MyConfig)));
+        assert_eq!(config.schema, ZeroCopySchema::Read);
+        assert!(config.schema.includes(TraitImpl::SchemaRead));
+        assert!(!config.schema.includes(TraitImpl::SchemaWrite));
+    }
+
+    #[test]
+    fn assert_zero_copy_options_accept_named_config() {
+        let meta = parse_quote!(assert_zero_copy(config = custom::Config, schema = "write"));
+        let config = AssertZeroCopyConfig::from_meta(&meta).unwrap();
+
+        assert_eq!(config.config, Some(parse_quote!(custom::Config)));
+        assert_eq!(config.schema, ZeroCopySchema::Write);
+    }
+
+    #[test]
+    fn assert_zero_copy_options_default_to_both() {
+        let config = AssertZeroCopyConfig::from_meta(&parse_quote!(assert_zero_copy)).unwrap();
+
+        assert_eq!(config.config, None);
+        assert_eq!(config.schema, ZeroCopySchema::Both);
+        assert!(config.schema.includes(TraitImpl::SchemaRead));
+        assert!(config.schema.includes(TraitImpl::SchemaWrite));
     }
 }
