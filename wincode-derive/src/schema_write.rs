@@ -2,8 +2,8 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, Variant,
-            VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
+            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -36,14 +36,16 @@ fn impl_struct(
         );
     }
 
-    let target = fields.unskipped_iter().map(|field| field.target_resolved());
+    let target = fields
+        .unskipped_iter()
+        .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
     let mut size_count_idents = Vec::with_capacity(fields.len());
 
     let writes = fields.struct_members_iter()
         .filter_map(|(field, ident)| {
             if field.skip.is_none() {
-                let target = field.target_resolved();
-                let write = quote! { <#target as #crate_name::SchemaWrite<__WincodeConfig>>::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
+                let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
+                let write = quote! { #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
                 size_count_idents.push(ident);
                 Some(write)
             } else {
@@ -61,7 +63,7 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += <#target as #crate_name::SchemaWrite<__WincodeConfig>>::size_of(&src.#size_count_idents)?;
+                total += #target::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
@@ -141,9 +143,9 @@ fn impl_enum(
                     .enum_members_iter(None)
                     .filter_map(|(field, ident)| {
                         if field.skip.is_none() {
-                            let target = field.target_resolved();
+                            let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
                             let write = quote! {
-                                <#target as #crate_name::SchemaWrite<__WincodeConfig>>::write(#crate_name::io::Writer::by_ref(&mut writer), #ident)?;
+                                #target::write(#crate_name::io::Writer::by_ref(&mut writer), #ident)?;
                             };
                             pattern_fragments.push(quote! { #ident });
                             size_count_idents.push(ident);
@@ -168,12 +170,13 @@ fn impl_enum(
                     }
                 };
 
-                let unskipped_targets =
-                    fields.unskipped_iter().map(|field| field.target_resolved());
+                let unskipped_targets = fields
+                    .unskipped_iter()
+                    .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
 
                 let static_targets = unskipped_targets
                     .clone()
-                    .map(|target| quote! {<#target as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META})
+                    .map(|target| quote! { #target::TYPE_META })
                     .collect::<Vec<_>>();
                 (
                     quote! {
@@ -185,7 +188,7 @@ fn impl_enum(
                             }
 
                             #(
-                                total += <#unskipped_targets as #crate_name::SchemaWrite<__WincodeConfig>>::size_of(#size_count_idents)?;
+                                total += #unskipped_targets::size_of(#size_count_idents)?;
                             )*
 
                             Ok(total)
@@ -255,12 +258,14 @@ fn append_config(generics: &mut Generics, crate_name: &Path) {
     ));
 }
 
-fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, crate_name: &Path) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let field_types = generic_field_types(data, generics);
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
-    for GenericField { target, ty } in &field_types {
+    for field in field_types {
         let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(#crate_name::SchemaWrite<__WincodeConfig, Src = #ty>));
+        let constraint = field.as_constraint(TraitImpl::SchemaWrite);
+        bounds.push(parse_quote!(#constraint));
+        let target = field.target_resolved();
 
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
@@ -283,7 +288,7 @@ fn append_generics(
     crate_name: &Path,
 ) -> Generics {
     let mut generics = generics.clone();
-    append_where_clause(&mut generics, data, crate_name);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics, crate_name);
     generics
 }
@@ -291,7 +296,6 @@ fn append_generics(
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, "SchemaWrite")?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    args.validate()?;
 
     let crate_name = get_crate_name(&args);
     let appended_generics = append_generics(&args.generics, &args.data, &crate_name);

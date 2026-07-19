@@ -25,6 +25,12 @@ pub fn derive_schema_write(input: TokenStream) -> TokenStream {
 }
 
 /// Implement `SchemaRead` for a struct or enum.
+///
+/// When the type has `#[wincode(context = "ContextType")]`, this implements
+/// `SchemaReadContext` instead. Fields marked with `#[wincode(context)]` receive
+/// that context; unmarked fields continue to use `SchemaRead`.
+///
+/// See the `wincode` crate's derive-attribute documentation for details and examples.
 #[proc_macro_derive(SchemaRead, attributes(wincode))]
 pub fn derive_schema_read(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

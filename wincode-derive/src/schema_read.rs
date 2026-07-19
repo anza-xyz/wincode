@@ -2,8 +2,8 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, GenericField, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant,
-            VariantsExt, default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
+            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -13,8 +13,8 @@ use {
     proc_macro2::{Literal, TokenStream},
     quote::quote,
     syn::{
-        DeriveInput, GenericParam, Generics, Path, PredicateType, Token, Type, WhereClause,
-        WherePredicate, parse_quote, punctuated::Punctuated,
+        DeriveInput, GenericParam, Generics, Lifetime, Path, PredicateType, Token, Type,
+        WhereClause, WherePredicate, parse_quote, punctuated::Punctuated,
     },
 };
 
@@ -40,21 +40,32 @@ fn impl_struct(
         .enumerate()
         .map(|(i, field)| {
             let ident = field.struct_member_ident(i);
-            let target = field.target_resolved().with_lifetime("de");
-            let hint = if field.with.is_some() {
-                // Fields annotated with `with` may need help determining the pointer cast.
-                //
-                // This allows correct inference in `with` attributes, for example:
-                // ```
-                // struct Foo {
-                //     #[wincode(with = "Pod<_>")]
-                //     x: [u8; u64],
-                // }
-                // ```
-                let ty = field.ty.with_lifetime("de");
-                quote! { ::core::mem::MaybeUninit<#ty> }
+            let fully_qualified = field.target_fully_qualified(TraitImpl::SchemaRead);
+            let declared_ty = &field.ty;
+            let read_ty = field
+                .ty
+                .with_lifetime_excluding("de", &field.context_lifetimes);
+            // Keep the cast target explicit so the reader's associated `Dst` must match
+            // the type being placed into the field. Inferring `_` here would let an adapter
+            // initialize an unrelated type through the raw field pointer.
+            let read_dst_ty = quote! { ::core::mem::MaybeUninit<#read_ty> };
+            // `read_ty` only potentially differs from the declared field type only in lifetimes,
+            // which do not affect layout. The coercion assertion below separately proves the
+            // value-level lifetime conversion is sound.
+            let assert_safe_lifetime_shortening = if read_ty == *declared_ty {
+                quote! {}
             } else {
-                quote! { ::core::mem::MaybeUninit<_> }
+                quote! {
+                    // Reading directly into the field bypasses an ordinary assignment, so make
+                    // Rust prove that replacing input lifetimes with the field's declared
+                    // lifetimes is a valid coercion. An outlives bound alone is insufficient for
+                    // contravariant or invariant types.
+                    // This inline const is type-checked at compile time and emits no runtime code.
+                    const {
+                        let _: fn(#read_ty) -> #declared_ty =
+                            |value: #read_ty| -> #declared_ty { value };
+                    }
+                }
             };
             let init_count = if i == num_fields - 1 {
                 quote! {}
@@ -68,12 +79,28 @@ fn impl_struct(
                     #init_count
                 }
             } else {
-                quote! {
-                    <#target as #crate_name::SchemaRead<'de, __WincodeConfig>>::read(
-                        #crate_name::io::Reader::by_ref(&mut reader),
-                        unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#hint>() }
-                    )?;
-                    #init_count
+                match &field.context {
+                    Some(_) => {
+                        quote! {
+                            #assert_safe_lifetime_shortening
+                            #fully_qualified::read_with_context(
+                                ctx,
+                                #crate_name::io::Reader::by_ref(&mut reader),
+                                unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
+                            )?;
+                            #init_count
+                        }
+                    }
+                    None => {
+                        quote! {
+                            #assert_safe_lifetime_shortening
+                            #fully_qualified::read(
+                                #crate_name::io::Reader::by_ref(&mut reader),
+                                unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
+                            )?;
+                            #init_count
+                        }
+                    }
                 }
             }
         })
@@ -116,6 +143,10 @@ fn impl_struct(
     };
 
     let ident = &args.ident;
+    let trait_impl = match &args.context {
+        Some(ctx) => quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx>),
+        None => quote!(#crate_name::SchemaRead<'de, __WincodeConfig>),
+    };
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
@@ -145,7 +176,7 @@ fn impl_struct(
                 }
             }
 
-            match <Self as #crate_name::SchemaRead<'de, __WincodeConfig>>::TYPE_META {
+            match <Self as #trait_impl>::TYPE_META {
                 #crate_name::TypeMeta::Static { size, .. } => {
                     // SAFETY: `size` is the serialized size of the struct, which is the sum
                     // of the serialized sizes of the fields.
@@ -198,7 +229,7 @@ fn impl_enum(
                 let mut construct_idents = Vec::with_capacity(fields.len());
                 let read = fields.enum_members_iter(None)
                     .map(|(field, ident)| {
-                        let target = field.target_resolved().with_lifetime("de");
+                        let target = field.target_fully_qualified(TraitImpl::SchemaRead);
 
                         // Unfortunately we can't avoid temporaries for arbitrary enums, as Rust does not provide
                         // facilities for placement initialization on enums.
@@ -211,8 +242,13 @@ fn impl_enum(
                             let val = mode.default_val_token_stream();
                             quote! { let #ident = #val; }
                         } else {
-                            quote! {
-                                let #ident = <#target as #crate_name::SchemaRead<'de, __WincodeConfig>>::get(#crate_name::io::Reader::by_ref(&mut reader))?;
+                            match &field.context {
+                                Some(_) => quote! {
+                                    let #ident = #target::get_with_context(ctx, #crate_name::io::Reader::by_ref(&mut reader))?;
+                                },
+                                None => quote! {
+                                    let #ident = #target::get(#crate_name::io::Reader::by_ref(&mut reader))?;
+                                }
                             }
                         };
                         construct_idents.push(ident);
@@ -222,8 +258,8 @@ fn impl_enum(
 
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
                 let static_targets = fields.unskipped_iter().map(|field| {
-                    let target = field.target_resolved().with_lifetime("de");
-                    quote! {<#target as #crate_name::SchemaRead<'de, __WincodeConfig>>::TYPE_META}
+                    let target = field.target_fully_qualified(TraitImpl::SchemaRead);
+                    quote!(#target::TYPE_META)
                 });
 
                 let constructor = if style.is_struct() {
@@ -288,11 +324,12 @@ fn impl_enum(
     )
 }
 
-/// Extend the `'de` lifetime to all lifetime parameters in the generics.
+/// Add the input lifetime (`'de`) to the derived implementation.
 ///
-/// This enforces that the `SchemaRead` lifetime (`'de`) and thus its
-/// `Reader<'de>` (the source bytes) extends to all lifetime parameters
-/// in the derived type.
+/// Ordinary `SchemaRead` fields may borrow from the input, so `'de` must
+/// outlive their destination lifetimes. Lifetimes supplied by a
+/// `SchemaReadContext` are preserved instead, unless an ordinary field also
+/// uses the same lifetime.
 ///
 /// For example, given the following type:
 /// ```
@@ -301,8 +338,12 @@ fn impl_enum(
 /// }
 /// ```
 ///
-/// We must ensure `'de` outlives all other lifetimes in the generics.
-fn append_de_lifetime(generics: &mut Generics) {
+/// We must ensure `'de` outlives `'a` because `x` borrows from the input.
+fn append_de_lifetime(
+    generics: &mut Generics,
+    data: &Data<Variant, Field>,
+    context: Option<&Type>,
+) {
     if generics.lifetimes().next().is_none() {
         generics
             .params
@@ -310,11 +351,54 @@ fn append_de_lifetime(generics: &mut Generics) {
         return;
     }
 
-    let lifetimes = generics.lifetimes();
-    // Ensure `'de` outlives other lifetimes in the generics.
-    generics
-        .params
-        .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
+    let Some(context) = context else {
+        let lifetimes = generics.lifetimes();
+        return generics
+            .params
+            .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
+    };
+
+    #[inline]
+    fn field_references_lifetime(field: &Field, lifetime: &Lifetime) -> bool {
+        // Contextual fields receive this lifetime from the context, not the
+        // input. Only ordinary fields can restore a `'de` outlives bound for it.
+        if field.skip.is_some() || field.context.is_some() {
+            return false;
+        }
+
+        field.ty.contains_lifetime(lifetime)
+    }
+
+    match data {
+        Data::Struct(fields) => {
+            // Keep non-context lifetimes, plus context lifetimes that are also
+            // used by at least one ordinary field.
+            let lifetimes = generics.lifetimes().filter(|&lt| {
+                !context.contains_lifetime(&lt.lifetime)
+                    || fields
+                        .iter()
+                        .any(|field| field_references_lifetime(field, &lt.lifetime))
+            });
+
+            generics
+                .params
+                .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
+        }
+        Data::Enum(variants) => {
+            // Apply the same rule across every field of every variant.
+            let lifetimes = generics.lifetimes().filter(|&lt| {
+                !context.contains_lifetime(&lt.lifetime)
+                    || variants
+                        .iter()
+                        .flat_map(|variant| variant.fields.iter())
+                        .any(|field| field_references_lifetime(field, &lt.lifetime))
+            });
+
+            generics
+                .params
+                .push(GenericParam::Lifetime(parse_quote!('de: #(#lifetimes)+*)));
+        }
+    }
 }
 
 fn append_config(generics: &mut Generics, crate_name: &Path) {
@@ -323,12 +407,14 @@ fn append_config(generics: &mut Generics, crate_name: &Path) {
     ));
 }
 
-fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, crate_name: &Path) {
+fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let field_types = generic_field_types(data, generics);
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
-    for GenericField { target, ty } in &field_types {
+    for field in field_types {
         let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(#crate_name::SchemaRead<'de, __WincodeConfig, Dst = #ty>));
+        let constraint = field.as_constraint(TraitImpl::SchemaRead);
+        bounds.push(parse_quote!(#constraint));
+        let target = field.target_resolved();
 
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
@@ -351,12 +437,13 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, cra
     fn constrain_reference_type(
         field: &Field,
         predicates: &mut Punctuated<WherePredicate, Token![,]>,
-        crate_name: &Path,
     ) {
-        let ty = &field.ty.with_lifetime("de");
-        let target = field.target_resolved().with_lifetime("de");
+        let constraint = field.as_constraint(TraitImpl::SchemaRead);
+        let target = field
+            .target_resolved()
+            .with_lifetime_excluding("de", &field.context_lifetimes);
         let mut bounds = Punctuated::new();
-        bounds.push(parse_quote!(#crate_name::SchemaRead<'de, __WincodeConfig, Dst = #ty>));
+        bounds.push(parse_quote!(#constraint));
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
             bounded_ty: target,
@@ -368,13 +455,13 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>, cra
     match data {
         Data::Struct(fields) => {
             for field in fields.fields_with_lifetime_iter() {
-                constrain_reference_type(field, &mut predicates, crate_name);
+                constrain_reference_type(field, &mut predicates);
             }
         }
         Data::Enum(variants) => {
             for variant in variants {
                 for field in variant.fields.fields_with_lifetime_iter() {
-                    constrain_reference_type(field, &mut predicates, crate_name);
+                    constrain_reference_type(field, &mut predicates);
                 }
             }
         }
@@ -391,10 +478,11 @@ fn append_generics(
     generics: &Generics,
     data: &Data<Variant, Field>,
     crate_name: &Path,
+    context: Option<&Type>,
 ) -> Generics {
     let mut generics = generics.clone();
-    append_de_lifetime(&mut generics);
-    append_where_clause(&mut generics, data, crate_name);
+    append_de_lifetime(&mut generics, data, context);
+    append_where_clause(&mut generics, data);
     append_config(&mut generics, crate_name);
     generics
 }
@@ -402,10 +490,14 @@ fn append_generics(
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let repr = extract_repr(&input, "SchemaRead")?;
     let args = SchemaArgs::from_derive_input(&input)?;
-    args.validate()?;
 
     let crate_name = get_crate_name(&args);
-    let appended_generics = append_generics(&args.generics, &args.data, &crate_name);
+    let appended_generics = append_generics(
+        &args.generics,
+        &args.data,
+        &crate_name,
+        args.context.as_ref(),
+    );
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
@@ -432,7 +524,10 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 // so we'll deal with it for now.
                 && args.generics.type_params().next().is_none()
                 // Types containing references are not zero-copy eligible.
-                && args.generics.lifetimes().next().is_none() =>
+                && args.generics.lifetimes().next().is_none()
+                // `ZeroCopy<C>` cannot certify a contextual read implementation because its
+                // context and destination are not represented by the marker.
+                && args.context.is_none() =>
         {
             let field_tys = fields.iter().map(|field| &field.ty);
             let mut bounds = Punctuated::new();
@@ -495,18 +590,33 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         _ => quote!(),
     };
 
+    let (trait_impl, fn_sig) = match &args.context {
+        Some(ctx) => (
+            quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx>),
+            quote!(
+                read_with_context(ctx: #ctx, mut reader: impl #crate_name::io::Reader<'de>, dst: &mut ::core::mem::MaybeUninit<Self::Dst>)
+            ),
+        ),
+        None => (
+            quote!(#crate_name::SchemaRead<'de, __WincodeConfig>),
+            quote!(
+                read(mut reader: impl #crate_name::io::Reader<'de>, dst: &mut ::core::mem::MaybeUninit<Self::Dst>)
+            ),
+        ),
+    };
+
     Ok(quote! {
         const _: () = {
             #zero_copy_impl
 
-            unsafe impl #impl_generics #crate_name::SchemaRead<'de, __WincodeConfig> for #ident #ty_generics #where_clause {
+            unsafe impl #impl_generics #trait_impl for #ident #ty_generics #where_clause {
                 type Dst = Self;
 
                 #[allow(clippy::arithmetic_side_effects)]
                 const TYPE_META: #crate_name::TypeMeta = #type_meta_impl;
 
                 #[inline]
-                fn read(mut reader: impl #crate_name::io::Reader<'de>, dst: &mut ::core::mem::MaybeUninit<Self::Dst>) -> #crate_name::ReadResult<()> {
+                fn #fn_sig -> #crate_name::ReadResult<()> {
                     #read_impl
                     Ok(())
                 }
