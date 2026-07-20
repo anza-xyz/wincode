@@ -1134,15 +1134,36 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
     }
 }
 
+/// Capacity to reserve for a sequence read: the decoded length, or, with the
+/// `cap_unique_keys` marker, capped via [`crate::len::unique_key_capacity`] for
+/// collections that key on a unique `$key`.
+///
+/// Only referenced from `alloc`-gated collection impls.
+#[cfg(feature = "alloc")]
+macro_rules! seq_capacity {
+    ($key: ty, $len: expr) => {
+        $len
+    };
+    ($key: ty, $len: expr, cap_unique_keys) => {
+        $crate::len::unique_key_capacity::<$key>($len)
+    };
+}
+
+#[cfg(feature = "alloc")]
+pub(crate) use seq_capacity;
+
 /// Implement `SchemaWrite` and `SchemaRead` for types that may be iterated over sequentially.
 ///
 /// Generally this should only be used on types for which we cannot provide an optimized implementation,
 /// and where the most optimal implementation is simply iterating over the type to write or collecting
 /// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
+///
+/// Pass a trailing `cap_unique_keys` for collections keyed on a unique key (see [`seq_capacity`]).
 macro_rules! impl_seq_kv {
     ($feature: literal,
      $target: ident<$key: ident : $($constraint:path)|*, $value: ident $(, $state:ident : $($state_constraint:path)|* )?>,
-     $with_capacity: expr) => {
+     $with_capacity: expr
+     $(, $cap_unique_keys: ident)?) => {
         #[cfg(feature = $feature)]
         unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key, $value $(, $state)?>
         where
@@ -1216,6 +1237,8 @@ macro_rules! impl_seq_kv {
             #[inline]
             fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader.by_ref())?;
+                // Reserve capacity, capped for unique keys; iteration below still uses `len`.
+                let capacity = $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?);
 
                 let map = if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
                     // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
@@ -1224,7 +1247,7 @@ macro_rules! impl_seq_kv {
                         return Err($crate::error::read_length_encoding_overflow("usize::MAX"));
                     };
                     let mut reader = unsafe { reader.as_trusted_for_seq(len, el_size) }?;
-                    let mut map = $with_capacity(len $(, $state::default())?);
+                    let mut map = $with_capacity(capacity $(, $state::default())?);
                     for _ in 0..len {
                         let k = $key::get(reader.by_ref())?;
                         let v = $value::get(reader.by_ref())?;
@@ -1232,7 +1255,7 @@ macro_rules! impl_seq_kv {
                     }
                     map
                 } else {
-                    let mut map = $with_capacity(len $(, $state::default())?);
+                    let mut map = $with_capacity(capacity $(, $state::default())?);
                     for _ in 0..len {
                         let k = $key::get(reader.by_ref())?;
                         let v = $value::get(reader.by_ref())?;
@@ -1253,7 +1276,8 @@ pub(crate) use impl_seq_kv;
 macro_rules! impl_seq_v {
     ($feature: literal,
      $target: ident <$key: ident : $($constraint:path)|* $(, $state:ident : $($state_constraint:path)|*)?>,
-     $with_capacity: expr, $insert: ident) => {
+     $with_capacity: expr, $insert: ident
+     $(, $cap_unique_keys: ident)?) => {
         #[cfg(feature = $feature)]
         unsafe impl<C: $crate::config::Config, $key: $crate::schema::SchemaWrite<C> $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key $(, $state)?>
         where
@@ -1285,20 +1309,22 @@ macro_rules! impl_seq_v {
             #[inline]
             fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
                 let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader.by_ref())?;
+                // Reserve capacity, capped for unique keys; iteration below still uses `len`.
+                let capacity = $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?);
 
                 let map = match $key::TYPE_META {
                     $crate::TypeMeta::Static { size, .. } => {
                         // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
                         // will consume `size * len` bytes, fully consuming the trusted window.
                         let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
-                        let mut set = $with_capacity(len $(, $state::default())?);
+                        let mut set = $with_capacity(capacity $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
                         }
                         set
                     }
                     $crate::TypeMeta::Dynamic => {
-                        let mut set = $with_capacity(len $(, $state::default())?);
+                        let mut set = $with_capacity(capacity $(, $state::default())?);
                         for _ in 0..len {
                             set.$insert($key::get(reader.by_ref())?);
                         }
@@ -1316,9 +1342,9 @@ macro_rules! impl_seq_v {
 pub(crate) use impl_seq_v;
 
 impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
-impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher }
+impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher, cap_unique_keys }
 impl_seq_v! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
-impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert }
+impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert, cap_unique_keys }
 impl_seq_v! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]

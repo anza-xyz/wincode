@@ -8,8 +8,8 @@ use {
     indexmap::{IndexMap, IndexSet},
 };
 
-impl_seq_kv! { "indexmap", IndexMap<K: Hash | Eq, V, S: BuildHasher | Default>, IndexMap::with_capacity_and_hasher }
-impl_seq_v! { "indexmap", IndexSet<K: Hash | Eq, S: BuildHasher | Default>, IndexSet::with_capacity_and_hasher, insert }
+impl_seq_kv! { "indexmap", IndexMap<K: Hash | Eq, V, S: BuildHasher | Default>, IndexMap::with_capacity_and_hasher, cap_unique_keys }
+impl_seq_v! { "indexmap", IndexSet<K: Hash | Eq, S: BuildHasher | Default>, IndexSet::with_capacity_and_hasher, insert, cap_unique_keys }
 
 #[cfg(test)]
 mod tests {
