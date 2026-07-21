@@ -15,6 +15,28 @@ use {
 
 pub const PREALLOCATION_SIZE_LIMIT_USE_CONFIG: usize = 0;
 
+/// Cap a requested capacity at the `2^(8 * size_of::<K>())` distinct values a
+/// `K` can represent.
+///
+/// A collection that keys on a unique `K` cannot hold more entries than there
+/// are `K` values, so a malicious length keyed on a tiny type (ZST, `u8`, ...)
+/// can drive an oversized `with_capacity` the data can never fill, even within
+/// the preallocation limit. The cap is an upper bound on distinct keys, so it
+/// never under-allocates. `None` (representable count `>= usize::MAX`) means no
+/// useful cap.
+#[cfg(any(feature = "std", feature = "indexmap"))]
+#[inline]
+pub(crate) fn unique_key_capacity<K>(len: usize) -> usize {
+    match u32::try_from(size_of::<K>())
+        .ok()
+        .and_then(|bytes| bytes.checked_mul(u8::BITS))
+        .and_then(|bits| 1usize.checked_shl(bits))
+    {
+        Some(max_keys) => len.min(max_keys),
+        None => len,
+    }
+}
+
 /// [`SeqLen`] level override of configured preallocation size limit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PreallocationLimitOverride {
@@ -383,3 +405,21 @@ impl_fix_int!(i128);
 /// ```
 pub type BincodeLen<const PREALLOCATION_SIZE_LIMIT: usize = PREALLOCATION_SIZE_LIMIT_USE_CONFIG> =
     UseIntLen<u64, PREALLOCATION_SIZE_LIMIT>;
+
+#[cfg(all(test, any(feature = "std", feature = "indexmap")))]
+mod tests {
+    use super::unique_key_capacity;
+
+    #[test]
+    fn caps_at_representable_key_count() {
+        // ZST: 1 value; u8: 256; u16: 65536. `len` below the cap is untouched;
+        // 8+ byte keys represent >= usize::MAX values, so no cap applies.
+        assert_eq!(unique_key_capacity::<()>(usize::MAX), 1);
+        assert_eq!(unique_key_capacity::<()>(0), 0);
+        assert_eq!(unique_key_capacity::<u8>(usize::MAX), 256);
+        assert_eq!(unique_key_capacity::<u8>(10), 10);
+        assert_eq!(unique_key_capacity::<u16>(usize::MAX), 1 << 16);
+        assert_eq!(unique_key_capacity::<u64>(usize::MAX), usize::MAX);
+        assert_eq!(unique_key_capacity::<[u8; 32]>(12_345), 12_345);
+    }
+}
