@@ -1,8 +1,7 @@
 //! Compile fail tests.
-#![expect(unused)]
+#![allow(dead_code)]
 
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive", feature = "alloc"))] {
 /// use wincode::{SchemaRead, SchemaWrite, deserialize, serialize};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
@@ -16,11 +15,9 @@
 /// .unwrap();
 ///
 /// let _: StaticStr = deserialize(&serialized).unwrap();
-/// # }
 /// ```
 ///
 /// ```
-/// # #[cfg(all(feature = "derive"))] {
 /// use wincode::{SchemaRead, SchemaWrite, deserialize};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
@@ -31,12 +28,11 @@
 /// let serialized = b"\x00".as_slice();
 ///
 /// let _: StaticStr = deserialize(serialized).unwrap();
-/// # }
 /// ```
+#[cfg(all(feature = "derive", feature = "alloc"))]
 fn static_derive_requires_static_input() {}
 
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive"))] {
 /// use wincode::{SchemaRead, SchemaWrite};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
@@ -46,12 +42,11 @@ fn static_derive_requires_static_input() {}
 ///     #[wincode(tag = 1)]
 ///     Bar,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn derive_tag_uniqueness() {}
 
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive"))] {
 /// use wincode::{SchemaRead, SchemaWrite};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
@@ -61,12 +56,11 @@ fn derive_tag_uniqueness() {}
 ///     #[wincode(tag = 0x1)]
 ///     Bar,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn derive_tag_uniqueness_repr_normalization() {}
 
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive"))] {
 /// use wincode::{SchemaRead, SchemaWrite};
 ///
 /// #[derive(SchemaRead, SchemaWrite)]
@@ -75,14 +69,13 @@ fn derive_tag_uniqueness_repr_normalization() {}
 ///     #[wincode(tag = 0)]
 ///     Bar,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn derive_tag_uniqueness_implicit_collision() {}
 
 /// A field-level context requires the derive's top-level context type.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use wincode::SchemaRead;
 ///
 /// #[derive(SchemaRead)]
@@ -90,21 +83,20 @@ fn derive_tag_uniqueness_implicit_collision() {}
 ///     #[wincode(context)]
 ///     value: u8,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn derive_field_context_requires_top_level_context() {}
 
 /// `UninitBuilder` does not generate contextual field readers.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// #[derive(wincode::UninitBuilder)]
 /// #[wincode(context = "()")]
 /// struct Contextual {
 ///     value: u8,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn uninit_builder_rejects_context() {}
 
 /// A lifetime supplied by the context still has to be tied to the input when an ordinary
@@ -112,7 +104,6 @@ fn uninit_builder_rejects_context() {}
 /// serialized bytes borrowed by `borrowed`.
 ///
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive", feature = "bumpalo"))] {
 /// use {
 ///     bumpalo::{Bump, collections::String},
 ///     wincode::{SchemaRead, deserialize_with_context},
@@ -130,15 +121,14 @@ fn uninit_builder_rejects_context() {}
 ///     let bytes = [0u8];
 ///     deserialize_with_context(bump, &bytes).unwrap()
 /// }
-/// # }
 /// ```
+#[cfg(all(feature = "derive", feature = "bumpalo"))]
 fn context_lifetime_used_by_ordinary_field_remains_input_bound() {}
 
 /// A contextual adapter must produce exactly the field type expected by the derived struct.
 /// Otherwise, the struct's raw placement initialization could initialize the wrong type.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use {
 ///     core::mem::MaybeUninit,
 ///     wincode::{
@@ -168,8 +158,8 @@ fn context_lifetime_used_by_ordinary_field_remains_input_bound() {}
 ///     #[wincode(context, with = "Adapter")]
 ///     value: u8,
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn contextual_field_reader_requires_exact_destination_type() {}
 
 /// Rewriting an input-backed field from `'ctx` to `'de` is only valid when the resulting value
@@ -177,7 +167,6 @@ fn contextual_field_reader_requires_exact_destination_type() {}
 /// enough for contravariant or invariant types.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use {
 ///     core::mem::MaybeUninit,
 ///     wincode::{ReadResult, SchemaRead, config::ConfigCore, io::Reader},
@@ -205,8 +194,8 @@ fn contextual_field_reader_requires_exact_destination_type() {}
 ///     #[wincode(with = "Callback")]
 ///     callback: fn(&'ctx u8),
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn rewritten_field_lifetime_requires_safe_shortening() {}
 
 /// A contextual outer field cannot hide an ordinary input borrow made by its nested derived
@@ -214,7 +203,6 @@ fn rewritten_field_lifetime_requires_safe_shortening() {}
 /// even though the outer field itself is marked `context`.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use wincode::{SchemaRead, deserialize_with_context};
 ///
 /// #[derive(SchemaRead)]
@@ -234,15 +222,14 @@ fn rewritten_field_lifetime_requires_safe_shortening() {}
 ///     let bytes = [0u8];
 ///     deserialize_with_context(ctx, &bytes).unwrap()
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn nested_contextual_reader_preserves_ordinary_input_borrow() {}
 
 /// An ordinary input borrow hidden behind an associated type cannot evade the destination-type
 /// constraint merely because the derive's syntactic lifetime scan cannot see it.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use {
 ///     core::marker::PhantomData,
 ///     wincode::{SchemaRead, deserialize_with_context},
@@ -270,23 +257,22 @@ fn nested_contextual_reader_preserves_ordinary_input_borrow() {}
 ///     let bytes = [0u8];
 ///     deserialize_with_context(ctx, &bytes).unwrap()
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn associated_type_cannot_hide_ordinary_input_borrow() {}
 
 /// A contextual derive cannot request the ordinary `ZeroCopy` marker because that marker does
 /// not identify the context or destination type.
 ///
 /// ```compile_fail
-/// # #[cfg(feature = "derive")] {
 /// use wincode::SchemaRead;
 ///
 /// #[derive(SchemaRead)]
 /// #[wincode(context = "()", assert_zero_copy)]
 /// #[repr(transparent)]
 /// struct Contextual(u8);
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn context_assert_zero_copy_is_unsupported() {}
 
 /// A `read_<field>` on an `UninitBuilder` must not launder the reader lifetime: reading
@@ -294,7 +280,6 @@ fn context_assert_zero_copy_is_unsupported() {}
 /// leave a dangling reference after `assume_init`.
 ///
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive"))] {
 /// use {core::mem::MaybeUninit, wincode::config::DefaultConfig};
 ///
 /// #[derive(wincode::UninitBuilder)]
@@ -313,15 +298,14 @@ fn context_assert_zero_copy_is_unsupported() {}
 ///     }
 ///     unsafe { uninit.assume_init() }
 /// }
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn uninit_builder_read_forbids_lifetime_launder() {}
 
 /// An `UninitBuilder` reader must write exactly the field type, even when the field's
 /// `SchemaRead` implementation declares a different `Dst`.
 ///
 /// ```compile_fail
-/// # #[cfg(all(feature = "derive"))] {
 /// use {
 ///     core::mem::MaybeUninit,
 ///     wincode::{
@@ -355,6 +339,6 @@ fn uninit_builder_read_forbids_lifetime_launder() {}
 /// let mut builder =
 ///     HasFieldUninitBuilder::<DefaultConfig>::from_maybe_uninit_mut(&mut uninit);
 /// builder.read_field([].as_slice()).unwrap();
-/// # }
 /// ```
+#[cfg(feature = "derive")]
 fn uninit_builder_read_requires_exact_field_dst() {}
