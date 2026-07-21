@@ -48,6 +48,11 @@ unsafe impl<'de, C: Config> SchemaRead<'de, C> for ReadStaticWriteDynamic {
 struct ReadOnlyAssertion(ReadStaticWriteDynamic);
 
 #[repr(transparent)]
+#[derive(SchemaWrite, SchemaRead)]
+#[wincode(assert_zero_copy)]
+struct BareAssertionDefaultsToRead(ReadStaticWriteDynamic);
+
+#[repr(transparent)]
 struct ReadDynamicWriteStatic(u8);
 
 unsafe impl<C: ConfigCore> ZeroCopy<C> for ReadDynamicWriteStatic {}
@@ -93,6 +98,10 @@ fn selected_schema_allows_asymmetric_metadata() {
     ));
     assert!(matches!(
         <WriteOnlyAssertion as SchemaWrite<wincode::config::DefaultConfig>>::TYPE_META,
+        TypeMeta::Static { .. }
+    ));
+    assert!(matches!(
+        <BareAssertionDefaultsToRead as SchemaRead<'_, wincode::config::DefaultConfig>>::TYPE_META,
         TypeMeta::Static { .. }
     ));
 }

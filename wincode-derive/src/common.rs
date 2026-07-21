@@ -726,13 +726,13 @@ impl FromMeta for AssertZeroCopyConfig {
         // #[wincode(assert_zero_copy)] - use default config
         Ok(AssertZeroCopyConfig {
             config: None,
-            schema: ZeroCopySchema::Both,
+            schema: ZeroCopySchema::Read,
         })
     }
 
     fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
         let mut config = None;
-        let mut schema = ZeroCopySchema::Both;
+        let mut schema = ZeroCopySchema::Read;
         let mut schema_seen = false;
 
         for item in items {
@@ -1231,13 +1231,13 @@ mod tests {
     }
 
     #[test]
-    fn assert_zero_copy_options_default_to_both() {
+    fn assert_zero_copy_options_default_to_read() {
         let config = AssertZeroCopyConfig::from_meta(&parse_quote!(assert_zero_copy)).unwrap();
 
         assert_eq!(config.config, None);
-        assert_eq!(config.schema, ZeroCopySchema::Both);
+        assert_eq!(config.schema, ZeroCopySchema::Read);
         assert!(config.schema.includes(TraitImpl::SchemaRead));
-        assert!(config.schema.includes(TraitImpl::SchemaWrite));
+        assert!(!config.schema.includes(TraitImpl::SchemaWrite));
     }
 
     #[test]
@@ -1245,6 +1245,6 @@ mod tests {
         let config = AssertZeroCopyConfig::from_meta(&parse_quote!(assert_zero_copy())).unwrap();
 
         assert_eq!(config.config, None);
-        assert_eq!(config.schema, ZeroCopySchema::Both);
+        assert_eq!(config.schema, ZeroCopySchema::Read);
     }
 }
