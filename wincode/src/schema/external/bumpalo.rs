@@ -310,4 +310,137 @@ mod tests {
 
         assert_eq!(bytes_ref, b"borrowed");
     }
+
+    #[test]
+    fn context_derive_struct_can_outlive_input_bytes() {
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(internal, context = "&'bump Bump")]
+        struct Foo<'bump> {
+            id: u32,
+            #[wincode(context)]
+            bar: String<'bump>,
+            #[wincode(context)]
+            baz: Vec<'bump, u8>,
+        }
+        let bump = Bump::new();
+        let foo = Foo {
+            id: 42,
+            bar: String::from_str_in("bar", &bump),
+            baz: bumpalo::vec![in &bump; 1, 2, 3],
+        };
+        let deserialized: Foo = {
+            let serialized = serialize(&foo).unwrap();
+            deserialize_with_context(&bump, &serialized).unwrap()
+        };
+
+        assert_eq!(deserialized, foo);
+    }
+
+    #[test]
+    fn context_derive_supports_generic_fields_and_other_lifetimes() {
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(internal, context = "&'bump Bump")]
+        struct Foo<'bump, 'input, T> {
+            #[wincode(context)]
+            values: Vec<'bump, T>,
+            borrowed: &'input u8,
+        }
+
+        let bump = Bump::new();
+        let borrowed = 42;
+        let foo = Foo {
+            values: bumpalo::vec![in &bump; 1_u16, 2, 3],
+            borrowed: &borrowed,
+        };
+        let deserialized_values = {
+            let serialized = serialize(&foo).unwrap();
+            let deserialized: Foo<u16> = deserialize_with_context(&bump, &serialized).unwrap();
+            assert_eq!(deserialized.borrowed, foo.borrowed);
+            deserialized.values
+        };
+
+        // The context-backed generic field can outlive the input, while the field
+        // with the independent `'input` lifetime remains scoped to it.
+        assert_eq!(deserialized_values, foo.values);
+    }
+
+    #[test]
+    fn context_derive_enum_can_outlive_input_bytes() {
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(internal, context = "&'bump Bump")]
+        enum Foo<'bump> {
+            Unit,
+            Data {
+                id: u32,
+                #[wincode(context)]
+                value: String<'bump>,
+            },
+        }
+
+        let bump = Bump::new();
+        let foo = Foo::Data {
+            id: 42,
+            value: String::from_str_in("value", &bump),
+        };
+        let deserialized: Foo = {
+            let serialized = serialize(&foo).unwrap();
+            deserialize_with_context(&bump, &serialized).unwrap()
+        };
+
+        assert_eq!(deserialized, foo);
+    }
+
+    #[test]
+    fn context_derive_supports_with_adapter() {
+        struct StringAdapter<'bump>(core::marker::PhantomData<&'bump Bump>);
+
+        unsafe impl<'de, 'bump, C: Config> SchemaReadContext<'de, C, &'bump Bump> for StringAdapter<'bump> {
+            type Dst = String<'bump>;
+
+            const TYPE_META: TypeMeta =
+                <String<'bump> as SchemaReadContext<'de, C, &'bump Bump>>::TYPE_META;
+
+            fn read_with_context(
+                ctx: &'bump Bump,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<Self::Dst>,
+            ) -> ReadResult<()> {
+                <String<'bump> as SchemaReadContext<'de, C, &'bump Bump>>::read_with_context(
+                    ctx, reader, dst,
+                )
+            }
+        }
+
+        unsafe impl<'bump, C: Config> SchemaWrite<C> for StringAdapter<'bump> {
+            type Src = String<'bump>;
+
+            const TYPE_META: TypeMeta = <String<'bump> as SchemaWrite<C>>::TYPE_META;
+
+            fn size_of(src: &Self::Src) -> WriteResult<usize> {
+                <String<'bump> as SchemaWrite<C>>::size_of(src)
+            }
+
+            fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+                <String<'bump> as SchemaWrite<C>>::write(writer, src)
+            }
+        }
+
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(internal, context = "&'bump Bump")]
+        struct Foo<'bump> {
+            #[wincode(with = "StringAdapter<'bump>", context)]
+            value: String<'bump>,
+        }
+
+        let bump = Bump::new();
+        let foo = Foo {
+            value: String::from_str_in("value", &bump),
+        };
+        let deserialized: Foo = {
+            let serialized = serialize(&foo).unwrap();
+            deserialize_with_context(&bump, &serialized).unwrap()
+        };
+
+        assert_eq!(deserialized, foo);
+    }
 }

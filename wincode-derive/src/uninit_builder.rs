@@ -13,6 +13,12 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         ));
     };
 
+    if args.context.is_some() {
+        return Err(Error::custom(
+            "`UninitBuilder` is not supported with context",
+        ));
+    }
+
     if fields.is_empty() {
         return Ok(quote! {});
     }

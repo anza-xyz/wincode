@@ -2,6 +2,7 @@ use {
     darling::{
         FromDeriveInput, FromField, FromMeta, FromVariant, Result,
         ast::{Data, Fields, NestedMeta, Style},
+        util::Flag,
     },
     proc_macro2::{Span, TokenStream},
     quote::{ToTokens as _, quote},
@@ -9,6 +10,7 @@ use {
         borrow::Cow,
         collections::{HashSet, VecDeque},
         fmt::{self, Display},
+        rc::Rc,
     },
     syn::{
         DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, LitInt, Member, Path, Type,
@@ -46,6 +48,30 @@ pub(crate) struct Field {
     /// * `SkipMode::Default` - using `Default::default()`
     /// * `SkipMode::DefaultVal(expr)` - using value provided by (typically constant) `expr`
     pub(crate) skip: Option<SkipMode>,
+
+    /// Flag to enable context for the field.
+    ///
+    /// Eventually plumbed through to the `context` field
+    /// by stamping `context` from [`SchemaArgs`].
+    ///
+    /// This allows users to specify #[wincode(context)] on a field
+    /// without having to fully qualify the type like is required
+    /// on the root type attribute.
+    #[darling(rename = "context")]
+    context_flag: Flag,
+    /// Stamped onto the field from [`SchemaArgs`] for easy access in methods.
+    #[darling(skip)]
+    pub(crate) context: Option<Type>,
+    /// Stamped onto the field from [`SchemaArgs`] for easy access in methods.
+    ///
+    /// Always `Some`. Only marked as `Option` because `Path` does not have a `Default`
+    /// implementation for `#[darling(skip)]`.
+    #[darling(skip)]
+    crate_name: Option<Path>,
+    /// Stamped onto the field from [`SchemaArgs`] for easy access in methods,
+    /// and to avoid allocating a `Vec<Lifetime>` for each invocation.
+    #[darling(skip)]
+    pub(crate) context_lifetimes: Rc<[Lifetime]>,
 }
 
 #[derive(FromMeta)]
@@ -67,13 +93,9 @@ impl SkipMode {
 }
 
 pub(crate) trait TypeExt {
-    /// Replace any lifetimes on this type with the given lifetime.
-    ///
-    /// For example, we can transform:
-    /// ```ignore
-    /// &'a str -> &'de str
-    /// ```
-    fn with_lifetime(&self, ident: &str) -> Type;
+    /// Replace any lifetimes on this type with the given lifetime,
+    /// excluding any lifetimes in the `exclude` list.
+    fn with_lifetime_excluding(&self, ident: &str, exclude: &[Lifetime]) -> Type;
 
     /// Replace any inference tokens on this type with the fully qualified generic arguments
     /// of the given `infer` type.
@@ -88,12 +110,22 @@ pub(crate) trait TypeExt {
 
     /// Return whether the type contains a lifetime parameter.
     fn has_lifetime(&self) -> bool;
+
+    /// Return whether the type contains a lifetime with the same name as `lifetime`.
+    fn contains_lifetime(&self, lifetime: &Lifetime) -> bool;
+
+    /// Return the lifetimes of this type.
+    fn lifetimes(&self) -> Vec<Lifetime>;
 }
 
 impl TypeExt for Type {
-    fn with_lifetime(&self, ident: &str) -> Type {
+    fn with_lifetime_excluding(&self, ident: &str, exclude: &[Lifetime]) -> Type {
         let mut this = self.clone();
-        ReplaceLifetimes(ident).visit_type_mut(&mut this);
+        ReplaceLifetimes {
+            replacement: ident,
+            exclude,
+        }
+        .visit_type_mut(&mut this);
         this
     }
 
@@ -115,6 +147,21 @@ impl TypeExt for Type {
 
     fn has_lifetime(&self) -> bool {
         let mut visitor = HasLifetime(false);
+        visitor.visit_type(self);
+        visitor.0
+    }
+
+    fn contains_lifetime(&self, lifetime: &Lifetime) -> bool {
+        let mut visitor = ContainsLifetime {
+            lifetime,
+            found: false,
+        };
+        visitor.visit_type(self);
+        visitor.found
+    }
+
+    fn lifetimes(&self) -> Vec<Lifetime> {
+        let mut visitor = Lifetimes(Vec::new());
         visitor.visit_type(self);
         visitor.0
     }
@@ -186,6 +233,64 @@ impl Field {
     pub(crate) fn has_lifetime(&self) -> bool {
         self.ty.has_lifetime()
     }
+
+    /// Generate the trait bound for this field, including the exact destination
+    /// or source type expected by the containing type.
+    ///
+    /// Context lifetimes remain tied to the context; other read lifetimes are
+    /// rewritten to `'de` because they may borrow from the input.
+    pub(crate) fn as_constraint(&self, tr: TraitImpl) -> TokenStream {
+        let crate_name = self.crate_name.as_ref().unwrap();
+        match tr {
+            TraitImpl::SchemaRead => {
+                let ty = &self
+                    .ty
+                    .with_lifetime_excluding("de", &self.context_lifetimes);
+                if let Some(ctx) = &self.context {
+                    parse_quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx, Dst = #ty>)
+                } else {
+                    parse_quote!(#crate_name::SchemaRead<'de, __WincodeConfig, Dst = #ty>)
+                }
+            }
+            TraitImpl::SchemaWrite => {
+                let ty = &self.ty;
+                parse_quote!(#crate_name::SchemaWrite<__WincodeConfig, Src = #ty>)
+            }
+        }
+    }
+
+    /// Generate the schema trait applied to this field's target type.
+    ///
+    /// A contextual read field uses `SchemaReadContext`; ordinary read fields
+    /// and all write fields use their non-contextual traits.
+    pub(crate) fn qualifier(&self, tr: TraitImpl) -> TokenStream {
+        let crate_name = self.crate_name.as_ref().unwrap();
+        match tr {
+            TraitImpl::SchemaRead => {
+                if let Some(ctx) = &self.context {
+                    parse_quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx>)
+                } else {
+                    parse_quote!(#crate_name::SchemaRead<'de, __WincodeConfig>)
+                }
+            }
+            TraitImpl::SchemaWrite => {
+                parse_quote!(#crate_name::SchemaWrite<__WincodeConfig>)
+            }
+        }
+    }
+
+    /// Generate `<Target as Trait>`, resolving `#[wincode(with = ...)]`
+    /// inference and applying the appropriate read-lifetime transformation.
+    pub(crate) fn target_fully_qualified(&self, tr: TraitImpl) -> TokenStream {
+        let target = match tr {
+            TraitImpl::SchemaRead => self
+                .target_resolved()
+                .with_lifetime_excluding("de", &self.context_lifetimes),
+            TraitImpl::SchemaWrite => self.target_resolved(),
+        };
+        let qualifier = self.qualifier(tr);
+        parse_quote!(<#target as #qualifier>)
+    }
 }
 
 pub(crate) trait FieldsExt {
@@ -224,21 +329,12 @@ impl FieldsExt for Fields<Field> {
         repr: &StructRepr,
         crate_name: &Path,
     ) -> TokenStream {
-        let tuple_expansion = match trait_impl {
-            TraitImpl::SchemaRead => {
-                let items = self.unskipped_iter().map(|field| {
-                    let target = field.target_resolved().with_lifetime("de");
-                    quote! { <#target as #crate_name::SchemaRead<'de, __WincodeConfig>>::TYPE_META }
-                });
-                quote! { #(#items),* }
-            }
-            TraitImpl::SchemaWrite => {
-                let items = self.unskipped_iter().map(|field| {
-                    let target = field.target_resolved();
-                    quote! { <#target as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META }
-                });
-                quote! { #(#items),* }
-            }
+        let tuple_expansion = {
+            let items = self.unskipped_iter().map(|field| {
+                let target = field.target_fully_qualified(trait_impl);
+                quote! { #target::TYPE_META }
+            });
+            quote! { #(#items),* }
         };
         let is_zero_copy_eligible = repr.is_zero_copy_eligible();
         // Extract sizes and zero-copy flags from the TYPE_META implementations of the fields of the struct.
@@ -377,21 +473,12 @@ impl VariantsExt for &[Variant] {
             .map(|(variant, ident)| match variant.fields.style {
                 Style::Struct | Style::Tuple => {
                     // Gather the `TYPE_META` implementations for each field of the variant.
-                    let fields_type_meta_expansion = match trait_impl {
-                        TraitImpl::SchemaRead => {
-                            let items = variant.fields.unskipped_iter().map(|field| {
-                                let target = field.target_resolved().with_lifetime("de");
-                                quote! { <#target as #crate_name::SchemaRead<'de, __WincodeConfig>>::TYPE_META }
-                            });
-                            quote! { #(#items),* }
-                        },
-                        TraitImpl::SchemaWrite => {
-                            let items = variant.fields.unskipped_iter().map(|field| {
-                                let target = field.target_resolved();
-                                quote! { <#target as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META }
-                            });
-                            quote! { #(#items),* }
-                        },
+                    let fields_type_meta_expansion = {
+                        let items = variant.fields.unskipped_iter().map(|field| {
+                            let target = field.target_fully_qualified(trait_impl);
+                            quote! { #target::TYPE_META }
+                        });
+                        quote! { #(#items),* }
                     };
                     // Assign the `TYPE_META` to a local variant identifier (`#ident`).
                     quote! {
@@ -473,7 +560,7 @@ pub(crate) fn get_crate_name(args: &SchemaArgs) -> Path {
 }
 
 #[derive(FromDeriveInput)]
-#[darling(attributes(wincode), forward_attrs)]
+#[darling(attributes(wincode), forward_attrs, and_then = Self::validate)]
 pub(crate) struct SchemaArgs {
     pub(crate) ident: Ident,
     pub(crate) generics: Generics,
@@ -508,6 +595,8 @@ pub(crate) struct SchemaArgs {
     /// The path is emitted as written and resolved from the derive expansion site.
     #[darling(rename = "crate", default)]
     pub(crate) crate_path: Option<Path>,
+    #[darling(default)]
+    pub(crate) context: Option<Type>,
 }
 
 impl SchemaArgs {
@@ -539,9 +628,64 @@ impl SchemaArgs {
         }
     }
 
-    pub(crate) fn validate(&self) -> Result<()> {
-        self.validate_variant_tags()?;
+    /// Populate fields with derive-level metadata used during code generation.
+    ///
+    /// This stores the resolved crate path on every field and, for fields marked
+    /// `#[wincode(context)]`, validates and caches the top-level context type and
+    /// its lifetimes. Keeping this metadata on [`Field`] lets its helper methods
+    /// generate bounds and fully qualified paths without threading the same
+    /// arguments through every caller.
+    fn populate_field_metadata(&mut self) -> Result<()> {
+        fn resolve(
+            field: &mut Field,
+            context: Option<(&Type, &Rc<[Lifetime]>)>,
+            crate_name: &Path,
+        ) -> Result<()> {
+            field.crate_name = Some(crate_name.clone());
+
+            if !field.context_flag.is_present() {
+                return Ok(());
+            }
+
+            let (context, context_lifetimes) = context.ok_or_else(|| {
+                darling::Error::custom(
+                    "`#[wincode(context)]` requires a top-level `context = \"...\"`",
+                )
+                .with_span(&field.context_flag.span())
+            })?;
+
+            field.context = Some(context.clone());
+            field.context_lifetimes = context_lifetimes.clone();
+            Ok(())
+        }
+
+        let crate_name = get_crate_name(self);
+        let context_ty = self.context.as_ref();
+        let context_lifetimes = context_ty.map(|c| Rc::from(c.lifetimes()));
+        let context = context_ty.zip(context_lifetimes.as_ref());
+
+        match &mut self.data {
+            Data::Struct(fields) => {
+                for field in &mut fields.fields {
+                    resolve(field, context, &crate_name)?;
+                }
+            }
+            Data::Enum(variants) => {
+                for variant in variants {
+                    for field in &mut variant.fields.fields {
+                        resolve(field, context, &crate_name)?;
+                    }
+                }
+            }
+        }
+
         Ok(())
+    }
+
+    fn validate(mut self) -> Result<Self> {
+        self.validate_variant_tags()?;
+        self.populate_field_metadata()?;
+        Ok(self)
     }
 }
 
@@ -713,7 +857,10 @@ impl VisitMut for InferGeneric<'_> {
 }
 
 /// Visitor to recursively replace a given type's lifetimes with the given lifetime name.
-struct ReplaceLifetimes<'a>(&'a str);
+struct ReplaceLifetimes<'a> {
+    replacement: &'a str,
+    exclude: &'a [Lifetime],
+}
 
 impl ReplaceLifetimes<'_> {
     /// Replace the lifetime with `'de`, preserving the span.
@@ -721,15 +868,15 @@ impl ReplaceLifetimes<'_> {
         // `'static` is a concrete outlives guarantee, not a borrow parameter.
         // Rewriting it to `'de` would allow data borrowed from the input buffer to be
         // written into fields whose type declares a static reference.
-        if t.ident != "static" {
-            t.ident = Ident::new(self.0, t.ident.span());
+        if t.ident != "static" && !self.exclude.iter().any(|l| l.ident == t.ident) {
+            t.ident = Ident::new(self.replacement, t.ident.span());
         }
     }
 
     fn new_from_reference(&self, t: &mut TypeReference) {
         t.lifetime = Some(Lifetime {
             apostrophe: t.and_token.span(),
-            ident: Ident::new(self.0, t.and_token.span()),
+            ident: Ident::new(self.replacement, t.and_token.span()),
         })
     }
 }
@@ -781,6 +928,25 @@ impl Visit<'_> for HasLifetime {
     }
 }
 
+struct ContainsLifetime<'a> {
+    lifetime: &'a Lifetime,
+    found: bool,
+}
+
+impl Visit<'_> for ContainsLifetime<'_> {
+    fn visit_lifetime(&mut self, candidate: &Lifetime) {
+        self.found |= candidate.ident == self.lifetime.ident;
+    }
+}
+
+struct Lifetimes(Vec<Lifetime>);
+
+impl Visit<'_> for Lifetimes {
+    fn visit_lifetime(&mut self, lt: &Lifetime) {
+        self.0.push(lt.clone());
+    }
+}
+
 struct HasTypeParam<'a> {
     type_params: &'a HashSet<&'a Ident>,
     found: bool,
@@ -794,19 +960,7 @@ impl Visit<'_> for HasTypeParam<'_> {
     }
 }
 
-#[derive(Hash, PartialEq, Eq)]
-pub(crate) struct GenericField {
-    pub(crate) target: Type,
-    pub(crate) ty: Type,
-}
-
 /// Find fields whose types mention a generic type parameter of the derived type.
-///
-/// The returned [`GenericField`] keeps two types:
-/// - `target`: the type whose `SchemaRead`/`SchemaWrite` impl will be called
-/// - `ty`: the actual type stored in the field
-///
-/// `target` will be the same as `ty`, except for when a field uses `#[wincode(with = ...)]`:
 ///
 /// ```ignore
 /// struct Wrapper<T> {
@@ -819,20 +973,21 @@ pub(crate) struct GenericField {
 ///
 /// When this happens, the generated code calls `SchemaRead`/`SchemaWrite` on the adapter type,
 /// but the adapter's `Src`/`Dst` must match the real field type.
-pub(crate) fn generic_field_types(
-    data: &Data<Variant, Field>,
+pub(crate) fn generic_field_types<'a>(
+    data: &'a Data<Variant, Field>,
     generics: &Generics,
-) -> HashSet<GenericField> {
+) -> Vec<&'a Field> {
     let type_params: HashSet<&Ident> = generics.type_params().map(|p| &p.ident).collect();
     if type_params.is_empty() {
-        return HashSet::new();
+        return Vec::new();
     }
 
     fn visit<'a>(
         fields: impl Iterator<Item = &'a Field>,
         type_params: &HashSet<&Ident>,
-    ) -> HashSet<GenericField> {
-        let mut result = HashSet::new();
+    ) -> Vec<&'a Field> {
+        let mut seen = HashSet::new();
+        let mut result = Vec::new();
         for field in fields {
             if field.skip.is_some() {
                 continue;
@@ -843,11 +998,8 @@ pub(crate) fn generic_field_types(
                 found: false,
             };
             visitor.visit_type(&target);
-            if visitor.found {
-                result.insert(GenericField {
-                    target,
-                    ty: field.ty.clone(),
-                });
+            if visitor.found && seen.insert((target, &field.ty, &field.context)) {
+                result.push(field);
             }
         }
         result
@@ -922,24 +1074,47 @@ mod tests {
     #[test]
     fn test_override_ref_lifetime() {
         let target: Type = parse_quote!(Foo<'a>);
-        assert_eq!(target.with_lifetime("de"), parse_quote!(Foo<'de>));
+        assert_eq!(
+            target.with_lifetime_excluding("de", &[]),
+            parse_quote!(Foo<'de>)
+        );
 
         let target: Type = parse_quote!(&'a str);
-        assert_eq!(target.with_lifetime("de"), parse_quote!(&'de str));
+        assert_eq!(
+            target.with_lifetime_excluding("de", &[]),
+            parse_quote!(&'de str)
+        );
     }
 
     #[test]
     fn lifetime_override_doesnt_clobber_static() {
         let target: Type = parse_quote!(Foo<'static>);
-        assert_eq!(target.with_lifetime("de"), parse_quote!(Foo<'static>));
+        assert_eq!(
+            target.with_lifetime_excluding("de", &[]),
+            parse_quote!(Foo<'static>)
+        );
 
         let target: Type = parse_quote!(&'static str);
-        assert_eq!(target.with_lifetime("de"), parse_quote!(&'static str));
+        assert_eq!(
+            target.with_lifetime_excluding("de", &[]),
+            parse_quote!(&'static str)
+        );
 
         let target: Type = parse_quote!(Option<&'static str>);
         assert_eq!(
-            target.with_lifetime("de"),
+            target.with_lifetime_excluding("de", &[]),
             parse_quote!(Option<&'static str>)
+        );
+    }
+
+    #[test]
+    fn lifetime_override_preserves_excluded_lifetimes() {
+        let target: Type = parse_quote!(Foo<'ctx, &'input str, &'ctx str, &'static str, &str>);
+        let exclude = [parse_quote!('ctx)];
+
+        assert_eq!(
+            target.with_lifetime_excluding("de", &exclude),
+            parse_quote!(Foo<'ctx, &'de str, &'ctx str, &'static str, &'de str>)
         );
     }
 
@@ -959,5 +1134,15 @@ mod tests {
 
         let ty: Type = parse_quote!(Foo<'b, 'c>);
         assert!(ty.has_lifetime());
+    }
+
+    #[test]
+    fn test_contains_lifetime() {
+        let ty: Type = parse_quote!(Foo<'a, Option<&'b str>, &'static str>);
+
+        assert!(ty.contains_lifetime(&parse_quote!('a)));
+        assert!(ty.contains_lifetime(&parse_quote!('b)));
+        assert!(ty.contains_lifetime(&parse_quote!('static)));
+        assert!(!ty.contains_lifetime(&parse_quote!('c)));
     }
 }
