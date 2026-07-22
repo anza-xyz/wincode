@@ -125,6 +125,41 @@ fn uninit_builder_rejects_context() {}
 #[cfg(all(feature = "derive", feature = "bumpalo"))]
 fn context_lifetime_used_by_ordinary_field_remains_input_bound() {}
 
+/// A lifetime distinct from the context lifetime remains tied to the serialized input.
+/// The context-backed generic field may outlive `bytes`, but the complete value cannot because
+/// `borrowed` borrows from them.
+///
+/// ```compile_fail
+/// use {
+///     bumpalo::{Bump, collections::Vec},
+///     wincode::{SchemaRead, SchemaWrite, deserialize_with_context, serialize},
+/// };
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// #[wincode(context = "&'bump Bump")]
+/// struct Foo<'bump, 'input, T> {
+///     #[wincode(context)]
+///     values: Vec<'bump, T>,
+///     borrowed: &'input u8,
+/// }
+///
+/// let bump = Bump::new();
+/// let borrowed = 42;
+/// let foo = Foo {
+///     values: bumpalo::vec![in &bump; 1_u16, 2, 3],
+///     borrowed: &borrowed,
+/// };
+/// let deserialized: Foo<u16> = {
+///     let serialized = serialize(&foo).unwrap();
+///     let deserialized = deserialize_with_context(&bump, &serialized).unwrap();
+///     deserialized
+/// };
+///
+/// let _borrowed = deserialized.borrowed;
+/// ```
+#[cfg(all(feature = "derive", feature = "bumpalo"))]
+fn non_context_lifetime_remains_input_bound() {}
+
 /// A contextual adapter must produce exactly the field type expected by the derived struct.
 /// Otherwise, the struct's raw placement initialization could initialize the wrong type.
 ///

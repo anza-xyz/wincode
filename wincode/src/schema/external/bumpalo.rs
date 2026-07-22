@@ -337,6 +337,34 @@ mod tests {
     }
 
     #[test]
+    fn context_derive_supports_generic_fields_and_other_lifetimes() {
+        #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
+        #[wincode(internal, context = "&'bump Bump")]
+        struct Foo<'bump, 'input, T> {
+            #[wincode(context)]
+            values: Vec<'bump, T>,
+            borrowed: &'input u8,
+        }
+
+        let bump = Bump::new();
+        let borrowed = 42;
+        let foo = Foo {
+            values: bumpalo::vec![in &bump; 1_u16, 2, 3],
+            borrowed: &borrowed,
+        };
+        let deserialized_values = {
+            let serialized = serialize(&foo).unwrap();
+            let deserialized: Foo<u16> = deserialize_with_context(&bump, &serialized).unwrap();
+            assert_eq!(deserialized.borrowed, foo.borrowed);
+            deserialized.values
+        };
+
+        // The context-backed generic field can outlive the input, while the field
+        // with the independent `'input` lifetime remains scoped to it.
+        assert_eq!(deserialized_values, foo.values);
+    }
+
+    #[test]
     fn context_derive_enum_can_outlive_input_bytes() {
         #[derive(SchemaRead, SchemaWrite, Debug, PartialEq)]
         #[wincode(internal, context = "&'bump Bump")]
