@@ -70,4 +70,5 @@
 /// let deserialized = wincode::deserialize(&bytes).unwrap();
 /// assert_eq!(data, deserialized);
 /// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Len(pub usize);
