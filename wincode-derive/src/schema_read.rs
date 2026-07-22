@@ -407,6 +407,40 @@ fn append_config(generics: &mut Generics, crate_name: &Path) {
     ));
 }
 
+/// Return whether any read path passes the context to more than one field.
+///
+/// Struct fields are read sequentially, while enum variants are mutually exclusive,
+/// so contextual fields in different variants do not require the context to be copied.
+fn context_requires_copy(data: &Data<Variant, Field>) -> bool {
+    fn fields_require_copy(fields: &Fields<Field>) -> bool {
+        fields
+            .iter()
+            .filter(|field| field.skip.is_none() && field.context.is_some())
+            .nth(1)
+            .is_some()
+    }
+
+    match data {
+        Data::Struct(fields) => fields_require_copy(fields),
+        Data::Enum(variants) => variants
+            .iter()
+            .any(|variant| fields_require_copy(&variant.fields)),
+    }
+}
+
+fn append_context_copy_bound(
+    generics: &mut Generics,
+    data: &Data<Variant, Field>,
+    context: Option<&Type>,
+) {
+    if let Some(context) = context.filter(|_| context_requires_copy(data)) {
+        generics
+            .make_where_clause()
+            .predicates
+            .push(parse_quote!(#context: ::core::marker::Copy));
+    }
+}
+
 fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     let field_types = generic_field_types(data, generics);
     let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
@@ -483,6 +517,7 @@ fn append_generics(
     let mut generics = generics.clone();
     append_de_lifetime(&mut generics, data, context);
     append_where_clause(&mut generics, data);
+    append_context_copy_bound(&mut generics, data, context);
     append_config(&mut generics, crate_name);
     generics
 }
