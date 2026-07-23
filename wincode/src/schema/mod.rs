@@ -3571,6 +3571,34 @@ mod tests {
     }
 
     #[test]
+    fn test_read_adapter_lifetime_is_rewritten_to_de() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct MyType<'a, T>(&'a [u8; 4], PhantomData<T>);
+
+        struct MyOtherType<'a, T>(PhantomData<(&'a (), T)>);
+
+        unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for MyOtherType<'de, T> {
+            type Dst = MyType<'de, T>;
+
+            fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+                let value = <&'de [u8; 4] as SchemaRead<'de, C>>::get(reader)?;
+                dst.write(MyType(value, PhantomData));
+                Ok(())
+            }
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct Foo<'a, T> {
+            #[wincode(with = "MyOtherType<'a, T>")]
+            x: MyType<'a, T>,
+        }
+
+        let foo = <Foo<'_, ()> as SchemaRead<'_, DefaultConfig>>::get(&[1, 2, 3, 4][..]).unwrap();
+        assert_eq!(foo.x, MyType(&[1, 2, 3, 4], PhantomData));
+    }
+
+    #[test]
     fn test_result_basic() {
         proptest!(proptest_cfg(), |(value: Result<u64, String>)| {
             let wincode_serialized = serialize(&value).unwrap();

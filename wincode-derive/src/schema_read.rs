@@ -448,7 +448,9 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
         let mut bounds = Punctuated::new();
         let constraint = field.as_constraint(TraitImpl::SchemaRead);
         bounds.push(parse_quote!(#constraint));
-        let target = field.target_resolved();
+        let target = field
+            .target_resolved()
+            .with_lifetime_excluding("de", &field.context_lifetimes);
 
         predicates.push(WherePredicate::Type(PredicateType {
             lifetimes: None,
