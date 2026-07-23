@@ -380,6 +380,8 @@
 //! The builder has automatic initialization tracking that does bookkeeping of which fields have been initialized.
 //! Calling `write_<field_name>` or `read_<field_name>`, for example, will mark the field as
 //! initialized so that it's properly dropped if the builder is dropped on error or panic.
+//! Successfully initializing the same field more than once overwrites the previous value without dropping it.
+//! Repeated initialization may therefore leak resources or skip other destructor side effects.
 //!
 //! The builder struct has the following methods:
 //! - `from_maybe_uninit_mut`
@@ -394,6 +396,8 @@
 //! For each field, the builder struct provides the following methods:
 //! - `uninit_<field_name>_mut`
 //!   - Gets a mutable `MaybeUninit` projection to the `<field_name>` slot.
+//! - `uninit_<field_name>_ref`
+//!   - Gets a shared `MaybeUninit` projection of the `<field_name>` slot.
 //! - `read_<field_name>`
 //!   - Reads into a `MaybeUninit`'s `<field_name>` slot from the given [`Reader`](io::Reader).
 //! - `write_<field_name>`
