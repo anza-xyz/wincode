@@ -424,7 +424,7 @@ fn uninit_builder_read_requires_exact_field_dst() {}
 ///
 /// #[repr(transparent)]
 /// #[derive(SchemaWrite, SchemaRead)]
-/// #[wincode(internal, assert_zero_copy(schema = "both"))]
+/// #[wincode(assert_zero_copy(schema = "both"))]
 /// struct WrapperWriteDynamic(AsymMeta);
 ///
 /// let _ = <WrapperWriteDynamic as SchemaWrite<DefaultConfig>>::TYPE_META;

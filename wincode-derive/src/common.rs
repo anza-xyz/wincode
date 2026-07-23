@@ -13,9 +13,8 @@ use {
         rc::Rc,
     },
     syn::{
-        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, Lit, LitInt, Member, Path,
-        Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility,
-        parse_quote,
+        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, LitInt, Member, Path, Type,
+        TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility, parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
@@ -721,6 +720,19 @@ impl ZeroCopySchema {
     }
 }
 
+impl FromMeta for ZeroCopySchema {
+    fn from_string(value: &str) -> darling::Result<Self> {
+        match value {
+            "read" => Ok(Self::Read),
+            "write" => Ok(Self::Write),
+            "both" => Ok(Self::Both),
+            _ => Err(darling::Error::custom(format!(
+                "unknown schema `{value}`; expected `read`, `write`, or `both`"
+            ))),
+        }
+    }
+}
+
 impl FromMeta for AssertZeroCopyConfig {
     fn from_word() -> darling::Result<Self> {
         // #[wincode(assert_zero_copy)] - use default config
@@ -732,50 +744,44 @@ impl FromMeta for AssertZeroCopyConfig {
 
     fn from_list(items: &[NestedMeta]) -> darling::Result<Self> {
         let mut config = None;
-        let mut schema = ZeroCopySchema::Read;
-        let mut schema_seen = false;
+        let mut schema = None;
+
+        fn set_once_with<T>(
+            target: &mut Option<T>,
+            field: &'static str,
+            span: &impl Spanned,
+            value: impl FnOnce() -> darling::Result<T>,
+        ) -> darling::Result<()> {
+            if target.is_some() {
+                return Err(darling::Error::duplicate_field(field).with_span(span));
+            }
+            *target = Some(value()?);
+            Ok(())
+        }
 
         for item in items {
             match item {
-                NestedMeta::Meta(syn::Meta::Path(path)) if config.is_none() => {
-                    config = Some(path.clone());
+                NestedMeta::Meta(syn::Meta::Path(path)) => {
+                    set_once_with(&mut config, "config", path, || Ok(path.clone()))?;
                 }
                 NestedMeta::Meta(syn::Meta::NameValue(value)) if value.path.is_ident("config") => {
-                    let Expr::Path(path) = &value.value else {
-                        return Err(darling::Error::unexpected_type("path"));
-                    };
-                    if config.replace(path.path.clone()).is_some() {
-                        return Err(darling::Error::duplicate_field("config"));
-                    }
+                    set_once_with(&mut config, "config", value, || {
+                        Path::from_expr(&value.value)
+                    })?;
                 }
                 NestedMeta::Meta(syn::Meta::NameValue(value)) if value.path.is_ident("schema") => {
-                    if schema_seen {
-                        return Err(darling::Error::duplicate_field("schema"));
-                    }
-                    schema_seen = true;
-                    let Expr::Lit(expr) = &value.value else {
-                        return Err(darling::Error::unexpected_type("string"));
-                    };
-                    let Lit::Str(value) = &expr.lit else {
-                        return Err(darling::Error::unexpected_type("string"));
-                    };
-                    schema = match value.value().as_str() {
-                        "read" => ZeroCopySchema::Read,
-                        "write" => ZeroCopySchema::Write,
-                        "both" => ZeroCopySchema::Both,
-                        _ => {
-                            return Err(darling::Error::custom(format!(
-                                "unknown schema `{}`; expected `read`, `write`, or `both`",
-                                value.value()
-                            )));
-                        }
-                    };
+                    set_once_with(&mut schema, "schema", value, || {
+                        ZeroCopySchema::from_expr(&value.value)
+                    })?;
                 }
                 _ => return Err(darling::Error::unexpected_type("path or named option")),
             }
         }
 
-        Ok(AssertZeroCopyConfig { config, schema })
+        Ok(AssertZeroCopyConfig {
+            config,
+            schema: schema.unwrap_or(ZeroCopySchema::Read),
+        })
     }
 }
 
