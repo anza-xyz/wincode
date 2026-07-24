@@ -58,12 +58,17 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
     };
     let builder_struct_decl = {
         quote! {
-            /// A helper struct that provides convenience methods for reading and writing to a `MaybeUninit` struct
-            /// with a bit-set tracking the initialization state of the fields.
+            /// A helper for initializing fields of a value stored in `MaybeUninit`.
             ///
-            /// The builder will drop all initialized fields in reverse order on drop. When the struct is fully initialized,
-            /// you **must** call `finish` or `into_assume_init_mut` to forget the builder. Otherwise, all the
-            /// initialized fields will be dropped when the builder is dropped.
+            /// The builder tracks which fields have been marked initialized and drops
+            /// those fields in reverse declaration order when the builder is dropped.
+            ///
+            /// Initialization helpers overwrite fields using `MaybeUninit` semantics.
+            /// Reinitializing a field does not drop its previous value and may therefore
+            /// leak resources or skip other destructor side effects.
+            ///
+            /// After fully initializing the value, call `finish` or
+            /// `into_assume_init_mut` to disable the builder's drop logic.
             #[must_use]
             #vis struct #builder_ident #builder_impl_generics #builder_where_clause {
                 inner: &'_wincode_inner mut core::mem::MaybeUninit<#builder_dst>,
@@ -110,6 +115,11 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
 
         quote! {
             impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+                /// Creates a builder for the supplied storage.
+                ///
+                /// Every field initially starts marked as uninitialized. This method does not
+                /// inspect the storage or detect values that may already be present. Such
+                /// values are not initially tracked and may be leaked if overwritten.
                 #vis const fn from_maybe_uninit_mut(inner: &'_wincode_inner mut ::core::mem::MaybeUninit<#builder_dst>) -> Self {
                     Self {
                         inner,
@@ -118,22 +128,24 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                     }
                 }
 
-                /// Check if the builder is fully initialized.
+                /// Returns whether every field is marked initialized.
                 ///
-                /// This will check if all field initialization bits are set.
+                /// This only examines the builder's initialization markers; it does not
+                /// inspect or validate the underlying storage. Its result is only reliable
+                /// when the unsafe initialization methods have been used correctly.
                 #[inline]
                 #vis const fn is_init(&self) -> bool {
                     self.init_set == #is_fully_init_mask
                 }
 
-                /// Assume the builder is fully initialized, and return a mutable reference to the inner `MaybeUninit` struct.
-                ///
-                /// The builder will be forgotten, so the drop logic will not longer run.
+                /// Returns a mutable reference to the initialized value without running the
+                /// builder's drop logic.
                 ///
                 /// # Safety
                 ///
-                /// Calling this when the content is not yet fully initialized causes undefined behavior: it is up to the caller
-                /// to guarantee that the `MaybeUninit<T>` really is in an initialized state.
+                /// The underlying storage must contain a valid, fully initialized value.
+                /// The initialization markers alone do not guarantee this if unsafe builder
+                /// methods have been used incorrectly.
                 #[inline]
                 #vis unsafe fn into_assume_init_mut(mut self) -> &'_wincode_inner mut #builder_dst {
                     let mut this = ::core::mem::ManuallyDrop::new(self);
@@ -145,7 +157,11 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                     }
                 }
 
-                /// Forget the builder, disabling the drop logic.
+                /// Forgets the builder, disabling its drop logic.
+                ///
+                /// This method does not check whether every field is initialized. Calling it
+                /// before initialization is complete prevents the builder from dropping any
+                /// fields it currently tracks and may leak their resources.
                 #[inline]
                 #vis const fn finish(self) {
                     ::core::mem::forget(self);
@@ -173,7 +189,7 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
         };
 
         quote! {
-            /// Get a mutable reference to the maybe uninitialized field.
+            /// Returns a mutable `MaybeUninit` projection of this field.
             #[inline]
             #vis const fn #uninit_mut_ident(&mut self) -> &mut ::core::mem::MaybeUninit<#ty> {
                 // SAFETY:
@@ -183,7 +199,11 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                 unsafe { &mut *(&raw mut (*self.inner.as_mut_ptr()).#ident).cast() }
             }
 
-            /// Get a reference to the maybe uninitialized field.
+
+            /// Returns a shared `MaybeUninit` projection of this field.
+            ///
+            /// This does not indicate whether the field is initialized and does not alter
+            /// its initialization marker.
             #[inline]
             #vis const fn #uninit_ref_ident(&self) -> &::core::mem::MaybeUninit<#ty> {
                 // SAFETY:
@@ -193,7 +213,12 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                 unsafe { &*(&raw const (*self.inner.as_ptr()).#ident).cast() }
             }
 
-            /// Write a value to the maybe uninitialized field.
+            /// Write a value into this field.
+            ///
+            /// If this field is already initialized, this method overwrites the
+            /// previous value without dropping it. Only the newly written value remains
+            /// tracked. Repeated calls may therefore leak resources or skip other
+            /// destructor side effects.
             // This method can be marked `const` in the future when MSRV is >= 1.85.
             #[inline]
             #vis fn #write_uninit_field_ident(&mut self, val: #ty) -> &mut Self {
@@ -202,7 +227,14 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
                 self
             }
 
-            /// Read a value from the reader into the maybe uninitialized field.
+            /// Read a value from the reader into this field.
+            ///
+            /// If this field is already initialized and the read succeeds, this method
+            /// overwrites the previous value without dropping it. Only the newly written
+            /// value remains tracked. Repeated calls may therefore leak resources or skip
+            /// other destructor side effects.
+            ///
+            /// If the read fails, the field's initialization marker is unchanged.
             #[inline]
             #vis fn #read_field_ident <'de>(&mut self, reader: impl #crate_name::io::Reader<'de>) -> #crate_name::ReadResult<&mut Self>
             where
@@ -217,6 +249,11 @@ pub(crate) fn impl_uninit_builder(args: &SchemaArgs, crate_name: &Path) -> Resul
             }
 
             /// Initialize the field with a given initializer function.
+            ///
+            /// If this field is already initialized and the initializer succeeds, this method
+            /// overwrites the previous value without dropping it. Only the newly written
+            /// value remains tracked. Repeated calls may therefore leak resources or skip
+            /// other destructor side effects.
             ///
             /// # Safety
             ///
