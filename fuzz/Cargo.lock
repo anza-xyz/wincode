@@ -2343,9 +2343,9 @@ dependencies = [
 
 [[package]]
 name = "solana-hash"
-version = "4.5.0"
+version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f4c847893a2ea50b4ae3ca723b124e07cd0544fecea3598f785168f9b78333f"
+checksum = "0df9b01495ed31100aca97a7f5862d5e19ab1636d60d1a9f02391408dd9dec84"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -2353,7 +2353,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sanitize",
- "wincode 0.5.5",
+ "wincode 0.6.0",
 ]
 
 [[package]]
@@ -3542,6 +3542,7 @@ dependencies = [
  "quote",
  "thiserror",
  "uuid",
+ "wincode-derive 0.5.0",
 ]
 
 [[package]]
