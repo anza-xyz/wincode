@@ -2314,14 +2314,14 @@ dependencies = [
 
 [[package]]
 name = "solana-fee-calculator"
-version = "3.2.2"
+version = "3.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef67f01cc6a0c72e99a08d0d484683f995de4c80e9568728fa77d1537f9b7e09"
+checksum = "d4bf4f4afb4704212ef1d994ee65bef7293441721639dfd16f0e60996f37be51"
 dependencies = [
  "log",
  "serde",
  "serde_derive",
- "wincode 0.5.5",
+ "wincode 0.6.0",
 ]
 
 [[package]]
@@ -3542,6 +3542,7 @@ dependencies = [
  "quote",
  "thiserror",
  "uuid",
+ "wincode-derive 0.5.0",
 ]
 
 [[package]]
