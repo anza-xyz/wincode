@@ -2582,6 +2582,43 @@ mod tests {
     }
 
     #[test]
+    fn test_dynamic_struct_write_checks_full_size_before_mutating_destination() {
+        #[derive(SchemaWrite)]
+        #[wincode(internal)]
+        struct Dynamic {
+            a: u32,
+            s: String,
+            b: u32,
+        }
+
+        let value = Dynamic {
+            a: 0x1111_1111,
+            s: String::from("abcd"),
+            b: 0x2222_2222,
+        };
+        assert_eq!(
+            <Dynamic as SchemaWrite<DefaultConfig>>::TYPE_META,
+            TypeMeta::Dynamic
+        );
+
+        let serialized = serialize(&value).unwrap();
+        assert_eq!(serialized.len(), 20);
+
+        let mut exact = [0; 20];
+        let mut writer = &mut exact[..];
+        crate::serialize_into(&mut writer, &value).unwrap();
+        assert!(writer.is_empty());
+        assert_eq!(exact, serialized.as_slice());
+
+        for capacity in 0..serialized.len() {
+            let mut buffer = [0xAA; 20];
+            let mut writer = &mut buffer[..capacity];
+            assert!(crate::serialize_into(&mut writer, &value).is_err());
+            assert_eq!(buffer, [0xAA; 20], "destination changed at {capacity}");
+        }
+    }
+
+    #[test]
     fn test_borrowed_bytes() {
         #[derive(
             SchemaWrite, SchemaRead, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize,

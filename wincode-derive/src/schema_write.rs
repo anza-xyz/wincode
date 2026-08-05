@@ -68,20 +68,19 @@ fn impl_struct(
             Ok(total)
         },
         quote! {
-            match <Self as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `write` on each field will write exactly `size` bytes,
-                    // fully initializing the trusted window.
-                    let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
-                    #(#writes)*
-                    #crate_name::io::Writer::finish(&mut writer)?;
-                }
+            let size = match <Self as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META {
+                #crate_name::TypeMeta::Static { size, .. } => size,
                 #crate_name::TypeMeta::Dynamic => {
-                    #(#writes)*
+                    <Self as #crate_name::SchemaWrite<__WincodeConfig>>::size_of(src)?
                 }
-            }
+            };
+            // SAFETY: `size` is the serialized size of the struct, which is the sum
+            // of the serialized sizes of the fields.
+            // Calling `write` on each field will write exactly `size` bytes,
+            // fully initializing the trusted window.
+            let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
+            #(#writes)*
+            #crate_name::io::Writer::finish(&mut writer)?;
             Ok(())
         },
         type_meta_impl,
