@@ -29,6 +29,19 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
     }
 
     /// Serialize a serializable type into the given [`Writer`].
+    ///
+    /// # Partial writes
+    ///
+    /// This operation is not transactional. If it returns an error, the writer
+    /// may already contain a prefix of the serialized value. Dynamically sized
+    /// values in particular may discover insufficient capacity only after
+    /// preceding fields have been written.
+    ///
+    /// If the destination must remain unchanged on failure, serialize into a
+    /// temporary buffer and copy the result only after serialization succeeds.
+    /// For a fixed-size destination, callers can instead use
+    /// [`Self::serialized_size`] with the same configuration to check that
+    /// enough space is available first.
     #[inline]
     #[expect(unused_variables)]
     fn serialize_into(mut dst: impl Writer, src: &Self::Src, config: C) -> WriteResult<()> {
@@ -114,6 +127,9 @@ where
 }
 
 /// Like [`crate::serialize_into`], but allows the caller to provide a custom configuration.
+///
+/// This has the same non-transactional, partial-write behavior documented by
+/// [`crate::serialize_into`].
 #[inline]
 pub fn serialize_into<T, C: Config>(dst: impl Writer, src: &T, config: C) -> WriteResult<()>
 where
