@@ -110,6 +110,18 @@ pub trait Serialize: SchemaWrite<DefaultConfig> {
     }
 
     /// Serialize a serializable type into the given byte buffer.
+    ///
+    /// # Partial writes
+    ///
+    /// This operation is not transactional. If it returns an error, the writer
+    /// may already contain a prefix of the serialized value. Dynamically sized
+    /// values in particular may discover insufficient capacity only after
+    /// preceding fields have been written.
+    ///
+    /// If the destination must remain unchanged on failure, serialize into a
+    /// temporary buffer and copy the result only after serialization succeeds.
+    /// For a fixed-size destination, callers can instead use
+    /// [`Self::serialized_size`] to check that enough space is available first.
     #[inline]
     fn serialize_into(dst: impl Writer, src: &Self::Src) -> WriteResult<()> {
         <Self as config::Serialize<DefaultConfig>>::serialize_into(
@@ -312,6 +324,18 @@ where
 /// Serialize a type into the given writer.
 ///
 /// Like [`serialize`], but allows the caller to provide their own writer.
+///
+/// # Partial writes
+///
+/// This operation is not transactional. If it returns an error, `dst` may
+/// already contain a prefix of the serialized value. Dynamically sized values
+/// in particular may discover insufficient capacity only after preceding
+/// fields have been written.
+///
+/// If the destination must remain unchanged on failure, serialize into a
+/// temporary buffer and copy the result only after serialization succeeds. For
+/// a fixed-size destination, callers can instead use [`serialized_size`] to
+/// check that enough space is available first.
 #[inline]
 pub fn serialize_into<T>(dst: impl Writer, src: &T) -> WriteResult<()>
 where
