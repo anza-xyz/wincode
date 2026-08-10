@@ -14,19 +14,19 @@ serde = { version = "1.0", features = ["derive"] }
 libfuzzer-sys = "0.4"
 uuid = { version = "1.20.0", features = ["serde"] }
 wincode = { path = "../wincode", features = ["uuid-serde-compat", "std", "alloc"] }
-# Keep the Solana fuzz target on 0.5.5 until the Solana SDK supports wincode 0.6.x.
-wincode_0_5 = { package = "wincode", version = "=0.5.5" }
 wincode-derive = { path = "../wincode-derive" }
 
-solana-address = { version = "2.6.0", features = ["wincode"] }
-solana-hash = { version = "4.3.0", features = ["wincode"] }
-solana-fee-calculator = { version = "3.2.0", features = ["wincode"] }
-solana-message = { version = "4.1.0", features = ["wincode"] }
-solana-nonce = { version = "3.1.0", features = ["wincode"] }
-solana-signature = { version = "3.4.0", features = ["wincode"] }
-solana-transaction = { version = "4.1.0", features = ["wincode"] }
-solana-entry = { version = "4.1.2", features = ["agave-unstable-api"] }
-agave-votor-messages = { version = "4.1.2", features = ["agave-unstable-api"] }
+solana-address = { version = "2.7.0", features = ["wincode"] }
+solana-hash = { version = "4.6.0", features = ["wincode"] }
+solana-fee-calculator = { version = "3.3.0", features = ["wincode"] }
+solana-message = { version = "4.5.0", features = ["wincode"] }
+solana-nonce = { version = "3.3.0", features = ["wincode"] }
+solana-signature = { version = "3.5.1", features = ["wincode"] }
+solana-transaction = { version = "4.2.0", features = ["wincode"] }
+# The published releases still use wincode 0.5.5. Pin a known compatible Agave
+# revision that uses wincode 0.6.0 until a compatible release is available.
+solana-entry = { git = "https://github.com/anza-xyz/agave", rev = "1dd68e23e6d9673ed5f56577676511b8b7dfaf85", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
+agave-votor-messages = { git = "https://github.com/anza-xyz/agave", rev = "1dd68e23e6d9673ed5f56577676511b8b7dfaf85", version = "=4.3.0-alpha.3", features = ["agave-unstable-api"] }
 
 [build-dependencies]
 wincode = { path = "../wincode", features = ["uuid-serde-compat"] }
