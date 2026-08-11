@@ -5,6 +5,12 @@
 /// Used for providing an already read or in-memory length value
 /// to a type that would otherwise read it from a [`Reader`](crate::io::Reader).
 ///
+/// Sequence implementations of [`SchemaReadContext`](crate::SchemaReadContext),
+/// such as `Vec`, trust caller-provided lengths. They do not validate the length
+/// or check whether allocating capacity for that length is within reasonable limits.
+/// Callers should perform any validation of the length they require before passing
+/// it to these implementations.
+///
 /// # Examples
 ///
 /// ```
