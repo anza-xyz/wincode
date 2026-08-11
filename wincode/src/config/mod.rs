@@ -6,6 +6,18 @@
 //! Additionally, this module provides traits and functions that mirror the serialization,
 //! deserialization, and zero-copy traits and functions from the crate root, but with an
 //! additional configuration parameter.
+//!
+//! # Deserialization size limits
+//!
+//! A limit set with [`Configuration::with_deserialization_size_limit`] is enforced by all
+//! high-level deserialization entrypoints in this module.
+//!
+//! The limit is not enforced merely by using the configuration type in a direct call to
+//! [`SchemaRead::get`](crate::SchemaRead::get) or [`SchemaRead::read`](crate::SchemaRead::read).
+//! Code that calls [`SchemaRead`](crate::SchemaRead) directly must wrap its reader once at the
+//! outermost deserialization boundary in [`LimitReader`](crate::io::LimitReader) and pass or
+//! reborrow that same reader throughout the operation. Constructing a fresh wrapper in each
+//! nested schema call resets the limit for each wrapper rather than enforcing one cumulative limit.
 use {
     crate::{
         int_encoding::{BigEndian, ByteOrder, FixInt, IntEncoding, LittleEndian, VarInt},
@@ -17,6 +29,8 @@ use {
 
 pub const DEFAULT_PREALLOCATION_SIZE_LIMIT: usize = 4 << 20; // 4 MiB
 pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
+pub const DEFAULT_DESERIALIZATION_SIZE_LIMIT: usize = DESERIALIZATION_SIZE_LIMIT_DISABLED;
+pub const DESERIALIZATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 
 /// Compile-time configuration for runtime behavior.
 ///
@@ -27,6 +41,7 @@ pub const PREALLOCATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 /// - Byte order is [`LittleEndian`].
 /// - Integer encoding is [`FixInt`].
 /// - Tag encoding is [`u32`].
+/// - Deserialization size limiting is disabled.
 pub struct Configuration<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
@@ -34,6 +49,7 @@ pub struct Configuration<
     ByteOrder = LittleEndian,
     IntEncoding = FixInt,
     TagEncoding = u32,
+    const DESERIALIZATION_SIZE_LIMIT: usize = DEFAULT_DESERIALIZATION_SIZE_LIMIT,
 > {
     _l: PhantomData<LengthEncoding>,
     _b: PhantomData<ByteOrder>,
@@ -44,6 +60,7 @@ pub struct Configuration<
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding,
     ByteOrder,
     IntEncoding,
@@ -56,6 +73,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
 {
     fn clone(&self) -> Self {
@@ -66,6 +84,7 @@ impl<
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding,
     ByteOrder,
     IntEncoding,
@@ -78,6 +97,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
 {
 }
@@ -85,6 +105,7 @@ impl<
 const fn generate<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding,
     ByteOrder,
     IntEncoding,
@@ -96,6 +117,7 @@ const fn generate<
     ByteOrder,
     IntEncoding,
     TagEncoding,
+    DESERIALIZATION_SIZE_LIMIT,
 > {
     Configuration {
         _l: PhantomData,
@@ -114,6 +136,7 @@ impl Configuration {
     /// - Length encoding is [`BincodeLen`].
     /// - Byte order is [`LittleEndian`].
     /// - Integer encoding is [`FixInt`].
+    /// - Deserialization size limit is disabled.
     pub const fn default() -> DefaultConfig {
         generate()
     }
@@ -121,7 +144,14 @@ impl Configuration {
 
 pub type DefaultConfig = Configuration;
 
-impl<const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding, ByteOrder, IntEncoding, TagEncoding>
+impl<
+    const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
+    LengthEncoding,
+    ByteOrder,
+    IntEncoding,
+    TagEncoding,
+>
     Configuration<
         true,
         PREALLOCATION_SIZE_LIMIT,
@@ -129,6 +159,7 @@ impl<const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding, ByteOrder, IntEncodi
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
 {
     // This impl is deliberately bounded to `ZERO_COPY_ALIGN_CHECK == true` rather than
@@ -146,6 +177,7 @@ impl<const PREALLOCATION_SIZE_LIMIT: usize, LengthEncoding, ByteOrder, IntEncodi
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding,
     ByteOrder,
     IntEncoding,
@@ -158,6 +190,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
 {
     /// Use the given [`SeqLen`] implementation for sequence length encoding.
@@ -175,6 +208,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
     where
         Configuration<
@@ -184,6 +218,7 @@ impl<
             ByteOrder,
             IntEncoding,
             TagEncoding,
+            DESERIALIZATION_SIZE_LIMIT,
         >: Config,
     {
         generate()
@@ -204,6 +239,7 @@ impl<
         BigEndian,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -220,6 +256,7 @@ impl<
         LittleEndian,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -237,6 +274,7 @@ impl<
         LittleEndian,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -254,6 +292,7 @@ impl<
         BigEndian,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -270,6 +309,7 @@ impl<
         ByteOrder,
         FixInt,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -292,6 +332,7 @@ impl<
         ByteOrder,
         VarInt,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -310,6 +351,7 @@ impl<
         ByteOrder,
         I,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
     where
         Configuration<
@@ -319,6 +361,7 @@ impl<
             ByteOrder,
             I,
             TagEncoding,
+            DESERIALIZATION_SIZE_LIMIT,
         >: Config,
     {
         generate()
@@ -340,6 +383,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -370,6 +414,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -391,6 +436,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -407,6 +453,7 @@ impl<
         ByteOrder,
         IntEncoding,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     > {
         generate()
     }
@@ -426,6 +473,7 @@ impl<
         ByteOrder,
         IntEncoding,
         T,
+        DESERIALIZATION_SIZE_LIMIT,
     >
     where
         Configuration<
@@ -435,14 +483,63 @@ impl<
             ByteOrder,
             IntEncoding,
             T,
+            DESERIALIZATION_SIZE_LIMIT,
         >: Config,
     {
+        generate()
+    }
+
+    /// Set the maximum number of bytes that may be read by a deserialization operation.
+    ///
+    /// The limit is cumulative across all reads performed while deserializing a value. If an
+    /// operation would exceed the remaining limit, it returns
+    /// [`ReadError::ReadSizeLimit`](crate::io::ReadError::ReadSizeLimit). Trusted reader windows
+    /// reserve their entire window against the limit.
+    ///
+    /// This is independent of the preallocation size limit. The deserialization size limit is
+    /// disabled by default.
+    ///
+    /// The limit is enforced by the high-level deserialization entrypoints in [`config`](self),
+    /// not by direct calls to [`SchemaRead::get`](crate::SchemaRead::get) or
+    /// [`SchemaRead::read`](crate::SchemaRead::read). When using [`SchemaRead`](crate::SchemaRead)
+    /// directly, wrap the reader in [`LimitReader`](crate::io::LimitReader) if you need this
+    /// behavior.
+    pub const fn with_deserialization_size_limit<const LIMIT: usize>(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+        LIMIT,
+    > {
+        generate()
+    }
+
+    /// Disable the deserialization size limit.
+    ///
+    /// This is the default.
+    ///
+    /// This does not change the preallocation size limit.
+    pub const fn disable_deserialization_size_limit(
+        self,
+    ) -> Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        ByteOrder,
+        IntEncoding,
+        TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT_DISABLED,
+    > {
         generate()
     }
 }
 
 /// Trait for accessing configuration values when only the constant knobs are needed
-/// (e.g., `PREALLOCATION_SIZE_LIMIT`, `ZERO_COPY_ALIGN_CHECK`).
+/// (e.g., `PREALLOCATION_SIZE_LIMIT`, `ZERO_COPY_ALIGN_CHECK`, `DESERIALIZATION_SIZE_LIMIT`).
 ///
 /// Split from [`Config`] to avoid dependency cycles that can overflow the compiler stack,
 /// such as [`SeqLen`] -> [`Config`] -> [`SeqLen`].
@@ -452,6 +549,13 @@ impl<
 pub trait ConfigCore: 'static + Sized {
     const PREALLOCATION_SIZE_LIMIT: Option<usize>;
     const ZERO_COPY_ALIGN_CHECK: bool;
+    /// Maximum number of bytes reserved for reads during one deserialization operation.
+    ///
+    /// A value of `None` disables the limit. This policy is consumed by the high-level
+    /// deserialization entrypoints in [`config`](self); it does not automatically affect direct
+    /// calls to [`SchemaRead`](crate::SchemaRead).
+    const DESERIALIZATION_SIZE_LIMIT: Option<usize> = None;
+
     type ByteOrder: ByteOrder;
     type IntEncoding: IntEncoding<Self::ByteOrder>;
 }
@@ -459,6 +563,7 @@ pub trait ConfigCore: 'static + Sized {
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding: 'static,
     B,
     I,
@@ -471,6 +576,7 @@ impl<
         B,
         I,
         TagEncoding,
+        DESERIALIZATION_SIZE_LIMIT,
     >
 where
     B: ByteOrder,
@@ -483,6 +589,13 @@ where
             Some(PREALLOCATION_SIZE_LIMIT)
         };
     const ZERO_COPY_ALIGN_CHECK: bool = ZERO_COPY_ALIGN_CHECK;
+    const DESERIALIZATION_SIZE_LIMIT: Option<usize> =
+        if DESERIALIZATION_SIZE_LIMIT == DESERIALIZATION_SIZE_LIMIT_DISABLED {
+            None
+        } else {
+            Some(DESERIALIZATION_SIZE_LIMIT)
+        };
+
     type ByteOrder = B;
     type IntEncoding = I;
 }
@@ -500,11 +613,21 @@ pub trait Config: ConfigCore {
 impl<
     const ZERO_COPY_ALIGN_CHECK: bool,
     const PREALLOCATION_SIZE_LIMIT: usize,
+    const DESERIALIZATION_SIZE_LIMIT: usize,
     LengthEncoding: 'static,
     B,
     I,
     T,
-> Config for Configuration<ZERO_COPY_ALIGN_CHECK, PREALLOCATION_SIZE_LIMIT, LengthEncoding, B, I, T>
+> Config
+    for Configuration<
+        ZERO_COPY_ALIGN_CHECK,
+        PREALLOCATION_SIZE_LIMIT,
+        LengthEncoding,
+        B,
+        I,
+        T,
+        DESERIALIZATION_SIZE_LIMIT,
+    >
 where
     LengthEncoding: SeqLen<Self>,
     T: TagEncoding<Self>,

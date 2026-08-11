@@ -60,13 +60,30 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
 
 impl<T, C: Config> Serialize<C> for T where T: SchemaWrite<C> + ?Sized {}
 
+macro_rules! maybe_size_limit {
+    ($config:ty, $src:expr, |$reader:ident| $body:expr $(,)?) => {{
+        let mut src = $src;
+
+        match <$config as $crate::config::ConfigCore>::DESERIALIZATION_SIZE_LIMIT {
+            Some(limit) => {
+                let $reader = src.as_limited_for(limit)?;
+                $body
+            }
+            None => {
+                let $reader = src;
+                $body
+            }
+        }
+    }};
+}
+
 /// Like [`crate::Deserialize`], but allows the caller to provide a custom configuration.
 pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
     /// Deserialize the input bytes into a new `Self::Dst`.
     #[inline(always)]
     #[expect(unused_variables)]
     fn deserialize(src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
-        Self::get(src)
+        maybe_size_limit!(C, src, |reader| Self::get(reader))
     }
 
     /// Deserialize the input bytes into `dst`.
@@ -77,7 +94,7 @@ pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
         dst: &mut MaybeUninit<Self::Dst>,
         config: C,
     ) -> ReadResult<()> {
-        Self::read(src, dst)
+        maybe_size_limit!(C, src, |reader| Self::read(reader, dst))
     }
 }
 
@@ -90,7 +107,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     fn deserialize_from<'de>(
         src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, C>>::Dst> {
-        Self::get(src)
+        maybe_size_limit!(C, src, |reader| Self::get(reader))
     }
 
     /// Deserialize from the given [`Reader`] into `dst`.
@@ -99,7 +116,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
         src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, C>>::Dst>,
     ) -> ReadResult<()> {
-        Self::read(src, dst)
+        maybe_size_limit!(C, src, |reader| Self::read(reader, dst))
     }
 }
 
@@ -193,7 +210,7 @@ pub fn deserialize_exact<'de, T, C: Config>(mut src: &'de [u8], config: C) -> Re
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    let value = T::get(src.by_ref())?;
+    let value = maybe_size_limit!(C, src.by_ref(), |reader| T::get(reader))?;
     if src.is_empty() {
         Ok(value)
     } else {
@@ -212,7 +229,7 @@ pub fn deserialize_with_context<'de, Ctx, T, C: Config>(
 where
     T: SchemaReadContext<'de, C, Ctx, Dst = T>,
 {
-    T::get_with_context(ctx, src)
+    maybe_size_limit!(C, src, |reader| T::get_with_context(ctx, reader))
 }
 
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
@@ -222,7 +239,7 @@ pub fn deserialize_mut<'de, T, C: Config>(src: &'de mut [u8], config: C) -> Read
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    T::get(src)
+    maybe_size_limit!(C, src, |reader| T::get(reader))
 }
 
 /// Like [`crate::deserialize_from`], but allows the caller to provide a custom configuration.
@@ -254,7 +271,9 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&Self as SchemaRead<'de, C>>::get(bytes)
+        maybe_size_limit!(C, bytes, |reader| <&Self as SchemaRead<'de, C>>::get(
+            reader
+        ))
     }
 
     /// Like [`crate::ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
@@ -264,6 +283,54 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        <&mut Self as SchemaRead<'de, C>>::get(bytes)
+        maybe_size_limit!(C, bytes, |reader| <&mut Self as SchemaRead<'de, C>>::get(
+            reader
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        crate::{ReadError, config::Configuration, io::ReadError as IoReadError},
+    };
+
+    #[test]
+    fn configured_deserialization_limit_is_enforced() {
+        let bytes = 42u64.to_le_bytes();
+        let limited = Configuration::default().with_deserialization_size_limit::<4>();
+
+        assert!(matches!(
+            deserialize::<u64, _>(&bytes, limited),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+        assert!(matches!(
+            deserialize_from::<u64, _>(bytes.as_slice(), limited),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+
+        let exact = Configuration::default().with_deserialization_size_limit::<8>();
+        assert_eq!(deserialize::<u64, _>(&bytes, exact).unwrap(), 42);
+
+        let disabled = limited.disable_deserialization_size_limit();
+        assert_eq!(deserialize::<u64, _>(&bytes, disabled).unwrap(), 42);
+    }
+
+    #[test]
+    fn zero_copy_deserialization_honors_limit() {
+        let bytes = [42u8];
+        let limited = Configuration::default().with_deserialization_size_limit::<0>();
+
+        assert!(matches!(
+            <u8 as ZeroCopy<_>>::from_bytes(&bytes, limited),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(1)))
+        ));
+
+        let mut bytes = bytes;
+        assert!(matches!(
+            <u8 as ZeroCopy<_>>::from_bytes_mut(&mut bytes, limited),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(1)))
+        ));
     }
 }

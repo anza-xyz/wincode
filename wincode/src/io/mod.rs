@@ -92,6 +92,9 @@ pub(super) const fn transpose<const N: usize, T>(
 ///   lifetimes.
 /// - Any unchecked reader returned by `as_trusted_for` obeys that method's
 ///   documented bounds contract.
+/// - Any reader returned by [`Reader::as_limited_for`] must safely prevent
+///   operations from logically reading or consuming more than the requested
+///   number of bytes.
 pub unsafe trait Reader<'a> {
     /// Borrow capabilities of this reader.
     ///
@@ -251,6 +254,21 @@ pub unsafe trait Reader<'a> {
             return Err(read_length_encoding_overflow("usize::MAX"));
         };
         Ok(unsafe { self.as_trusted_for(window) }?)
+    }
+
+    /// Return a reader restricted to at most `size` bytes.
+    ///
+    /// Operations through the returned reader that would exceed this limit must
+    /// return an error. Because this method is safe, callers have no obligation to
+    /// independently remain within the limit.
+    ///
+    /// Implementations may reserve up to `size` bytes from the parent immediately,
+    /// even if fewer bytes are subsequently read, or may enforce the limit
+    /// incrementally. Callers must not rely on the parent reader's resulting
+    /// position.
+    #[inline]
+    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
+        Ok(LimitReader::new(self, size))
     }
 
     /// Get a mutable reference to the [`Reader`].
@@ -676,5 +694,7 @@ pub mod std_write;
 #[cfg(feature = "alloc")]
 mod vec;
 pub use cursor::Cursor;
+mod limit_reader;
 #[cfg(test)]
 pub(crate) mod test_util;
+pub use limit_reader::*;

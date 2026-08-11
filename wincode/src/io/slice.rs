@@ -338,6 +338,11 @@ unsafe impl<'a> Reader<'a> for &'a [u8] {
         // will will not read beyond the bounds of the slice, `n_bytes`.
         Ok(unsafe { SliceUnchecked::new(window) })
     }
+
+    #[inline]
+    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
+        self.take_borrowed(size.min(self.len()))
+    }
 }
 
 unsafe impl<'a> Reader<'a> for &'a mut [u8] {
@@ -399,6 +404,11 @@ unsafe impl<'a> Reader<'a> for &'a mut [u8] {
         };
         *self = rest;
         Ok(*src)
+    }
+
+    #[inline]
+    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
+        self.take_borrowed_mut(size.min(self.len()))
     }
 }
 
