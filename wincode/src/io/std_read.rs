@@ -62,17 +62,19 @@ unsafe impl<R: Read + ?Sized> Reader<'_> for BufReader<R> {
 
 #[inline]
 fn cursor_advance(cursor: &mut Cursor<impl AsRef<[u8]>>, n: usize) -> ReadResult<&[u8]> {
-    let Ok(pos) = usize::try_from(cursor.position()) else {
-        return Err(read_size_limit(usize::MAX));
-    };
-
-    let inner = cursor.get_ref().as_ref();
+    let inner_len = cursor.get_ref().as_ref().len();
+    let pos = usize::try_from(cursor.position())
+        .unwrap_or(usize::MAX)
+        .min(inner_len);
     let next_pos = pos.saturating_add(n);
-    if next_pos > inner.len() {
+    if next_pos > inner_len {
         return Err(read_size_limit(n));
     }
 
-    cursor.set_position(next_pos as u64);
+    if n != 0 {
+        cursor.set_position(next_pos as u64);
+    }
+
     let inner = cursor.get_ref().as_ref();
     Ok(&inner[pos..next_pos])
 }
@@ -188,5 +190,23 @@ mod tests {
 
         assert_eq!(actual, expected);
         assert_eq!(reader.observed, vec![0; data.len()]);
+    }
+
+    #[test]
+    fn cursor_zero_sized_reads_past_end_succeed_without_advancing() {
+        for position in [3, u64::MAX] {
+            let mut cursor = Cursor::new([1, 2]);
+            cursor.set_position(position);
+
+            cursor.copy_into_slice(&mut []).unwrap();
+            cursor.copy_into_uninit_slice(&mut []).unwrap();
+            assert_eq!(cursor.take_array::<0>().unwrap(), []);
+            assert_eq!(cursor.take_scoped(0).unwrap(), []);
+            {
+                let _trusted = unsafe { cursor.as_trusted_for(0) }.unwrap();
+            }
+
+            assert_eq!(cursor.position(), position);
+        }
     }
 }
