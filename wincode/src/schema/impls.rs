@@ -1120,9 +1120,19 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
     #[inline]
     fn read_with_context(
         ctx: context::Len,
-        reader: impl Reader<'de>,
+        mut reader: impl Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> ReadResult<()> {
+        // Readers backed by memory can hand us the bytes directly, letting a bad
+        // length or bad UTF-8 fail before we allocate. We only borrow temporarily,
+        // to copy into the `String`.
+        if reader.supports_borrow(BorrowKind::CallSite) {
+            let bytes = reader.take_scoped(ctx.0)?;
+            let s = core::str::from_utf8(bytes).map_err(invalid_utf8_encoding)?;
+            dst.write(s.into());
+            return Ok(());
+        }
+
         let bytes = <Vec<u8> as SchemaReadContext<C, _>>::get_with_context(ctx, reader)?;
         match String::from_utf8(bytes) {
             Ok(s) => {

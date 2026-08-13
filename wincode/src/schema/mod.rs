@@ -3308,6 +3308,11 @@ mod tests {
             let schema_deserialized: String = deserialize(&schema_serialized).unwrap();
             prop_assert_eq!(&str, &bincode_deserialized);
             prop_assert_eq!(&str, &schema_deserialized);
+
+            // The above borrows from the reader; this exercises the copying path.
+            let schema_deserialized = <String as SchemaRead<DefaultConfig>>
+                ::get(NoBorrowReader::new(&schema_serialized)).unwrap();
+            prop_assert_eq!(&str, &schema_deserialized);
         }
 
         #[test]
@@ -4845,6 +4850,19 @@ mod tests {
             prop_assert_eq!(&deserialized, &bincode_deserialized);
             prop_assert_eq!(value, deserialized);
         });
+    }
+
+    /// Both the borrowing and the copying path must reject invalid UTF-8.
+    #[test]
+    fn test_string_invalid_utf8() {
+        let mut serialized = serialize(&String::from("ab")).unwrap();
+        // Corrupt the payload into a byte that can never appear in UTF-8.
+        *serialized.last_mut().unwrap() = 0xFF;
+
+        assert!(deserialize::<String>(&serialized).is_err());
+        assert!(
+            <String as SchemaRead<DefaultConfig>>::get(NoBorrowReader::new(&serialized)).is_err()
+        );
     }
 
     #[test]
