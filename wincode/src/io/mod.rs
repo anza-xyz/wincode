@@ -267,8 +267,8 @@ pub unsafe trait Reader<'a> {
     /// incrementally. Callers must not rely on the parent reader's resulting
     /// position.
     #[inline]
-    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
-        Ok(LimitReader::new(self, size))
+    fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
+        LimitReader::new(self, size)
     }
 
     /// Get a mutable reference to the [`Reader`].

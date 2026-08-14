@@ -340,8 +340,8 @@ unsafe impl<'a> Reader<'a> for &'a [u8] {
     }
 
     #[inline]
-    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
-        self.take_borrowed(size.min(self.len()))
+    fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
+        self.take_borrowed(size.min(self.len())).unwrap()
     }
 }
 
@@ -407,8 +407,8 @@ unsafe impl<'a> Reader<'a> for &'a mut [u8] {
     }
 
     #[inline]
-    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
-        self.take_borrowed_mut(size.min(self.len()))
+    fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
+        self.take_borrowed_mut(size.min(self.len())).unwrap()
     }
 }
 

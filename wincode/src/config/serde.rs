@@ -66,7 +66,7 @@ macro_rules! maybe_size_limit {
 
         match <$config as $crate::config::ConfigCore>::DESERIALIZATION_SIZE_LIMIT {
             Some(limit) => {
-                let $reader = src.as_limited_for(limit)?;
+                let $reader = src.as_limited_for(limit);
                 $body
             }
             None => {

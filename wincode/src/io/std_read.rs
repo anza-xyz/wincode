@@ -129,12 +129,12 @@ where
     }
 
     #[inline]
-    fn as_limited_for(&mut self, size: usize) -> ReadResult<impl Reader<'a>> {
+    fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
         let remaining = usize::try_from(self.position())
             .map_or(0, |pos| self.get_ref().as_ref().len().saturating_sub(pos));
 
-        let window = self.take_scoped(size.min(remaining))?;
-        Ok(Cursor::new(window))
+        let window = self.take_scoped(size.min(remaining)).unwrap();
+        Cursor::new(window)
     }
 }
 
