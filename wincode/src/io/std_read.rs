@@ -127,15 +127,6 @@ where
         // will will not read beyond the bounds of the slice, `n_bytes`.
         Ok(unsafe { SliceScopedUnchecked::new(buf) })
     }
-
-    #[inline]
-    fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
-        let remaining = usize::try_from(self.position())
-            .map_or(0, |pos| self.get_ref().as_ref().len().saturating_sub(pos));
-
-        let window = self.take_scoped(size.min(remaining)).unwrap();
-        Cursor::new(window)
-    }
 }
 
 #[cfg(test)]

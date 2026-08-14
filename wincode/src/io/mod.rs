@@ -258,14 +258,21 @@ pub unsafe trait Reader<'a> {
 
     /// Return a reader restricted to at most `size` bytes.
     ///
-    /// Operations through the returned reader that would exceed this limit must
-    /// return an error. Because this method is safe, callers have no obligation to
-    /// independently remain within the limit.
+    /// The limit is cumulative across all operations performed through the returned
+    /// reader. An operation that would exceed the remaining limit must return an
+    /// error without being forwarded to the original reader. Because this method is
+    /// safe, callers have no obligation to independently remain within the limit.
     ///
-    /// Implementations may reserve up to `size` bytes from the parent immediately,
-    /// even if fewer bytes are subsequently read, or may enforce the limit
-    /// incrementally. Callers must not rely on the parent reader's resulting
-    /// position.
+    /// The returned reader must remain logically synchronized with the original
+    /// reader. Creating or dropping it must not consume any bytes, and operations
+    /// through it must affect the original reader as though they had been performed
+    /// directly. In particular, unused limit capacity must never advance the
+    /// original reader.
+    ///
+    /// Implementations may buffer or prefetch data, provided that the original
+    /// reader's logical position remains consistent with the operations actually
+    /// performed through the returned reader. Implementations that cannot construct
+    /// an optimized limited reader infallibly should use the default implementation.
     #[inline]
     fn as_limited_for(&mut self, size: usize) -> impl Reader<'a> {
         LimitReader::new(self, size)
