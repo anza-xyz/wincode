@@ -61,12 +61,12 @@ pub trait Serialize<C: Config>: SchemaWrite<C> {
 impl<T, C: Config> Serialize<C> for T where T: SchemaWrite<C> + ?Sized {}
 
 macro_rules! maybe_size_limit {
-    ($config:ty, $src:expr, |$reader:ident| $body:expr $(,)?) => {{
-        let mut src = $src;
+    ($config:ty, $src:expr, $kind:ident, |$reader:ident| $body:expr $(,)?) => {{
+        let src = $src;
 
         match <$config as $crate::config::ConfigCore>::DESERIALIZATION_SIZE_LIMIT {
             Some(limit) => {
-                let $reader = src.as_limited_for(limit);
+                let $reader = maybe_size_limit!(@reader $kind, src, limit);
                 $body
             }
             None => {
@@ -74,6 +74,22 @@ macro_rules! maybe_size_limit {
                 $body
             }
         }
+    }};
+
+    (@reader generic, $src:ident, $limit:ident) => {
+        $crate::io::LimitReader::new($src, $limit)
+    };
+
+    (@reader slice, $src:ident, $limit:ident) => {{
+        let mut src = $src;
+        let len = $limit.min(src.len());
+        src.take_borrowed(len).unwrap()
+    }};
+
+    (@reader slice_mut, $src:ident, $limit:ident) => {{
+        let mut src = $src;
+        let len = $limit.min(src.len());
+        src.take_borrowed_mut(len).unwrap()
     }};
 }
 
@@ -83,7 +99,7 @@ pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
     #[inline(always)]
     #[expect(unused_variables)]
     fn deserialize(src: &'de [u8], config: C) -> ReadResult<Self::Dst> {
-        maybe_size_limit!(C, src, |reader| Self::get(reader))
+        maybe_size_limit!(C, src, slice, |reader| Self::get(reader))
     }
 
     /// Deserialize the input bytes into `dst`.
@@ -94,7 +110,7 @@ pub trait Deserialize<'de, C: Config>: SchemaRead<'de, C> {
         dst: &mut MaybeUninit<Self::Dst>,
         config: C,
     ) -> ReadResult<()> {
-        maybe_size_limit!(C, src, |reader| Self::read(reader, dst))
+        maybe_size_limit!(C, src, slice, |reader| Self::read(reader, dst))
     }
 }
 
@@ -107,7 +123,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
     fn deserialize_from<'de>(
         src: impl Reader<'de>,
     ) -> ReadResult<<Self as SchemaRead<'de, C>>::Dst> {
-        maybe_size_limit!(C, src, |reader| Self::get(reader))
+        maybe_size_limit!(C, src, generic, |reader| Self::get(reader))
     }
 
     /// Deserialize from the given [`Reader`] into `dst`.
@@ -116,7 +132,7 @@ pub trait DeserializeOwned<C: Config>: SchemaReadOwned<C> {
         src: impl Reader<'de>,
         dst: &mut MaybeUninit<<Self as SchemaRead<'de, C>>::Dst>,
     ) -> ReadResult<()> {
-        maybe_size_limit!(C, src, |reader| Self::read(reader, dst))
+        maybe_size_limit!(C, src, generic, |reader| Self::read(reader, dst))
     }
 }
 
@@ -210,7 +226,21 @@ pub fn deserialize_exact<'de, T, C: Config>(mut src: &'de [u8], config: C) -> Re
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    let value = maybe_size_limit!(C, src.by_ref(), |reader| T::get(reader))?;
+    let value = match C::DESERIALIZATION_SIZE_LIMIT {
+        Some(limit) => {
+            let mut limited = &src[..limit.min(src.len())];
+            let initial_len = limited.len();
+            let value = T::get(limited.by_ref())?;
+
+            #[expect(clippy::arithmetic_side_effects)]
+            let consumed = initial_len - limited.len();
+            src = &src[consumed..];
+
+            value
+        }
+        None => T::get(src.by_ref())?,
+    };
+
     if src.is_empty() {
         Ok(value)
     } else {
@@ -229,7 +259,7 @@ pub fn deserialize_with_context<'de, Ctx, T, C: Config>(
 where
     T: SchemaReadContext<'de, C, Ctx, Dst = T>,
 {
-    maybe_size_limit!(C, src, |reader| T::get_with_context(ctx, reader))
+    maybe_size_limit!(C, src, slice, |reader| T::get_with_context(ctx, reader))
 }
 
 /// Like [`crate::deserialize_mut`], but allows the caller to provide a custom configuration.
@@ -239,7 +269,7 @@ pub fn deserialize_mut<'de, T, C: Config>(src: &'de mut [u8], config: C) -> Read
 where
     T: SchemaRead<'de, C, Dst = T>,
 {
-    maybe_size_limit!(C, src, |reader| T::get(reader))
+    maybe_size_limit!(C, src, slice_mut, |reader| T::get(reader))
 }
 
 /// Like [`crate::deserialize_from`], but allows the caller to provide a custom configuration.
@@ -271,9 +301,12 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        maybe_size_limit!(C, bytes, |reader| <&Self as SchemaRead<'de, C>>::get(
-            reader
-        ))
+        maybe_size_limit!(
+            C,
+            bytes,
+            slice,
+            |reader| <&Self as SchemaRead<'de, C>>::get(reader)
+        )
     }
 
     /// Like [`crate::ZeroCopy::from_bytes_mut`], but allows the caller to provide a custom configuration.
@@ -283,9 +316,10 @@ pub unsafe trait ZeroCopy<C: ConfigCore>: 'static {
     where
         Self: SchemaRead<'de, C, Dst = Self> + Sized,
     {
-        maybe_size_limit!(C, bytes, |reader| <&mut Self as SchemaRead<'de, C>>::get(
-            reader
-        ))
+        maybe_size_limit!(C, bytes, slice_mut, |reader| <&mut Self as SchemaRead<
+            'de,
+            C,
+        >>::get(reader))
     }
 }
 
@@ -303,7 +337,7 @@ mod tests {
 
         assert!(matches!(
             deserialize::<u64, _>(&bytes, limited),
-            Err(ReadError::Io(IoReadError::ReadSizeLimit(4)))
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
         ));
         assert!(matches!(
             deserialize_from::<u64, _>(bytes.as_slice(), limited),
@@ -312,6 +346,24 @@ mod tests {
 
         let exact = Configuration::default().with_deserialization_size_limit::<8>();
         assert_eq!(deserialize::<u64, _>(&bytes, exact).unwrap(), 42);
+        assert_eq!(deserialize_exact::<u64, _>(&bytes, exact).unwrap(), 42);
+
+        assert!(matches!(
+            deserialize_exact::<u64, _>(&bytes, limited),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+
+        let mut trailing = [0; 9];
+        trailing[..8].copy_from_slice(&bytes);
+        assert!(matches!(
+            deserialize_exact::<u64, _>(&trailing, exact),
+            Err(ReadError::TrailingBytes)
+        ));
+        let larger = Configuration::default().with_deserialization_size_limit::<9>();
+        assert!(matches!(
+            deserialize_exact::<u64, _>(&trailing, larger),
+            Err(ReadError::TrailingBytes)
+        ));
 
         let disabled = limited.disable_deserialization_size_limit();
         assert_eq!(deserialize::<u64, _>(&bytes, disabled).unwrap(), 42);
