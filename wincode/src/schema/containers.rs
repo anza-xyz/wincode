@@ -67,7 +67,7 @@
 //! type Strict = containers::BTreeSet<u32, BincodeLen, containers::CheckUniqueKeys>;
 //!
 //! assert_eq!(Lenient::deserialize(&bytes).unwrap(), BTreeSet::from([1, 2]));
-//! assert!(matches!(Strict::deserialize(&bytes), Err(ReadError::DuplicateKey(_))));
+//! assert!(matches!(Strict::deserialize(&bytes), Err(ReadError::Custom(_))));
 //! # }
 //! ```
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
@@ -110,7 +110,6 @@ use {
         rc::Rc as AllocRc,
         vec,
     },
-    core::any::type_name,
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -553,7 +552,7 @@ where
 /// Default is [`AllowDuplicateKeys`]. See [`HashMap`] for an example.
 pub trait DuplicateKeyPolicy {
     /// Whether a repeated key aborts the read with
-    /// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey).
+    /// [`ReadError::Custom`](crate::error::ReadError::Custom).
     const REJECT_DUPLICATES: bool;
 }
 
@@ -567,7 +566,7 @@ impl DuplicateKeyPolicy for AllowDuplicateKeys {
 }
 
 /// A repeated key aborts the read with
-/// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey).
+/// [`ReadError::Custom`](crate::error::ReadError::Custom).
 ///
 /// Only constrains decoding; an already-keyed collection cannot encode a duplicate.
 pub struct CheckUniqueKeys;
@@ -620,7 +619,7 @@ where
                 let v = V::get($reader.by_ref())?;
                 let replaced = insert(&mut map, k, v);
                 if Dup::REJECT_DUPLICATES && replaced {
-                    return Err(duplicate_key(type_name::<K::Dst>()));
+                    return Err(duplicate_key());
                 }
             }
             map
@@ -673,7 +672,7 @@ where
             for _ in 0..len {
                 let present = insert(&mut set, T::get($reader.by_ref())?);
                 if Dup::REJECT_DUPLICATES && present {
-                    return Err(duplicate_key(type_name::<T::Dst>()));
+                    return Err(duplicate_key());
                 }
             }
             set
@@ -964,7 +963,7 @@ map_container! {
     /// let dupes = wincode::serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap();
     /// assert!(matches!(
     ///     wincode::deserialize::<MyStruct>(&dupes),
-    ///     Err(ReadError::DuplicateKey(_)),
+    ///     Err(ReadError::Custom(_)),
     /// ));
     /// # }
     /// ```
@@ -1412,11 +1411,11 @@ mod tests {
 
         assert!(matches!(
             <containers::HashMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
         assert!(matches!(
             <containers::BTreeMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
     }
 
@@ -1426,11 +1425,11 @@ mod tests {
 
         assert!(matches!(
             <containers::HashSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
         assert!(matches!(
             <containers::BTreeSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
     }
 
@@ -1457,13 +1456,13 @@ mod tests {
         let bytes = serialize(&vec![("a".to_string(), 1u64), ("a".to_string(), 2)]).unwrap();
         assert!(matches!(
             <containers::BTreeMap<String, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
 
         let bytes = serialize(&vec!["a".to_string(), "a".to_string()]).unwrap();
         assert!(matches!(
             <containers::BTreeSet<String, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
     }
 

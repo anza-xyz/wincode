@@ -66,13 +66,13 @@ mod tests {
         let dup_map = serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap();
         assert!(matches!(
             <containers::IndexMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&dup_map),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
 
         let dup_set = serialize(&vec![7u32, 7]).unwrap();
         assert!(matches!(
             <containers::IndexSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&dup_set),
-            Err(ReadError::DuplicateKey(_)),
+            Err(ReadError::Custom(_)),
         ));
 
         let map: TestIndexMap<u32, u64> = IndexMap::from_iter([(3u32, 30u64), (1, 10), (2, 20)]);
