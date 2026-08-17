@@ -14,8 +14,8 @@ use {
 /// reserve their entire window when they are created.
 ///
 /// When a request exceeds the remaining limit,
-/// [`ReadError::ReadSizeLimit`](crate::io::ReadError::ReadSizeLimit) contains the number of bytes by
-/// which the request exceeds the available limit.
+/// [`ReadError::ReadSizeLimit`](crate::io::ReadError::ReadSizeLimit) contains the number of bytes
+/// requested by the rejected operation.
 ///
 /// To limit an entire deserialization operation, construct one `LimitReader` at the outermost
 /// boundary and pass or reborrow that same reader throughout the operation. Constructing fresh
@@ -35,7 +35,7 @@ use {
 /// let reader = LimitReader::new(&bytes[..], 4);
 /// assert!(
 ///     matches!(wincode::deserialize_from::<u64>(reader),
-///     Err(wincode::ReadError::Io(ReadError::ReadSizeLimit(4))))
+///     Err(wincode::ReadError::Io(ReadError::ReadSizeLimit(8))))
 /// );
 /// ```
 pub struct LimitReader<R> {
@@ -58,8 +58,7 @@ impl<R> LimitReader<R> {
     #[inline]
     const fn reserve_limit(&mut self, needed: usize) -> ReadResult<()> {
         if needed > self.remaining {
-            #[expect(clippy::arithmetic_side_effects)]
-            return Err(read_size_limit(needed - self.remaining));
+            return Err(read_size_limit(needed));
         }
 
         #[expect(clippy::arithmetic_side_effects)]
@@ -175,13 +174,13 @@ mod tests {
     }
 
     #[test]
-    fn error_reports_shortfall() {
+    fn error_reports_requested_size() {
         let bytes = [0; 8];
         let mut reader = LimitReader::new(bytes.as_slice(), 3);
 
         assert!(matches!(
             reader.take_array::<8>(),
-            Err(ReadError::ReadSizeLimit(5))
+            Err(ReadError::ReadSizeLimit(8))
         ));
     }
 
@@ -197,7 +196,7 @@ mod tests {
 
         assert!(matches!(
             reader.take_array::<2>(),
-            Err(ReadError::ReadSizeLimit(1))
+            Err(ReadError::ReadSizeLimit(2))
         ));
     }
 }

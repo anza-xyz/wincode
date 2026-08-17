@@ -341,7 +341,7 @@ mod tests {
         ));
         assert!(matches!(
             deserialize_from::<u64, _>(bytes.as_slice(), limited),
-            Err(ReadError::Io(IoReadError::ReadSizeLimit(4)))
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
         ));
 
         let exact = Configuration::default().with_deserialization_size_limit::<8>();
