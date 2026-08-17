@@ -1144,24 +1144,6 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
     }
 }
 
-/// Capacity to reserve for a sequence read: the decoded length, or, with the
-/// `cap_unique_keys` marker, capped via [`crate::len::unique_key_capacity`] for
-/// collections that key on a unique `$key`.
-///
-/// Only referenced from `alloc`-gated collection impls.
-#[cfg(feature = "alloc")]
-macro_rules! seq_capacity {
-    ($key: ty, $len: expr) => {
-        $len
-    };
-    ($key: ty, $len: expr, cap_unique_keys) => {
-        $crate::len::unique_key_capacity::<$key>($len)
-    };
-}
-
-#[cfg(feature = "alloc")]
-pub(crate) use seq_capacity;
-
 /// Insert `$value` into `$set` with `$insert`, reporting whether it was already present.
 ///
 /// `push_back` onto a list has no notion of a duplicate, so it always reports `false`.
@@ -1234,7 +1216,7 @@ macro_rules! impl_seq_kv {
                     _,
                 >(
                     reader,
-                    |len| $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
+                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
                     |capacity| $with_capacity(capacity $(, $state::default())?),
                     |map, k, v| map.insert(k, v).is_some(),
                 )?;
@@ -1290,7 +1272,7 @@ macro_rules! impl_seq_v {
                     _,
                 >(
                     reader,
-                    |len| $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
+                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
                     |capacity| $with_capacity(capacity $(, $state::default())?),
                     |set, k| $crate::schema::impls::seq_insert_is_dup!(set, $insert, k),
                 )?;
