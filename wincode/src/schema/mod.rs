@@ -519,7 +519,7 @@ where
     write_elem_iter::<T, Len, C>(writer, src)
 }
 
-/// Variant of [`size_of_elem_iter`] for the key/value pairs of a map like collection.
+/// Variant of [`size_of_elem_iter`] for the key/value pairs of a map-like collection.
 #[inline(always)]
 #[allow(clippy::arithmetic_side_effects)]
 #[cfg(feature = "alloc")]
@@ -548,7 +548,7 @@ where
         })?)
 }
 
-/// Variant of [`write_elem_iter`] for the key/value pairs of a map like collection.
+/// Variant of [`write_elem_iter`] for the key/value pairs of a map-like collection.
 #[inline(always)]
 #[cfg(feature = "alloc")]
 fn write_kv_iter<'a, K, V, Len, C>(
@@ -570,10 +570,9 @@ where
     macro_rules! write_entries {
         ($w:expr) => {{
             Len::write($w.by_ref(), len)?;
-            // Unlike `write_elem_iter`, let the iterator drive the loop -- pulling `len`
-            // times through `next()` instead costs ~40% on hash table iterators. Hold it
-            // to its reported `len` either way, so the trusted window below is neither
-            // over-run nor left partly initialized.
+            // Driving this with `for _ in 0..len` + `next()` is ~40% slower on
+            // hash table iterators. `remaining` still bounds writes to the
+            // reported `len`.
             let mut remaining = len;
             for (k, v) in src {
                 let Some(next) = remaining.checked_sub(1) else {

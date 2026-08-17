@@ -1,16 +1,14 @@
 #[cfg(feature = "std")]
 use std::collections::hash_map::RandomState;
 use {
-    crate::{
-        containers::{map_container, set_container},
-        schema::impls::{impl_seq_kv, impl_seq_v},
-    },
+    crate::containers::{map_container, set_container},
     core::hash::{BuildHasher, Hash},
     indexmap::{IndexMap as ExtIndexMap, IndexSet as ExtIndexSet},
 };
 
 map_container! {
     #[cfg(all())]
+    /// Like [`HashMap`](crate::containers::HashMap), for [`IndexMap`](indexmap::IndexMap).
     IndexMap => ExtIndexMap<K: Hash | Eq, V, S: BuildHasher | Default = RandomState>,
     ExtIndexMap::with_capacity_and_hasher,
     cap_unique_keys
@@ -18,13 +16,11 @@ map_container! {
 
 set_container! {
     #[cfg(all())]
+    /// Like [`HashSet`](crate::containers::HashSet), for [`IndexSet`](indexmap::IndexSet).
     IndexSet => ExtIndexSet<K: Hash | Eq, S: BuildHasher | Default = RandomState>,
     ExtIndexSet::with_capacity_and_hasher,
     cap_unique_keys
 }
-
-impl_seq_kv! { "indexmap", ExtIndexMap<K: Hash | Eq, V, S: BuildHasher | Default>, ExtIndexMap::with_capacity_and_hasher, cap_unique_keys }
-impl_seq_v! { "indexmap", ExtIndexSet<K: Hash | Eq, S: BuildHasher | Default>, ExtIndexSet::with_capacity_and_hasher, insert, cap_unique_keys }
 
 #[cfg(test)]
 mod tests {

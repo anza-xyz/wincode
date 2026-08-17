@@ -3,6 +3,11 @@
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
+#[cfg(feature = "std")]
+use std::{
+    sync::{Mutex, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use {
     crate::{
         TypeMeta,
@@ -38,25 +43,20 @@ use {
 };
 #[cfg(feature = "alloc")]
 use {
-    crate::{containers, io::BorrowKind},
+    crate::{
+        containers,
+        io::BorrowKind,
+        schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
+    },
     alloc::{
         borrow::Cow,
         boxed::Box,
-        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+        collections::{BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
         string::String,
         vec::Vec,
     },
     core::mem,
-};
-#[cfg(feature = "std")]
-use {
-    core::hash::{BuildHasher, Hash},
-    std::{
-        collections::{HashMap, HashSet},
-        sync::{Mutex, RwLock},
-        time::{SystemTime, UNIX_EPOCH},
-    },
 };
 
 macro_rules! impl_int_config_dependent {
@@ -1144,152 +1144,53 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
     }
 }
 
-/// Insert `$value` into `$set` with `$insert`, reporting whether it was already present.
-///
-/// `push_back` onto a list has no notion of a duplicate, so it always reports `false`.
 #[cfg(feature = "alloc")]
-macro_rules! seq_insert_is_dup {
-    ($set: expr, insert, $value: expr) => {
-        !$set.insert($value)
-    };
-    ($set: expr, push_back, $value: expr) => {{
-        $set.push_back($value);
-        false
-    }};
+unsafe impl<T, C: Config> SchemaWrite<C> for LinkedList<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    type Src = LinkedList<T::Src>;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        size_of_elem_iter::<T, C::LengthEncoding, C>(src.iter())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        write_elem_iter_prealloc_check::<T, C::LengthEncoding, C>(writer, src.iter())
+    }
 }
 
 #[cfg(feature = "alloc")]
-pub(crate) use seq_insert_is_dup;
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for LinkedList<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = LinkedList<T::Dst>;
 
-/// Implement `SchemaWrite` and `SchemaRead` for types that may be iterated over sequentially.
-///
-/// Generally this should only be used on types for which we cannot provide an optimized implementation,
-/// and where the most optimal implementation is simply iterating over the type to write or collecting
-/// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
-///
-/// Pass a trailing `cap_unique_keys` for collections keyed on a unique key (see [`seq_capacity`]).
-macro_rules! impl_seq_kv {
-    ($feature: literal,
-     $target: ident<$key: ident : $($constraint:path)|*, $value: ident $(, $state:ident : $($state_constraint:path)|* )?>,
-     $with_capacity: expr
-     $(, $cap_unique_keys: ident)?) => {
-        #[cfg(feature = $feature)]
-        unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key, $value $(, $state)?>
-        where
-            $key: $crate::schema::SchemaWrite<C>,
-            $key::Src: Sized,
-            $value: $crate::schema::SchemaWrite<C>,
-            $value::Src: Sized
-            $($(, $state: $state_constraint+)*)?
-        {
-            type Src = $target<$key::Src, $value::Src $(, $state)?>;
-
-            #[inline]
-            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
-                $crate::schema::size_of_kv_iter::<$key, $value, C::LengthEncoding, C>(src.iter())
-            }
-
-            #[inline]
-            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
-                $crate::schema::write_kv_iter_prealloc_check::<$key, $value, C::LengthEncoding, C>(writer, src.iter())
-            }
-        }
-
-        #[cfg(feature = $feature)]
-        unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key, $value $(, $state)?>
-        where
-            $key: $crate::schema::SchemaRead<'de, C>,
-            $value: $crate::schema::SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
-
-            #[inline]
-            fn read(reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
-                let map = $crate::containers::read_kv_seq::<
-                    $key,
-                    $value,
-                    C::LengthEncoding,
-                    $crate::containers::AllowDuplicateKeys,
-                    C,
-                    _,
-                >(
-                    reader,
-                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
-                    |capacity| $with_capacity(capacity $(, $state::default())?),
-                    |map, k, v| map.insert(k, v).is_some(),
-                )?;
-                dst.write(map);
-                Ok(())
-            }
-        }
-    };
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let list = containers::read_elem_seq::<
+            T,
+            C::LengthEncoding,
+            containers::AllowDuplicateKeys,
+            C,
+            _,
+        >(
+            reader,
+            |len| len,
+            |_| LinkedList::new(),
+            |list, value| {
+                list.push_back(value);
+                false
+            },
+        )?;
+        dst.write(list);
+        Ok(())
+    }
 }
-
-pub(crate) use impl_seq_kv;
-
-macro_rules! impl_seq_v {
-    ($feature: literal,
-     $target: ident <$key: ident : $($constraint:path)|* $(, $state:ident : $($state_constraint:path)|*)?>,
-     $with_capacity: expr, $insert: ident
-     $(, $cap_unique_keys: ident)?) => {
-        #[cfg(feature = $feature)]
-        unsafe impl<C: $crate::config::Config, $key: $crate::schema::SchemaWrite<C> $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key $(, $state)?>
-        where
-            $key::Src: Sized
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Src = $target<$key::Src $(, $state)?>;
-
-            #[inline]
-            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
-                $crate::schema::size_of_elem_iter::<$key, C::LengthEncoding, C>(src.iter())
-            }
-
-            #[inline]
-            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
-                $crate::schema::write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
-            }
-        }
-
-        #[cfg(feature = $feature)]
-        unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key $(, $state)?>
-        where
-            $key: $crate::schema::SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Dst = $target<$key::Dst $(, $state)?>;
-
-            #[inline]
-            fn read(reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
-                let set = $crate::containers::read_elem_seq::<
-                    $key,
-                    C::LengthEncoding,
-                    $crate::containers::AllowDuplicateKeys,
-                    C,
-                    _,
-                >(
-                    reader,
-                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
-                    |capacity| $with_capacity(capacity $(, $state::default())?),
-                    |set, k| $crate::schema::impls::seq_insert_is_dup!(set, $insert, k),
-                )?;
-                dst.write(set);
-                Ok(())
-            }
-        }
-    };
-}
-
-pub(crate) use impl_seq_v;
-
-impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
-impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher, cap_unique_keys }
-impl_seq_v! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
-impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert, cap_unique_keys }
-impl_seq_v! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, C: Config> SchemaWrite<C> for BinaryHeap<T>

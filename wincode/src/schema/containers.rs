@@ -782,6 +782,47 @@ macro_rules! map_container {
                 Ok(())
             }
         }
+
+        #[cfg($cfg)]
+        unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaWrite<C>
+            for $target<$key, $value $(, $state)?>
+        where
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $value: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src, $value::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::size_of(src)
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::write(writer, src)
+            }
+        }
+
+        #[cfg($cfg)]
+        unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaRead<'de, C>
+            for $target<$key, $value $(, $state)?>
+        where
+            $key: $crate::SchemaRead<'de, C>,
+            $value: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaRead<'de, C>>::read(reader, dst)
+            }
+        }
     };
 }
 
@@ -848,6 +889,45 @@ macro_rules! set_container {
                 )?;
                 dst.write(set);
                 Ok(())
+            }
+        }
+
+        #[cfg($cfg)]
+        unsafe impl<C: $crate::config::Config, $key $(, $state)?> $crate::SchemaWrite<C>
+            for $target<$key $(, $state)?>
+        where
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::size_of(src)
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::write(writer, src)
+            }
+        }
+
+        #[cfg($cfg)]
+        unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::SchemaRead<'de, C>
+            for $target<$key $(, $state)?>
+        where
+            $key: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaRead<'de, C>>::read(reader, dst)
             }
         }
     };
