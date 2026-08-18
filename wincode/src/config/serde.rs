@@ -369,6 +369,169 @@ mod tests {
         assert_eq!(deserialize::<u64, _>(&bytes, disabled).unwrap(), 42);
     }
 
+    /// Slice paths enforce the limit through the available input length, while generic paths
+    /// track cumulative reservations with [`LimitReader`](crate::io::LimitReader). Ordinary
+    /// deserialization must accept and reject the same inputs at the same limits.
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn slice_and_generic_paths_agree_at_every_limit() {
+        macro_rules! check {
+            ($ty:ty, $val:expr, $($limit:literal),+) => {$({
+                let bytes = crate::serialize(&$val).unwrap();
+                let cfg = Configuration::default().with_deserialization_size_limit::<$limit>();
+                let via_slice = deserialize::<$ty, _>(&bytes, cfg);
+                let via_reader = deserialize_from::<$ty, _>(bytes.as_slice(), cfg);
+                assert_eq!(
+                    via_slice.is_ok(),
+                    via_reader.is_ok(),
+                    "{} at limit {}: slice={:?} reader={:?}",
+                    stringify!($ty),
+                    $limit,
+                    via_slice.as_ref().err(),
+                    via_reader.as_ref().err(),
+                );
+                if let (Err(a), Err(b)) = (via_slice, via_reader) {
+                    assert_eq!(
+                        alloc::format!("{a:?}"),
+                        alloc::format!("{b:?}"),
+                        "{} at limit {}: differing errors",
+                        stringify!($ty),
+                        $limit,
+                    );
+                }
+            })+};
+        }
+
+        // `Vec<u32>`: 8-byte length prefix followed by a trusted window of `4 * len` bytes.
+        check!(
+            alloc::vec::Vec<u32>,
+            alloc::vec![1u32, 2, 3],
+            0,
+            1,
+            7,
+            8,
+            9,
+            12,
+            16,
+            19,
+            20,
+            21,
+            100
+        );
+        // `Vec<String>`: nested length prefixes and no single trusted window.
+        check!(
+            alloc::vec::Vec<alloc::string::String>,
+            alloc::vec![
+                alloc::string::String::from("ab"),
+                alloc::string::String::from("cde")
+            ],
+            0,
+            8,
+            16,
+            18,
+            26,
+            29,
+            30,
+            31
+        );
+        // Fixed-size types.
+        check!(u64, 42u64, 0, 4, 7, 8, 9);
+        check!(core::ops::Range<u32>, 0u32..5, 0, 4, 7, 8, 9);
+    }
+
+    #[test]
+    fn every_entrypoint_enforces_the_limit() {
+        let bytes = 42u64.to_le_bytes();
+        let short = Configuration::default().with_deserialization_size_limit::<4>();
+        let exact = Configuration::default().with_deserialization_size_limit::<8>();
+
+        let mut dst = MaybeUninit::<u64>::uninit();
+        assert!(matches!(
+            <u64 as Deserialize<_>>::deserialize_into(&bytes, &mut dst, short),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+        assert!(<u64 as Deserialize<_>>::deserialize_into(&bytes, &mut dst, exact).is_ok());
+
+        // `deserialize_from_into` takes no config argument, so bind `C` through a call.
+        fn from_into<C: Config>(src: &[u8], _config: C) -> ReadResult<u64> {
+            let mut dst = MaybeUninit::uninit();
+            <u64 as DeserializeOwned<C>>::deserialize_from_into(src, &mut dst)?;
+            // SAFETY: `deserialize_from_into` returned `Ok`, initializing `dst`.
+            Ok(unsafe { dst.assume_init() })
+        }
+        assert!(matches!(
+            from_into(bytes.as_slice(), short),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+        assert_eq!(from_into(bytes.as_slice(), exact).unwrap(), 42);
+
+        let mut mutable = bytes;
+        assert!(matches!(
+            deserialize_mut::<u64, _>(&mut mutable, short),
+            Err(ReadError::Io(IoReadError::ReadSizeLimit(8)))
+        ));
+        assert_eq!(deserialize_mut::<u64, _>(&mut mutable, exact).unwrap(), 42);
+
+        #[cfg(feature = "alloc")]
+        {
+            // `Vec<u32>` with a caller-supplied length reads `4 * len` bytes and no length prefix.
+            let elements = crate::serialize(&[1u32, 2, 3]).unwrap();
+            assert_eq!(elements.len(), 12);
+            assert!(matches!(
+                deserialize_with_context::<_, alloc::vec::Vec<u32>, _>(
+                    crate::schema::context::Len(3),
+                    &elements,
+                    short,
+                ),
+                Err(ReadError::Io(IoReadError::ReadSizeLimit(_)))
+            ));
+            let twelve = Configuration::default().with_deserialization_size_limit::<12>();
+            assert_eq!(
+                deserialize_with_context::<_, alloc::vec::Vec<u32>, _>(
+                    crate::schema::context::Len(3),
+                    &elements,
+                    twelve,
+                )
+                .unwrap(),
+                alloc::vec![1, 2, 3],
+            );
+        }
+    }
+
+    #[test]
+    fn limit_larger_than_input_is_clamped() {
+        let bytes = 42u64.to_le_bytes();
+        let generous = Configuration::default().with_deserialization_size_limit::<1024>();
+
+        assert_eq!(deserialize::<u64, _>(&bytes, generous).unwrap(), 42);
+        assert_eq!(deserialize_exact::<u64, _>(&bytes, generous).unwrap(), 42);
+        assert_eq!(
+            deserialize_from::<u64, _>(bytes.as_slice(), generous).unwrap(),
+            42
+        );
+
+        let mut mutable = bytes;
+        assert_eq!(
+            deserialize_mut::<u64, _>(&mut mutable, generous).unwrap(),
+            42
+        );
+
+        let mut one = [7u8];
+        assert_eq!(*<u8 as ZeroCopy<_>>::from_bytes(&one, generous).unwrap(), 7);
+        assert_eq!(
+            *<u8 as ZeroCopy<_>>::from_bytes_mut(&mut one, generous).unwrap(),
+            7
+        );
+
+        // Trailing bytes are still detected when the limit exceeds the input.
+        let mut trailing = [0u8; 9];
+        trailing[..8].copy_from_slice(&bytes);
+        assert!(matches!(
+            deserialize_exact::<u64, _>(&trailing, generous),
+            Err(ReadError::TrailingBytes)
+        ));
+    }
+
     #[test]
     fn zero_copy_deserialization_honors_limit() {
         let bytes = [42u8];
