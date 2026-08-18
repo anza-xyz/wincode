@@ -81,15 +81,15 @@ macro_rules! maybe_size_limit {
     };
 
     (@reader slice, $src:ident, $limit:ident) => {{
-        let mut src = $src;
+        let src = $src;
         let len = $limit.min(src.len());
-        src.take_borrowed(len).unwrap()
+        &src[..len]
     }};
 
     (@reader slice_mut, $src:ident, $limit:ident) => {{
-        let mut src = $src;
+        let src = $src;
         let len = $limit.min(src.len());
-        src.take_borrowed_mut(len).unwrap()
+        &mut src[..len]
     }};
 }
 
