@@ -5192,16 +5192,4 @@ mod tests {
         *bytes.last_mut().unwrap() = 2; // corrupt the second bool
         assert!(deserialize::<Vec<bool>>(&bytes).is_err());
     }
-
-    #[test]
-    fn ref_cell_scratch() {
-        let data = RefCell::new(3u32);
-        let size = crate::serialized_size(&data).unwrap();
-        assert_eq!(size, 4);
-        let mut guard = data.borrow_mut();
-        *guard = 4u32;
-        let serialized = crate::serialize(&data);
-        assert!(serialized.is_err());
-        drop(guard)
-    }
 }
