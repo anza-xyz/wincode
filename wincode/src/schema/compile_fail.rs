@@ -377,3 +377,57 @@ fn uninit_builder_read_forbids_lifetime_launder() {}
 /// ```
 #[cfg(feature = "derive")]
 fn uninit_builder_read_requires_exact_field_dst() {}
+
+/// An `assert_zero_copy` derive must reject a type whose write metadata is dynamic,
+/// even if its read metadata claims that it is static and zero-copy.
+///
+/// ```compile_fail
+/// # #[cfg(all(feature = "derive"))] {
+/// use core::mem::MaybeUninit;
+/// use wincode::{
+///     config::{Config, ConfigCore, DefaultConfig, ZeroCopy},
+///     io::{Reader, Writer},
+///     ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,
+/// };
+///
+/// struct AsymMeta(u8);
+///
+/// unsafe impl<C: ConfigCore> ZeroCopy<C> for AsymMeta {}
+///
+/// unsafe impl<C: Config> SchemaWrite<C> for AsymMeta {
+///     type Src = Self;
+///
+///     const TYPE_META: TypeMeta = TypeMeta::Dynamic;
+///
+///     fn size_of(_src: &Self::Src) -> WriteResult<usize> {
+///         Ok(1)
+///     }
+///
+///     fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+///         <u8 as SchemaWrite<C>>::write(writer, &src.0)
+///     }
+/// }
+///
+/// unsafe impl<'de, C: Config> SchemaRead<'de, C> for AsymMeta {
+///     type Dst = Self;
+///
+///     const TYPE_META: TypeMeta = TypeMeta::Static {
+///         size: 1,
+///         zero_copy: true,
+///     };
+///
+///     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+///         dst.write(AsymMeta(<u8 as SchemaRead<'de, C>>::get(reader)?));
+///         Ok(())
+///     }
+/// }
+///
+/// #[repr(transparent)]
+/// #[derive(SchemaWrite, SchemaRead)]
+/// #[wincode(assert_zero_copy(schema = "both"))]
+/// struct WrapperWriteDynamic(AsymMeta);
+///
+/// let _ = <WrapperWriteDynamic as SchemaWrite<DefaultConfig>>::TYPE_META;
+/// # }
+/// ```
+fn assert_zero_copy_schema_write_rejects_dynamic_write_meta() {}
