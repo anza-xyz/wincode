@@ -676,5 +676,7 @@ pub mod std_write;
 #[cfg(feature = "alloc")]
 mod vec;
 pub use cursor::Cursor;
+mod limit_reader;
 #[cfg(test)]
 pub(crate) mod test_util;
+pub use limit_reader::*;
