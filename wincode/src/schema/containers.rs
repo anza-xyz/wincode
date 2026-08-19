@@ -98,7 +98,7 @@ use {
 use {
     crate::{
         context,
-        error::{duplicate_key, read_length_encoding_overflow},
+        error::read_length_encoding_overflow,
         schema::{
             SchemaReadContext, size_of_elem_slice, write_elem_iter_prealloc_check,
             write_elem_slice_prealloc_check,
@@ -550,10 +550,25 @@ where
 /// How a keyed collection schema reacts when the encoded sequence repeats a key.
 ///
 /// Default is [`AllowDuplicateKeys`]. See [`HashMap`] for an example.
-pub trait DuplicateKeyPolicy {
+pub trait DuplicateKeyPolicy: sealed::Sealed {
     /// Whether a repeated key aborts the read with
     /// [`ReadError::Custom`](crate::error::ReadError::Custom).
     const REJECT_DUPLICATES: bool;
+
+    /// Fail the read if the entry just decoded collided with an earlier one.
+    #[inline(always)]
+    fn check(collided: bool) -> ReadResult<()> {
+        if Self::REJECT_DUPLICATES && collided {
+            return Err(crate::error::duplicate_key());
+        }
+        Ok(())
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::AllowDuplicateKeys {}
+    impl Sealed for super::CheckUniqueKeys {}
 }
 
 /// A repeated key overwrites the entry decoded for it earlier (last one wins).
@@ -617,10 +632,7 @@ where
             for _ in 0..len {
                 let k = K::get($reader.by_ref())?;
                 let v = V::get($reader.by_ref())?;
-                let replaced = insert(&mut map, k, v);
-                if Dup::REJECT_DUPLICATES && replaced {
-                    return Err(duplicate_key());
-                }
+                Dup::check(insert(&mut map, k, v))?;
             }
             map
         }};
@@ -670,10 +682,7 @@ where
             // Reserve capacity, capped for unique keys; iteration still uses `len`.
             let mut set = make(capacity(len));
             for _ in 0..len {
-                let present = insert(&mut set, T::get($reader.by_ref())?);
-                if Dup::REJECT_DUPLICATES && present {
-                    return Err(duplicate_key());
-                }
+                Dup::check(insert(&mut set, T::get($reader.by_ref())?))?;
             }
             set
         }};
@@ -697,41 +706,41 @@ where
 macro_rules! map_container {
     // The default hasher lives in `std`, so a stateful container's parameter defaults
     // are only available there; `no_std` builds name every parameter explicitly.
-    (@struct #[cfg($cfg:meta)] $(#[$meta:meta])* $name:ident<$($generic:ident),*>) => {
-        $(#[$meta])*
-        #[cfg($cfg)]
+    (@struct $(#[cfg($cfg:meta)])? $(#[doc = $doc:expr])* $name:ident<$($generic:ident),*>) => {
+        $(#[doc = $doc])*
+        $(#[cfg($cfg)])?
         pub struct $name<$($generic,)* Len, Dup = $crate::containers::AllowDuplicateKeys>(
             core::marker::PhantomData<($($generic,)* Len, Dup)>,
         );
     };
-    (@struct #[cfg($cfg:meta)] $(#[$meta:meta])* $name:ident<$($generic:ident),*>, $state:ident = $state_default:ty) => {
-        $(#[$meta])*
-        #[cfg(all($cfg, feature = "std"))]
+    (@struct $(#[cfg($cfg:meta)])? $(#[doc = $doc:expr])* $name:ident<$($generic:ident),*>, $state:ident = $state_default:ty) => {
+        $(#[doc = $doc])*
+        #[cfg(all($($cfg,)? feature = "std"))]
         pub struct $name<
             $($generic,)*
             Len,
             Dup = $crate::containers::AllowDuplicateKeys,
             $state = $state_default,
         >(core::marker::PhantomData<($($generic,)* Len, Dup, $state)>);
-        $(#[$meta])*
-        #[cfg(all($cfg, not(feature = "std")))]
+        $(#[doc = $doc])*
+        #[cfg(all($($cfg,)? not(feature = "std")))]
         pub struct $name<$($generic,)* Len, Dup, $state>(
             core::marker::PhantomData<($($generic,)* Len, Dup, $state)>,
         );
     };
     (
-        #[cfg($cfg:meta)]
-        $(#[$meta:meta])*
+        $(#[cfg($cfg:meta)])?
+        $(#[doc = $doc:expr])*
         $name:ident => $target:ident<$key:ident : $($constraint:path)|*, $value:ident
             $(, $state:ident : $($state_constraint:path)|* = $state_default:ty)?>,
         $with_capacity:expr
         $(, $cap_unique_keys:ident)?
     ) => {
         $crate::containers::map_container! {
-            @struct #[cfg($cfg)] $(#[$meta])* $name<$key, $value> $(, $state = $state_default)?
+            @struct $(#[cfg($cfg)])? $(#[doc = $doc])* $name<$key, $value> $(, $state = $state_default)?
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<C: $crate::config::ConfigCore, $key, $value, Len, Dup $(, $state)?>
             $crate::SchemaWrite<C> for $name<$key, $value, Len, Dup $(, $state)?>
         where
@@ -753,7 +762,7 @@ macro_rules! map_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<'de, C: $crate::config::ConfigCore, $key, $value, Len, Dup $(, $state)?>
             $crate::SchemaRead<'de, C> for $name<$key, $value, Len, Dup $(, $state)?>
         where
@@ -782,7 +791,7 @@ macro_rules! map_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaWrite<C>
             for $target<$key, $value $(, $state)?>
         where
@@ -803,7 +812,7 @@ macro_rules! map_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaRead<'de, C>
             for $target<$key, $value $(, $state)?>
         where
@@ -830,18 +839,18 @@ pub(crate) use map_container;
 /// [`map_container!`] for set-like collections, which key on the element itself.
 macro_rules! set_container {
     (
-        #[cfg($cfg:meta)]
-        $(#[$meta:meta])*
+        $(#[cfg($cfg:meta)])?
+        $(#[doc = $doc:expr])*
         $name:ident => $target:ident<$key:ident : $($constraint:path)|*
             $(, $state:ident : $($state_constraint:path)|* = $state_default:ty)?>,
         $with_capacity:expr
         $(, $cap_unique_keys:ident)?
     ) => {
         $crate::containers::map_container! {
-            @struct #[cfg($cfg)] $(#[$meta])* $name<$key> $(, $state = $state_default)?
+            @struct $(#[cfg($cfg)])? $(#[doc = $doc])* $name<$key> $(, $state = $state_default)?
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<C: $crate::config::ConfigCore, $key, Len, Dup $(, $state)?>
             $crate::SchemaWrite<C> for $name<$key, Len, Dup $(, $state)?>
         where
@@ -862,7 +871,7 @@ macro_rules! set_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<'de, C: $crate::config::ConfigCore, $key, Len, Dup $(, $state)?>
             $crate::SchemaRead<'de, C> for $name<$key, Len, Dup $(, $state)?>
         where
@@ -891,7 +900,7 @@ macro_rules! set_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<C: $crate::config::Config, $key $(, $state)?> $crate::SchemaWrite<C>
             for $target<$key $(, $state)?>
         where
@@ -911,7 +920,7 @@ macro_rules! set_container {
             }
         }
 
-        #[cfg($cfg)]
+        $(#[cfg($cfg)])?
         unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::SchemaRead<'de, C>
             for $target<$key $(, $state)?>
         where

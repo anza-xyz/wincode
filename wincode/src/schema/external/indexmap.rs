@@ -7,7 +7,6 @@ use {
 };
 
 map_container! {
-    #[cfg(all())]
     /// Like [`HashMap`](crate::containers::HashMap), for [`IndexMap`](indexmap::IndexMap).
     IndexMap => ExtIndexMap<K: Hash | Eq, V, S: BuildHasher | Default = RandomState>,
     ExtIndexMap::with_capacity_and_hasher,
@@ -15,7 +14,6 @@ map_container! {
 }
 
 set_container! {
-    #[cfg(all())]
     /// Like [`HashSet`](crate::containers::HashSet), for [`IndexSet`](indexmap::IndexSet).
     IndexSet => ExtIndexSet<K: Hash | Eq, S: BuildHasher | Default = RandomState>,
     ExtIndexSet::with_capacity_and_hasher,
