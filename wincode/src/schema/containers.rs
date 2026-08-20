@@ -71,9 +71,6 @@
 //! assert!(matches!(Strict::deserialize(&bytes), Err(ReadError::DuplicateKey(_))));
 //! # }
 //! ```
-//!
-//! To flip the default for every keyed collection at once, see
-//! [`enable_strict_map_set`](crate::config::Configuration::enable_strict_map_set).
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 #[cfg(feature = "std")]
@@ -557,52 +554,30 @@ where
 
 /// How a keyed collection schema reacts when the encoded sequence repeats a key.
 ///
-/// Default is [`UseConfig`], so naming a policy explicitly overrides the configuration.
-///
-/// See [`HashMap`] for an example.
+/// Default is [`AllowDuplicateKeys`]. See [`HashMap`] for an example.
 pub trait DuplicateKeyPolicy {
     /// Whether a repeated key aborts the read with
     /// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey).
-    ///
-    /// A method rather than an associated constant only because [`UseConfig`] needs `C`
-    /// to answer; it resolves to a constant once monomorphized either way.
-    fn reject_duplicates<C: ConfigCore>() -> bool;
+    const REJECT_DUPLICATES: bool;
 }
 
-/// Defer to [`ConfigCore::STRICT_MAP_SET`](crate::config::ConfigCore::STRICT_MAP_SET),
-/// which is itself permissive by default.
-pub struct UseConfig;
-
-impl DuplicateKeyPolicy for UseConfig {
-    #[inline(always)]
-    fn reject_duplicates<C: ConfigCore>() -> bool {
-        C::STRICT_MAP_SET
-    }
-}
-
-/// A repeated key overwrites the entry decoded for it earlier (last one wins),
-/// whatever the configuration says.
+/// A repeated key overwrites the entry decoded for it earlier (last one wins).
+///
+/// This matches `bincode` and `serde`.
 pub struct AllowDuplicateKeys;
 
 impl DuplicateKeyPolicy for AllowDuplicateKeys {
-    #[inline(always)]
-    fn reject_duplicates<C: ConfigCore>() -> bool {
-        false
-    }
+    const REJECT_DUPLICATES: bool = false;
 }
 
 /// A repeated key aborts the read with
-/// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey), whatever the
-/// configuration says.
+/// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey).
 ///
 /// Only constrains decoding; an already-keyed collection cannot encode a duplicate.
 pub struct CheckUniqueKeys;
 
 impl DuplicateKeyPolicy for CheckUniqueKeys {
-    #[inline(always)]
-    fn reject_duplicates<C: ConfigCore>() -> bool {
-        true
-    }
+    const REJECT_DUPLICATES: bool = true;
 }
 
 /// Read a length-prefixed sequence of key/value pairs into a map like collection,
@@ -632,7 +607,7 @@ where
                 let k = K::get($reader.by_ref())?;
                 let v = V::get($reader.by_ref())?;
                 let replaced = insert(&mut map, k, v);
-                if Dup::reject_duplicates::<C>() && replaced {
+                if Dup::REJECT_DUPLICATES && replaced {
                     return Err(duplicate_key(type_name::<K::Dst>()));
                 }
             }
@@ -685,7 +660,7 @@ where
             let mut set = make(capacity(len));
             for _ in 0..len {
                 let present = insert(&mut set, T::get($reader.by_ref())?);
-                if Dup::reject_duplicates::<C>() && present {
+                if Dup::REJECT_DUPLICATES && present {
                     return Err(duplicate_key(type_name::<T::Dst>()));
                 }
             }
@@ -719,7 +694,7 @@ macro_rules! map_container {
     ) => {
         $(#[$meta])*
         #[cfg($cfg)]
-        pub struct $name<$key, $value, Len, Dup = UseConfig $(, $state = $state_default)?>(
+        pub struct $name<$key, $value, Len, Dup = AllowDuplicateKeys $(, $state = $state_default)?>(
             PhantomData<($key, $value, Len, Dup $(, $state)?)>,
         );
 
@@ -785,7 +760,7 @@ macro_rules! set_container {
     ) => {
         $(#[$meta])*
         #[cfg($cfg)]
-        pub struct $name<$key, Len, Dup = UseConfig $(, $state = $state_default)?>(
+        pub struct $name<$key, Len, Dup = AllowDuplicateKeys $(, $state = $state_default)?>(
             PhantomData<($key, Len, Dup $(, $state)?)>,
         );
 
@@ -1435,127 +1410,6 @@ mod keyed_tests {
 
         // The `u16` prefix is not interchangeable with the default `u64` one.
         assert!(<containers::BTreeMap<u32, u64, BincodeLen>>::deserialize(&bytes).is_err());
-    }
-
-    /// Nested so that only the configuration-aware `Deserialize` is in scope; the outer
-    /// module imports the `DefaultConfig`-only one of the same name.
-    mod config_knob {
-        use {
-            super::{dup_elem_set_bytes, dup_key_map_bytes},
-            crate::{
-                ReadError,
-                config::{DefaultConfig, Deserialize},
-                containers::{self, AllowDuplicateKeys, CheckUniqueKeys},
-                deserialize,
-                len::BincodeLen,
-                serialize,
-            },
-            std::collections::{BTreeMap, BTreeSet, HashMap, HashSet},
-        };
-
-        /// A bare `HashMap<u32, u64>` field has no attribute to hang a policy on, so the
-        /// configuration has to reach the plain schemas.
-        #[test]
-        fn config_drives_the_plain_schemas() {
-            let strict = DefaultConfig::new().enable_strict_map_set();
-            let bytes = dup_key_map_bytes();
-
-            assert_eq!(deserialize::<HashMap<u32, u64>>(&bytes).unwrap().len(), 1);
-            assert!(matches!(
-                <HashMap<u32, u64>>::deserialize(&bytes, strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-            assert!(matches!(
-                <BTreeMap<u32, u64>>::deserialize(&bytes, strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-
-            let bytes = dup_elem_set_bytes();
-            assert!(matches!(
-                <HashSet<u32>>::deserialize(&bytes, strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-            assert!(matches!(
-                <BTreeSet<u32>>::deserialize(&bytes, strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-
-            // Unique input is unaffected.
-            let map = BTreeMap::from([(1u32, 10u64), (2, 20)]);
-            let bytes = serialize(&map).unwrap();
-            assert_eq!(
-                <BTreeMap<u32, u64>>::deserialize(&bytes, strict).unwrap(),
-                map,
-            );
-        }
-
-        /// The knob composes with the rest of the builder in either order.
-        #[test]
-        fn config_knob_composes() {
-            let bytes = dup_key_map_bytes();
-
-            let strict_then_varint = DefaultConfig::new()
-                .enable_strict_map_set()
-                .with_varint_encoding();
-            let varint_then_strict = DefaultConfig::new()
-                .with_varint_encoding()
-                .enable_strict_map_set();
-            let round_tripped_off = varint_then_strict.disable_strict_map_set();
-
-            // Varint changes the encoding, so re-encode under the same configuration.
-            let varint_bytes =
-                crate::config::serialize(&vec![(1u32, 10u64), (1, 20)], strict_then_varint)
-                    .unwrap();
-
-            assert!(matches!(
-                <BTreeMap<u32, u64>>::deserialize(&varint_bytes, strict_then_varint),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-            assert!(matches!(
-                <BTreeMap<u32, u64>>::deserialize(&varint_bytes, varint_then_strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-            assert_eq!(
-                <BTreeMap<u32, u64>>::deserialize(&varint_bytes, round_tripped_off)
-                    .unwrap()
-                    .len(),
-                1,
-            );
-
-            assert!(matches!(
-                <BTreeMap<u32, u64>>::deserialize(
-                    &bytes,
-                    DefaultConfig::new().enable_strict_map_set(),
-                ),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-        }
-
-        /// A named policy overrides the configuration in both directions; the
-        /// `UseConfig` default follows it.
-        #[test]
-        fn field_policy_overrides_the_config() {
-            let lenient = DefaultConfig::new();
-            let strict = DefaultConfig::new().enable_strict_map_set();
-            let bytes = dup_key_map_bytes();
-
-            type Follows = containers::BTreeMap<u32, u64, BincodeLen>;
-            type AlwaysStrict = containers::BTreeMap<u32, u64, BincodeLen, CheckUniqueKeys>;
-            type AlwaysLenient = containers::BTreeMap<u32, u64, BincodeLen, AllowDuplicateKeys>;
-
-            assert!(Follows::deserialize(&bytes, lenient).is_ok());
-            assert!(matches!(
-                Follows::deserialize(&bytes, strict),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-
-            // Explicit policies ignore the configuration.
-            assert!(matches!(
-                AlwaysStrict::deserialize(&bytes, lenient),
-                Err(ReadError::DuplicateKey(_)),
-            ));
-            assert!(AlwaysLenient::deserialize(&bytes, strict).is_ok());
-        }
     }
 
     #[cfg(feature = "indexmap")]

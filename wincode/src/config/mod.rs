@@ -42,7 +42,6 @@ pub const DESERIALIZATION_SIZE_LIMIT_DISABLED: usize = usize::MAX;
 /// - Integer encoding is [`FixInt`].
 /// - Tag encoding is [`u32`].
 /// - Deserialization size limiting is disabled.
-/// - Strict map/set decoding is disabled.
 pub struct Configuration<
     const ZERO_COPY_ALIGN_CHECK: bool = true,
     const PREALLOCATION_SIZE_LIMIT: usize = DEFAULT_PREALLOCATION_SIZE_LIMIT,
@@ -51,7 +50,6 @@ pub struct Configuration<
     IntEncoding = FixInt,
     TagEncoding = u32,
     const DESERIALIZATION_SIZE_LIMIT: usize = DEFAULT_DESERIALIZATION_SIZE_LIMIT,
-    const STRICT_MAP_SET: bool = false,
 > {
     _l: PhantomData<LengthEncoding>,
     _b: PhantomData<ByteOrder>,
@@ -67,7 +65,6 @@ impl<
     ByteOrder,
     IntEncoding,
     TagEncoding,
-    const STRICT_MAP_SET: bool,
 > Clone
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -77,7 +74,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 {
     fn clone(&self) -> Self {
@@ -93,7 +89,6 @@ impl<
     ByteOrder,
     IntEncoding,
     TagEncoding,
-    const STRICT_MAP_SET: bool,
 > Copy
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -103,7 +98,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 {
 }
@@ -116,7 +110,6 @@ const fn generate<
     ByteOrder,
     IntEncoding,
     TagEncoding,
-    const STRICT_MAP_SET: bool,
 >() -> Configuration<
     ZERO_COPY_ALIGN_CHECK,
     PREALLOCATION_SIZE_LIMIT,
@@ -125,7 +118,6 @@ const fn generate<
     IntEncoding,
     TagEncoding,
     DESERIALIZATION_SIZE_LIMIT,
-    STRICT_MAP_SET,
 > {
     Configuration {
         _l: PhantomData,
@@ -145,7 +137,6 @@ impl Configuration {
     /// - Byte order is [`LittleEndian`].
     /// - Integer encoding is [`FixInt`].
     /// - Deserialization size limit is disabled.
-    /// - Strict map/set decoding is disabled.
     pub const fn default() -> DefaultConfig {
         generate()
     }
@@ -160,7 +151,6 @@ impl<
     ByteOrder,
     IntEncoding,
     TagEncoding,
-    const STRICT_MAP_SET: bool,
 >
     Configuration<
         true,
@@ -170,7 +160,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 {
     // This impl is deliberately bounded to `ZERO_COPY_ALIGN_CHECK == true` rather than
@@ -193,7 +182,6 @@ impl<
     ByteOrder,
     IntEncoding,
     TagEncoding,
-    const STRICT_MAP_SET: bool,
 >
     Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -203,7 +191,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 {
     /// Use the given [`SeqLen`] implementation for sequence length encoding.
@@ -222,7 +209,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
     where
         Configuration<
@@ -233,7 +219,6 @@ impl<
             IntEncoding,
             TagEncoding,
             DESERIALIZATION_SIZE_LIMIT,
-            STRICT_MAP_SET,
         >: Config,
     {
         generate()
@@ -255,7 +240,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -273,7 +257,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -292,7 +275,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -311,7 +293,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -329,7 +310,6 @@ impl<
         FixInt,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -353,7 +333,6 @@ impl<
         VarInt,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -373,7 +352,6 @@ impl<
         I,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
     where
         Configuration<
@@ -384,7 +362,6 @@ impl<
             I,
             TagEncoding,
             DESERIALIZATION_SIZE_LIMIT,
-            STRICT_MAP_SET,
         >: Config,
     {
         generate()
@@ -407,7 +384,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -439,7 +415,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -462,7 +437,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -480,7 +454,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     > {
         generate()
     }
@@ -501,7 +474,6 @@ impl<
         IntEncoding,
         T,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
     where
         Configuration<
@@ -512,7 +484,6 @@ impl<
             IntEncoding,
             T,
             DESERIALIZATION_SIZE_LIMIT,
-            STRICT_MAP_SET,
         >: Config,
     {
         generate()
@@ -543,51 +514,6 @@ impl<
         IntEncoding,
         TagEncoding,
         LIMIT,
-        STRICT_MAP_SET,
-    > {
-        generate()
-    }
-
-    /// Reject a repeated key when decoding a map or set, instead of letting the last
-    /// entry for it win.
-    ///
-    /// Decoding fails with
-    /// [`ReadError::DuplicateKey`](crate::error::ReadError::DuplicateKey) instead. Applies
-    /// to `HashMap`, `BTreeMap`, `HashSet`, `BTreeSet`, `IndexMap` and `IndexSet`.
-    ///
-    /// This is disabled by default.
-    ///
-    /// Note that this default can be overridden for individual cases by naming a
-    /// [`DuplicateKeyPolicy`](crate::containers::DuplicateKeyPolicy) on a
-    /// [`containers`](crate::containers) keyed collection.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # #[cfg(feature = "std")] {
-    /// # use std::collections::HashMap;
-    /// # use wincode::{ReadError, config::{DefaultConfig, Deserialize}};
-    /// let strict = DefaultConfig::new().enable_strict_map_set();
-    /// let bytes = wincode::serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap();
-    ///
-    /// assert_eq!(wincode::deserialize::<HashMap<u32, u64>>(&bytes).unwrap().len(), 1);
-    /// assert!(matches!(
-    ///     <HashMap<u32, u64>>::deserialize(&bytes, strict),
-    ///     Err(ReadError::DuplicateKey(_)),
-    /// ));
-    /// # }
-    /// ```
-    pub const fn enable_strict_map_set(
-        self,
-    ) -> Configuration<
-        ZERO_COPY_ALIGN_CHECK,
-        PREALLOCATION_SIZE_LIMIT,
-        LengthEncoding,
-        ByteOrder,
-        IntEncoding,
-        TagEncoding,
-        DESERIALIZATION_SIZE_LIMIT,
-        true,
     > {
         generate()
     }
@@ -607,25 +533,6 @@ impl<
         IntEncoding,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT_DISABLED,
-        STRICT_MAP_SET,
-    > {
-        generate()
-    }
-
-    /// Accept a repeated key when decoding a map or set, letting the last entry win.
-    ///
-    /// This is the default. See [`enable_strict_map_set`](Self::enable_strict_map_set).
-    pub const fn disable_strict_map_set(
-        self,
-    ) -> Configuration<
-        ZERO_COPY_ALIGN_CHECK,
-        PREALLOCATION_SIZE_LIMIT,
-        LengthEncoding,
-        ByteOrder,
-        IntEncoding,
-        TagEncoding,
-        DESERIALIZATION_SIZE_LIMIT,
-        false,
     > {
         generate()
     }
@@ -649,11 +556,6 @@ pub trait ConfigCore: 'static + Sized {
     /// calls to [`SchemaRead`](crate::SchemaRead).
     const DESERIALIZATION_SIZE_LIMIT: Option<usize> = None;
 
-    /// Whether decoding a keyed collection rejects a repeated key.
-    ///
-    /// Read by the [`UseConfig`](crate::containers::UseConfig) duplicate key policy, which
-    /// keyed collections use unless a policy is named explicitly.
-    const STRICT_MAP_SET: bool = false;
     type ByteOrder: ByteOrder;
     type IntEncoding: IntEncoding<Self::ByteOrder>;
 }
@@ -666,7 +568,6 @@ impl<
     B,
     I,
     TagEncoding: 'static,
-    const STRICT_MAP_SET: bool,
 > ConfigCore
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -676,7 +577,6 @@ impl<
         I,
         TagEncoding,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 where
     B: ByteOrder,
@@ -696,7 +596,6 @@ where
             Some(DESERIALIZATION_SIZE_LIMIT)
         };
 
-    const STRICT_MAP_SET: bool = STRICT_MAP_SET;
     type ByteOrder = B;
     type IntEncoding = I;
 }
@@ -719,7 +618,6 @@ impl<
     B,
     I,
     T,
-    const STRICT_MAP_SET: bool,
 > Config
     for Configuration<
         ZERO_COPY_ALIGN_CHECK,
@@ -729,7 +627,6 @@ impl<
         I,
         T,
         DESERIALIZATION_SIZE_LIMIT,
-        STRICT_MAP_SET,
     >
 where
     LengthEncoding: SeqLen<Self>,

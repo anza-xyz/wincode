@@ -1229,7 +1229,7 @@ macro_rules! impl_seq_kv {
                     $key,
                     $value,
                     C::LengthEncoding,
-                    $crate::containers::UseConfig,
+                    $crate::containers::AllowDuplicateKeys,
                     C,
                     _,
                 >(
@@ -1285,7 +1285,7 @@ macro_rules! impl_seq_v {
                 let set = $crate::containers::read_elem_seq::<
                     $key,
                     C::LengthEncoding,
-                    $crate::containers::UseConfig,
+                    $crate::containers::AllowDuplicateKeys,
                     C,
                     _,
                 >(
