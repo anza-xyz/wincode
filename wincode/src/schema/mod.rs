@@ -454,6 +454,11 @@ where
     size_of_elem_iter::<T, Len, C>(value.iter())
 }
 
+#[cold]
+fn short_iter() -> crate::WriteError {
+    crate::WriteError::Custom("ExactSizeIterator yielded fewer elements than its reported len()")
+}
+
 #[inline(always)]
 fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
@@ -464,13 +469,6 @@ where
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
 {
-    #[cold]
-    fn short_iter() -> crate::WriteError {
-        crate::WriteError::Custom(
-            "ExactSizeIterator yielded fewer elements than its reported len()",
-        )
-    }
-
     // Drive everything from the reported length rather than trusting the iterator to
     // stop on its own: `0..len` caps writes at `len` (no over-run of the trusted
     // window), and `short_iter` errors on early exhaustion (no partially initialized
@@ -517,6 +515,99 @@ where
 {
     Len::prealloc_check::<T::Src>(src.len())?;
     write_elem_iter::<T, Len, C>(writer, src)
+}
+
+/// Variant of [`size_of_elem_iter`] for the key/value pairs of a map-like collection.
+#[inline(always)]
+#[allow(clippy::arithmetic_side_effects)]
+#[cfg(feature = "alloc")]
+fn size_of_kv_iter<'a, K, V, Len, C>(
+    mut iter: impl ExactSizeIterator<Item = (&'a K::Src, &'a V::Src)>,
+) -> WriteResult<usize>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    K: SchemaWrite<C, Src: Sized + 'a>,
+    V: SchemaWrite<C, Src: Sized + 'a>,
+{
+    let len = iter.len();
+    if let (
+        TypeMeta::Static { size: key_size, .. },
+        TypeMeta::Static {
+            size: value_size, ..
+        },
+    ) = (K::TYPE_META, V::TYPE_META)
+    {
+        return Ok(Len::write_bytes_needed(len)? + (key_size + value_size) * len);
+    }
+    Ok(Len::write_bytes_needed(len)?
+        + iter.try_fold(0usize, |acc, (k, v)| {
+            Ok::<_, crate::WriteError>(acc + K::size_of(k)? + V::size_of(v)?)
+        })?)
+}
+
+/// Variant of [`write_elem_iter`] for the key/value pairs of a map-like collection.
+#[inline(always)]
+#[cfg(feature = "alloc")]
+fn write_kv_iter<'a, K, V, Len, C>(
+    mut writer: impl Writer,
+    mut src: impl ExactSizeIterator<Item = (&'a K::Src, &'a V::Src)>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    K: SchemaWrite<C, Src: Sized + 'a>,
+    V: SchemaWrite<C, Src: Sized + 'a>,
+{
+    let len = src.len();
+    macro_rules! write_entries {
+        ($w:expr) => {{
+            Len::write($w.by_ref(), len)?;
+            for _ in 0..len {
+                let (k, v) = src.next().ok_or_else(short_iter)?;
+                K::write($w.by_ref(), k)?;
+                V::write($w.by_ref(), v)?;
+            }
+        }};
+    }
+
+    if let (
+        TypeMeta::Static { size: key_size, .. },
+        TypeMeta::Static {
+            size: value_size, ..
+        },
+    ) = (K::TYPE_META, V::TYPE_META)
+    {
+        #[allow(clippy::arithmetic_side_effects)]
+        let needed = Len::write_bytes_needed(len)? + (key_size + value_size) * len;
+        // SAFETY: `needed` covers the encoded length plus exactly `len` key/value pairs,
+        // which is what `write_entries!` writes, fully initializing the trusted window. It
+        // writes at most `len` pairs (never past the window) and errors before `finish` if
+        // the iterator is short, satisfying the "no error implies fully initialized" contract.
+        let mut writer = unsafe { writer.as_trusted_for(needed) }?;
+        write_entries!(writer);
+        writer.finish()?;
+        return Ok(());
+    }
+
+    write_entries!(writer);
+    Ok(())
+}
+
+#[inline(always)]
+#[cfg(feature = "alloc")]
+fn write_kv_iter_prealloc_check<'a, K, V, Len, C>(
+    writer: impl Writer,
+    src: impl ExactSizeIterator<Item = (&'a K::Src, &'a V::Src)>,
+) -> WriteResult<()>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    K: SchemaWrite<C, Src: Sized + 'a>,
+    V: SchemaWrite<C, Src: Sized + 'a>,
+{
+    Len::prealloc_check::<(K::Src, V::Src)>(src.len())?;
+    write_kv_iter::<K, V, Len, C>(writer, src)
 }
 
 #[inline(always)]

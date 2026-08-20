@@ -3,6 +3,11 @@
 use alloc::borrow::ToOwned;
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc;
+#[cfg(feature = "std")]
+use std::{
+    sync::{Mutex, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 use {
     crate::{
         TypeMeta,
@@ -38,25 +43,20 @@ use {
 };
 #[cfg(feature = "alloc")]
 use {
-    crate::{containers, io::BorrowKind},
+    crate::{
+        containers,
+        io::BorrowKind,
+        schema::{size_of_elem_iter, write_elem_iter_prealloc_check},
+    },
     alloc::{
         borrow::Cow,
         boxed::Box,
-        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+        collections::{BinaryHeap, LinkedList, VecDeque},
         rc::Rc,
         string::String,
         vec::Vec,
     },
     core::mem,
-};
-#[cfg(feature = "std")]
-use {
-    core::hash::{BuildHasher, Hash},
-    std::{
-        collections::{HashMap, HashSet},
-        sync::{Mutex, RwLock},
-        time::{SystemTime, UNIX_EPOCH},
-    },
 };
 
 macro_rules! impl_int_config_dependent {
@@ -1144,218 +1144,46 @@ unsafe impl<'de, C: Config> SchemaReadContext<'de, C, context::Len> for String {
     }
 }
 
-/// Capacity to reserve for a sequence read: the decoded length, or, with the
-/// `cap_unique_keys` marker, capped via [`crate::len::unique_key_capacity`] for
-/// collections that key on a unique `$key`.
-///
-/// Only referenced from `alloc`-gated collection impls.
 #[cfg(feature = "alloc")]
-macro_rules! seq_capacity {
-    ($key: ty, $len: expr) => {
-        $len
-    };
-    ($key: ty, $len: expr, cap_unique_keys) => {
-        $crate::len::unique_key_capacity::<$key>($len)
-    };
+unsafe impl<T, C: Config> SchemaWrite<C> for LinkedList<T>
+where
+    T: SchemaWrite<C>,
+    T::Src: Sized,
+{
+    type Src = LinkedList<T::Src>;
+
+    #[inline]
+    fn size_of(src: &Self::Src) -> WriteResult<usize> {
+        size_of_elem_iter::<T, C::LengthEncoding, C>(src.iter())
+    }
+
+    #[inline]
+    fn write(writer: impl Writer, src: &Self::Src) -> WriteResult<()> {
+        write_elem_iter_prealloc_check::<T, C::LengthEncoding, C>(writer, src.iter())
+    }
 }
 
 #[cfg(feature = "alloc")]
-pub(crate) use seq_capacity;
+unsafe impl<'de, T, C: Config> SchemaRead<'de, C> for LinkedList<T>
+where
+    T: SchemaRead<'de, C>,
+{
+    type Dst = LinkedList<T::Dst>;
 
-/// Implement `SchemaWrite` and `SchemaRead` for types that may be iterated over sequentially.
-///
-/// Generally this should only be used on types for which we cannot provide an optimized implementation,
-/// and where the most optimal implementation is simply iterating over the type to write or collecting
-/// to read -- typically non-contiguous sequences like `HashMap` or `BTreeMap` (or their set variants).
-///
-/// Pass a trailing `cap_unique_keys` for collections keyed on a unique key (see [`seq_capacity`]).
-macro_rules! impl_seq_kv {
-    ($feature: literal,
-     $target: ident<$key: ident : $($constraint:path)|*, $value: ident $(, $state:ident : $($state_constraint:path)|* )?>,
-     $with_capacity: expr
-     $(, $cap_unique_keys: ident)?) => {
-        #[cfg(feature = $feature)]
-        unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key, $value $(, $state)?>
-        where
-            $key: $crate::schema::SchemaWrite<C>,
-            $key::Src: Sized,
-            $value: $crate::schema::SchemaWrite<C>,
-            $value::Src: Sized
-            $($(, $state: $state_constraint+)*)?
-        {
-            type Src = $target<$key::Src, $value::Src $(, $state)?>;
-
-            #[inline]
-            #[allow(clippy::arithmetic_side_effects)]
-            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
-                if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
-                    return Ok(C::LengthEncoding::write_bytes_needed(src.len())? + (key_size + value_size) * src.len());
-                }
-                Ok(C::LengthEncoding::write_bytes_needed(src.len())? +
-                    src
-                        .iter()
-                        .try_fold(
-                            0usize,
-                            |acc, (k, v)|
-                            Ok::<_, $crate::error::WriteError>(
-                                acc
-                                + $key::size_of(k)?
-                                + $value::size_of(v)?
-                            )
-                    )?
-                )
-            }
-
-            #[inline]
-            fn write(mut writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
-                if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
-                    let len = src.len();
-                    #[allow(clippy::arithmetic_side_effects)]
-                    let needed = C::LengthEncoding::write_bytes_needed_prealloc_check::<($key::Src, $value::Src)>(len)? + (key_size + value_size) * len;
-                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` writes of `($key::Src, $value::Src)`
-                    // and `<BincodeLen>::write` will write `needed` bytes, fully initializing the trusted window.
-                    let mut writer = unsafe { writer.as_trusted_for(needed) }?;
-                    C::LengthEncoding::write(writer.by_ref(), len)?;
-                    for (k, v) in src.iter() {
-                        $key::write(writer.by_ref(), k)?;
-                        $value::write(writer.by_ref(), v)?;
-                    }
-                    writer.finish()?;
-                    return Ok(());
-                }
-                let len = src.len();
-                C::LengthEncoding::prealloc_check::<($key::Src, $value::Src)>(len)?;
-                C::LengthEncoding::write(writer.by_ref(), len)?;
-                for (k, v) in src.iter() {
-                    $key::write(writer.by_ref(), k)?;
-                    $value::write(writer.by_ref(), v)?;
-                }
+    #[inline]
+    fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
+        let list = containers::read_elem_seq::<T, C::LengthEncoding, C, _>(
+            reader,
+            |_| LinkedList::new(),
+            |list, value| {
+                list.push_back(value);
                 Ok(())
-            }
-        }
-
-        #[cfg(feature = $feature)]
-        unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key, $value $(, $state)?>
-        where
-            $key: $crate::schema::SchemaRead<'de, C>,
-            $value: $crate::schema::SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
-
-            #[inline]
-            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
-                let len = C::LengthEncoding::read_prealloc_check::<($key::Dst, $value::Dst)>(reader.by_ref())?;
-                // Reserve capacity, capped for unique keys; iteration below still uses `len`.
-                let capacity = $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?);
-
-                let map = if let ($crate::TypeMeta::Static { size: key_size, .. }, $crate::TypeMeta::Static { size: value_size, .. }) = ($key::TYPE_META, $value::TYPE_META) {
-                    // SAFETY: `$key::TYPE_META` and `$value::TYPE_META` specify static sizes, so `len` reads of `($key::Dst, $value::Dst)`
-                    // will consume `(key_size + value_size) * len` bytes, fully consuming the trusted window.
-                    let Some(el_size) = key_size.checked_add(value_size) else {
-                        return Err($crate::error::read_length_encoding_overflow("usize::MAX"));
-                    };
-                    let mut reader = unsafe { reader.as_trusted_for_seq(len, el_size) }?;
-                    let mut map = $with_capacity(capacity $(, $state::default())?);
-                    for _ in 0..len {
-                        let k = $key::get(reader.by_ref())?;
-                        let v = $value::get(reader.by_ref())?;
-                        map.insert(k, v);
-                    }
-                    map
-                } else {
-                    let mut map = $with_capacity(capacity $(, $state::default())?);
-                    for _ in 0..len {
-                        let k = $key::get(reader.by_ref())?;
-                        let v = $value::get(reader.by_ref())?;
-                        map.insert(k, v);
-                    }
-                    map
-                };
-
-                dst.write(map);
-                Ok(())
-            }
-        }
-    };
+            },
+        )?;
+        dst.write(list);
+        Ok(())
+    }
 }
-
-pub(crate) use impl_seq_kv;
-
-macro_rules! impl_seq_v {
-    ($feature: literal,
-     $target: ident <$key: ident : $($constraint:path)|* $(, $state:ident : $($state_constraint:path)|*)?>,
-     $with_capacity: expr, $insert: ident
-     $(, $cap_unique_keys: ident)?) => {
-        #[cfg(feature = $feature)]
-        unsafe impl<C: $crate::config::Config, $key: $crate::schema::SchemaWrite<C> $(, $state)?> $crate::schema::SchemaWrite<C> for $target<$key $(, $state)?>
-        where
-            $key::Src: Sized
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Src = $target<$key::Src $(, $state)?>;
-
-            #[inline]
-            fn size_of(src: &Self::Src) -> $crate::error::WriteResult<usize> {
-                $crate::schema::size_of_elem_iter::<$key, C::LengthEncoding, C>(src.iter())
-            }
-
-            #[inline]
-            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::error::WriteResult<()> {
-                $crate::schema::write_elem_iter_prealloc_check::<$key, C::LengthEncoding, C>(writer, src.iter())
-            }
-        }
-
-        #[cfg(feature = $feature)]
-        unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::schema::SchemaRead<'de, C> for $target<$key $(, $state)?>
-        where
-            $key: $crate::schema::SchemaRead<'de, C>
-            $(,$key::Dst: $constraint+)*
-            $($(, $state: $state_constraint+)* )?
-        {
-            type Dst = $target<$key::Dst $(, $state)?>;
-
-            #[inline]
-            fn read(mut reader: impl $crate::io::Reader<'de>, dst: &mut core::mem::MaybeUninit<Self::Dst>) -> $crate::error::ReadResult<()> {
-                let len = C::LengthEncoding::read_prealloc_check::<$key::Dst>(reader.by_ref())?;
-                // Reserve capacity, capped for unique keys; iteration below still uses `len`.
-                let capacity = $crate::schema::impls::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?);
-
-                let map = match $key::TYPE_META {
-                    $crate::TypeMeta::Static { size, .. } => {
-                        // SAFETY: `$key::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
-                        // will consume `size * len` bytes, fully consuming the trusted window.
-                        let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
-                        let mut set = $with_capacity(capacity $(, $state::default())?);
-                        for _ in 0..len {
-                            set.$insert($key::get(reader.by_ref())?);
-                        }
-                        set
-                    }
-                    $crate::TypeMeta::Dynamic => {
-                        let mut set = $with_capacity(capacity $(, $state::default())?);
-                        for _ in 0..len {
-                            set.$insert($key::get(reader.by_ref())?);
-                        }
-                        set
-                    }
-                };
-
-                dst.write(map);
-                Ok(())
-            }
-        }
-    };
-}
-
-pub(crate) use impl_seq_v;
-
-impl_seq_kv! { "alloc", BTreeMap<K: Ord, V>, |_| BTreeMap::new() }
-impl_seq_kv! { "std", HashMap<K: Hash | Eq, V, S: BuildHasher | Default>, HashMap::with_capacity_and_hasher, cap_unique_keys }
-impl_seq_v! { "alloc", BTreeSet<K: Ord>, |_| BTreeSet::new(), insert }
-impl_seq_v! { "std", HashSet<K: Hash | Eq, S: BuildHasher | Default>, HashSet::with_capacity_and_hasher, insert, cap_unique_keys }
-impl_seq_v! { "alloc", LinkedList<K:>, |_| LinkedList::new(), push_back }
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, C: Config> SchemaWrite<C> for BinaryHeap<T>

@@ -1,20 +1,32 @@
+#[cfg(feature = "std")]
+use std::collections::hash_map::RandomState;
 use {
-    crate::{
-        io::{Reader, Writer},
-        len::SeqLen,
-        schema::impls::{impl_seq_kv, impl_seq_v},
-    },
+    crate::containers::{map_container, set_container},
     core::hash::{BuildHasher, Hash},
-    indexmap::{IndexMap, IndexSet},
+    indexmap::{IndexMap as ExtIndexMap, IndexSet as ExtIndexSet},
 };
 
-impl_seq_kv! { "indexmap", IndexMap<K: Hash | Eq, V, S: BuildHasher | Default>, IndexMap::with_capacity_and_hasher, cap_unique_keys }
-impl_seq_v! { "indexmap", IndexSet<K: Hash | Eq, S: BuildHasher | Default>, IndexSet::with_capacity_and_hasher, insert, cap_unique_keys }
+map_container! {
+    /// Like [`HashMap`](crate::containers::HashMap), for [`IndexMap`](indexmap::IndexMap).
+    IndexMap => ExtIndexMap<K: Hash | Eq, V, S: BuildHasher | Default = RandomState>,
+    ExtIndexMap::with_capacity_and_hasher,
+    cap_unique_keys
+}
+
+set_container! {
+    /// Like [`HashSet`](crate::containers::HashSet), for [`IndexSet`](indexmap::IndexSet).
+    IndexSet => ExtIndexSet<K: Hash | Eq, S: BuildHasher | Default = RandomState>,
+    ExtIndexSet::with_capacity_and_hasher,
+    cap_unique_keys
+}
 
 #[cfg(test)]
 mod tests {
     use {
-        crate::{deserialize, proptest_config::proptest_cfg, serialize},
+        crate::{
+            Deserialize, ReadError, Serialize, containers, containers::CheckUniqueKeys,
+            deserialize, len::BincodeLen, proptest_config::proptest_cfg, serialize,
+        },
         indexmap::{IndexMap, IndexSet},
         proptest::prelude::*,
         std::collections::hash_map::RandomState,
@@ -45,6 +57,34 @@ mod tests {
             vec![3, 1, 2]
         );
         assert_eq!(deserialized, set);
+    }
+
+    #[test]
+    fn test_index_containers_check_uniqueness_and_preserve_order() {
+        let dup_map = serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap();
+        assert!(matches!(
+            <containers::IndexMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&dup_map),
+            Err(ReadError::Custom(_)),
+        ));
+
+        let dup_set = serialize(&vec![7u32, 7]).unwrap();
+        assert!(matches!(
+            <containers::IndexSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&dup_set),
+            Err(ReadError::Custom(_)),
+        ));
+
+        let map: TestIndexMap<u32, u64> = IndexMap::from_iter([(3u32, 30u64), (1, 10), (2, 20)]);
+        let bytes = <containers::IndexMap<u32, u64, BincodeLen>>::serialize(&map).unwrap();
+        let decoded =
+            <containers::IndexMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes)
+                .unwrap();
+        assert_eq!(decoded.keys().copied().collect::<Vec<_>>(), vec![3, 1, 2]);
+
+        let set: TestIndexSet<u32> = IndexSet::from_iter([3u32, 1, 2]);
+        let bytes = <containers::IndexSet<u32, BincodeLen>>::serialize(&set).unwrap();
+        let decoded =
+            <containers::IndexSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes).unwrap();
+        assert_eq!(decoded.iter().copied().collect::<Vec<_>>(), vec![3, 1, 2]);
     }
 
     proptest! {

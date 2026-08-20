@@ -3,7 +3,7 @@ use {
     rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
     std::{
-        collections::{BTreeMap, BTreeSet, HashMap, LinkedList, VecDeque},
+        collections::{BTreeMap, BTreeSet, HashMap, HashSet, LinkedList, VecDeque},
         hint::black_box,
     },
     wincode::{
@@ -890,6 +890,13 @@ bench_collection!(
 );
 
 bench_collection!(
+    bench_hashset_comparison,
+    "HashSet<u64>",
+    HashSet<u64>,
+    |size| (0..size).collect()
+);
+
+bench_collection!(
     bench_linkedlist_comparison,
     "LinkedList<u64>",
     LinkedList<u64>,
@@ -920,6 +927,7 @@ criterion_group!(
     bench_vec_mixed_sized_enum_comparison,
     bench_btreemap_comparison,
     bench_btreeset_comparison,
+    bench_hashset_comparison,
     bench_linkedlist_comparison,
     bench_vecdeque_comparison,
     bench_char_deserialization,

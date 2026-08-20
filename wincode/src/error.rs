@@ -129,6 +129,11 @@ pub const fn trailing_bytes() -> ReadError {
     ReadError::TrailingBytes
 }
 
+#[cold]
+pub const fn duplicate_key() -> ReadError {
+    ReadError::Custom("duplicate key in keyed collection")
+}
+
 impl From<PreallocationError> for ReadError {
     fn from(PreallocationError { needed, limit }: PreallocationError) -> ReadError {
         ReadError::PreallocationSizeLimit { needed, limit }

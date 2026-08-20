@@ -50,6 +50,26 @@
 //! assert_eq!(my_struct, wincode::deserialize(&bytes).unwrap());
 //! # }
 //! ```
+//!
+//! # Keyed collections
+//!
+//! Map and set containers also take a [`DuplicateKeyPolicy`]. By default a repeated
+//! key overwrites the previous entry, like the plain `HashMap`/`BTreeMap` schemas.
+//! Use [`CheckUniqueKeys`] to reject duplicates instead:
+//!
+//! ```
+//! # #[cfg(feature = "alloc")] {
+//! # use std::collections::BTreeSet;
+//! # use wincode::{Deserialize, ReadError, containers, len::BincodeLen};
+//! let bytes = wincode::serialize(&vec![1u32, 1, 2]).unwrap();
+//!
+//! type Lenient = containers::BTreeSet<u32, BincodeLen>;
+//! type Strict = containers::BTreeSet<u32, BincodeLen, containers::CheckUniqueKeys>;
+//!
+//! assert_eq!(Lenient::deserialize(&bytes).unwrap(), BTreeSet::from([1, 2]));
+//! assert!(matches!(Strict::deserialize(&bytes), Err(ReadError::Custom(_))));
+//! # }
+//! ```
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
 use {
@@ -72,12 +92,25 @@ use {
 use {
     crate::{
         context,
+        error::read_length_encoding_overflow,
         schema::{
             SchemaReadContext, size_of_elem_slice, write_elem_iter_prealloc_check,
             write_elem_slice_prealloc_check,
         },
     },
-    alloc::{boxed::Box as AllocBox, collections, rc::Rc as AllocRc, vec},
+    alloc::{
+        boxed::Box as AllocBox,
+        collections::{self, BTreeMap as AllocBTreeMap, BTreeSet as AllocBTreeSet},
+        rc::Rc as AllocRc,
+        vec,
+    },
+};
+#[cfg(feature = "std")]
+use {
+    core::hash::{BuildHasher, Hash},
+    std::collections::{
+        HashMap as StdHashMap, HashSet as StdHashSet, hash_map::RandomState as StdRandomState,
+    },
 };
 
 /// A [`Vec`](std::vec::Vec) with a customizable length encoding.
@@ -515,6 +548,474 @@ where
     }
 }
 
+/// How a keyed collection schema reacts when the encoded sequence repeats a key.
+///
+/// Default is [`AllowDuplicateKeys`]. See [`HashMap`] for an example.
+pub trait DuplicateKeyPolicy: sealed::Sealed {
+    /// Whether a repeated key aborts the read with
+    /// [`ReadError::Custom`](crate::error::ReadError::Custom).
+    const REJECT_DUPLICATES: bool;
+
+    /// Fail the read if the entry just decoded collided with an earlier one.
+    #[inline(always)]
+    fn check(collided: bool) -> ReadResult<()> {
+        if Self::REJECT_DUPLICATES && collided {
+            return Err(crate::error::duplicate_key());
+        }
+        Ok(())
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::AllowDuplicateKeys {}
+    impl Sealed for super::CheckUniqueKeys {}
+}
+
+/// A repeated key overwrites the entry decoded for it earlier (last one wins).
+///
+/// This matches `bincode` and `serde`.
+pub struct AllowDuplicateKeys;
+
+impl DuplicateKeyPolicy for AllowDuplicateKeys {
+    const REJECT_DUPLICATES: bool = false;
+}
+
+/// A repeated key aborts the read with
+/// [`ReadError::Custom`](crate::error::ReadError::Custom).
+///
+/// Only constrains decoding; an already-keyed collection cannot encode a duplicate.
+pub struct CheckUniqueKeys;
+
+impl DuplicateKeyPolicy for CheckUniqueKeys {
+    const REJECT_DUPLICATES: bool = true;
+}
+
+/// Capacity to reserve for a sequence read: the decoded length, or, with the
+/// `cap_unique_keys` marker, capped via [`crate::len::unique_key_capacity`] for
+/// collections that key on a unique `$key`.
+#[cfg(feature = "alloc")]
+macro_rules! seq_capacity {
+    ($key: ty, $len: expr) => {
+        $len
+    };
+    ($key: ty, $len: expr, cap_unique_keys) => {
+        $crate::len::unique_key_capacity::<$key>($len)
+    };
+}
+
+#[cfg(feature = "alloc")]
+pub(crate) use seq_capacity;
+
+/// Read a length-prefixed sequence of key/value pairs into a map-like collection.
+///
+/// `make` receives the decoded length and builds the collection; `insert` places one
+/// entry and may fail the read (see [`DuplicateKeyPolicy::check`]).
+///
+/// Reads the key and value separately rather than as a `(K, V)` tuple: the tuple read
+/// opens a nested trusted window per entry and carries a drop guard, costing ~9% on
+/// `HashMap<[u8; 16], PodStruct>` deserialization.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn read_kv_seq<'de, K, V, Len, C, M>(
+    mut reader: impl Reader<'de>,
+    make: impl FnOnce(usize) -> M,
+    mut insert: impl FnMut(&mut M, K::Dst, V::Dst) -> ReadResult<()>,
+) -> ReadResult<M>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    K: SchemaRead<'de, C>,
+    V: SchemaRead<'de, C>,
+{
+    let len = Len::read_prealloc_check::<(K::Dst, V::Dst)>(reader.by_ref())?;
+
+    macro_rules! read_entries {
+        ($reader:expr) => {{
+            let mut map = make(len);
+            for _ in 0..len {
+                let k = K::get($reader.by_ref())?;
+                let v = V::get($reader.by_ref())?;
+                insert(&mut map, k, v)?;
+            }
+            map
+        }};
+    }
+
+    let map = if let (
+        TypeMeta::Static { size: key_size, .. },
+        TypeMeta::Static {
+            size: value_size, ..
+        },
+    ) = (K::TYPE_META, V::TYPE_META)
+    {
+        let Some(el_size) = key_size.checked_add(value_size) else {
+            return Err(read_length_encoding_overflow("usize::MAX"));
+        };
+        // SAFETY: `K::TYPE_META` and `V::TYPE_META` specify static sizes, so `len` reads of
+        // `(K::Dst, V::Dst)` will consume `el_size * len` bytes, fully consuming the
+        // trusted window.
+        let mut reader = unsafe { reader.as_trusted_for_seq(len, el_size) }?;
+        read_entries!(reader)
+    } else {
+        read_entries!(reader)
+    };
+
+    Ok(map)
+}
+
+/// Variant of [`read_kv_seq`] for collections of standalone elements rather than pairs.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn read_elem_seq<'de, T, Len, C, S>(
+    mut reader: impl Reader<'de>,
+    make: impl FnOnce(usize) -> S,
+    mut insert: impl FnMut(&mut S, T::Dst) -> ReadResult<()>,
+) -> ReadResult<S>
+where
+    C: ConfigCore,
+    Len: SeqLen<C>,
+    T: SchemaRead<'de, C>,
+{
+    let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
+
+    macro_rules! read_elems {
+        ($reader:expr) => {{
+            let mut set = make(len);
+            for _ in 0..len {
+                insert(&mut set, T::get($reader.by_ref())?)?;
+            }
+            set
+        }};
+    }
+
+    let set = match T::TYPE_META {
+        TypeMeta::Static { size, .. } => {
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let mut reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
+            read_elems!(reader)
+        }
+        TypeMeta::Dynamic => read_elems!(reader),
+    };
+
+    Ok(set)
+}
+
+/// Define a map container schema with a customizable length encoding and
+/// [`DuplicateKeyPolicy`], plus the direct impls for `$target` as delegations.
+macro_rules! map_container {
+    // The default hasher lives in `std`, so a stateful container's parameter defaults
+    // are only available there; `no_std` builds name every parameter explicitly.
+    (@struct $(#[cfg($cfg:meta)])? $(#[doc = $doc:expr])* $name:ident<$($generic:ident),*>) => {
+        $(#[doc = $doc])*
+        $(#[cfg($cfg)])?
+        pub struct $name<$($generic,)* Len, Dup = $crate::containers::AllowDuplicateKeys>(
+            core::marker::PhantomData<($($generic,)* Len, Dup)>,
+        );
+    };
+    (@struct $(#[cfg($cfg:meta)])? $(#[doc = $doc:expr])* $name:ident<$($generic:ident),*>, $state:ident = $state_default:ty) => {
+        $(#[doc = $doc])*
+        #[cfg(all($($cfg,)? feature = "std"))]
+        pub struct $name<
+            $($generic,)*
+            Len,
+            Dup = $crate::containers::AllowDuplicateKeys,
+            $state = $state_default,
+        >(core::marker::PhantomData<($($generic,)* Len, Dup, $state)>);
+        $(#[doc = $doc])*
+        #[cfg(all($($cfg,)? not(feature = "std")))]
+        pub struct $name<$($generic,)* Len, Dup, $state>(
+            core::marker::PhantomData<($($generic,)* Len, Dup, $state)>,
+        );
+    };
+    (
+        $(#[cfg($cfg:meta)])?
+        $(#[doc = $doc:expr])*
+        $name:ident => $target:ident<$key:ident : $($constraint:path)|*, $value:ident
+            $(, $state:ident : $($state_constraint:path)|* = $state_default:ty)?>,
+        $with_capacity:expr
+        $(, $cap_unique_keys:ident)?
+    ) => {
+        $crate::containers::map_container! {
+            @struct $(#[cfg($cfg)])? $(#[doc = $doc])* $name<$key, $value> $(, $state = $state_default)?
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<C: $crate::config::ConfigCore, $key, $value, Len, Dup $(, $state)?>
+            $crate::SchemaWrite<C> for $name<$key, $value, Len, Dup $(, $state)?>
+        where
+            Len: $crate::len::SeqLen<C>,
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $value: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src, $value::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                $crate::schema::size_of_kv_iter::<$key, $value, Len, C>(src.iter())
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                $crate::schema::write_kv_iter_prealloc_check::<$key, $value, Len, C>(writer, src.iter())
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<'de, C: $crate::config::ConfigCore, $key, $value, Len, Dup $(, $state)?>
+            $crate::SchemaRead<'de, C> for $name<$key, $value, Len, Dup $(, $state)?>
+        where
+            Len: $crate::len::SeqLen<C>,
+            Dup: $crate::containers::DuplicateKeyPolicy,
+            $key: $crate::SchemaRead<'de, C>,
+            $value: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                let map = $crate::containers::read_kv_seq::<$key, $value, Len, C, _>(
+                    reader,
+                    // Reserve capacity, capped for unique keys; iteration still uses
+                    // the decoded length.
+                    |len| $with_capacity(
+                        $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?)
+                        $(, <$state as Default>::default())?
+                    ),
+                    |map, k, v| Dup::check(map.insert(k, v).is_some()),
+                )?;
+                dst.write(map);
+                Ok(())
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaWrite<C>
+            for $target<$key, $value $(, $state)?>
+        where
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $value: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src, $value::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::size_of(src)
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::write(writer, src)
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<'de, C: $crate::config::Config, $key, $value $(, $state)?> $crate::SchemaRead<'de, C>
+            for $target<$key, $value $(, $state)?>
+        where
+            $key: $crate::SchemaRead<'de, C>,
+            $value: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst, $value::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                <$name<$key, $value, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaRead<'de, C>>::read(reader, dst)
+            }
+        }
+    };
+}
+
+pub(crate) use map_container;
+
+/// [`map_container!`] for set-like collections, which key on the element itself.
+macro_rules! set_container {
+    (
+        $(#[cfg($cfg:meta)])?
+        $(#[doc = $doc:expr])*
+        $name:ident => $target:ident<$key:ident : $($constraint:path)|*
+            $(, $state:ident : $($state_constraint:path)|* = $state_default:ty)?>,
+        $with_capacity:expr
+        $(, $cap_unique_keys:ident)?
+    ) => {
+        $crate::containers::map_container! {
+            @struct $(#[cfg($cfg)])? $(#[doc = $doc])* $name<$key> $(, $state = $state_default)?
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<C: $crate::config::ConfigCore, $key, Len, Dup $(, $state)?>
+            $crate::SchemaWrite<C> for $name<$key, Len, Dup $(, $state)?>
+        where
+            Len: $crate::len::SeqLen<C>,
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                $crate::schema::size_of_elem_iter::<$key, Len, C>(src.iter())
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                $crate::schema::write_elem_iter_prealloc_check::<$key, Len, C>(writer, src.iter())
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<'de, C: $crate::config::ConfigCore, $key, Len, Dup $(, $state)?>
+            $crate::SchemaRead<'de, C> for $name<$key, Len, Dup $(, $state)?>
+        where
+            Len: $crate::len::SeqLen<C>,
+            Dup: $crate::containers::DuplicateKeyPolicy,
+            $key: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                let set = $crate::containers::read_elem_seq::<$key, Len, C, _>(
+                    reader,
+                    // Reserve capacity, capped for unique keys; iteration still uses
+                    // the decoded length.
+                    |len| $with_capacity(
+                        $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?)
+                        $(, <$state as Default>::default())?
+                    ),
+                    // `insert` reports whether the value is new, so negate it.
+                    |set, k| Dup::check(!set.insert(k)),
+                )?;
+                dst.write(set);
+                Ok(())
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<C: $crate::config::Config, $key $(, $state)?> $crate::SchemaWrite<C>
+            for $target<$key $(, $state)?>
+        where
+            $key: $crate::SchemaWrite<C, Src: Sized>,
+            $($($state: $state_constraint,)*)?
+        {
+            type Src = $target<$key::Src $(, $state)?>;
+
+            #[inline]
+            fn size_of(src: &Self::Src) -> $crate::WriteResult<usize> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::size_of(src)
+            }
+
+            #[inline]
+            fn write(writer: impl $crate::io::Writer, src: &Self::Src) -> $crate::WriteResult<()> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaWrite<C>>::write(writer, src)
+            }
+        }
+
+        $(#[cfg($cfg)])?
+        unsafe impl<'de, C: $crate::config::Config, $key $(, $state)?> $crate::SchemaRead<'de, C>
+            for $target<$key $(, $state)?>
+        where
+            $key: $crate::SchemaRead<'de, C>,
+            $($key::Dst: $constraint,)*
+            $($($state: $state_constraint,)*)?
+        {
+            type Dst = $target<$key::Dst $(, $state)?>;
+
+            #[inline]
+            fn read(
+                reader: impl $crate::io::Reader<'de>,
+                dst: &mut core::mem::MaybeUninit<Self::Dst>,
+            ) -> $crate::ReadResult<()> {
+                <$name<$key, C::LengthEncoding, $crate::containers::AllowDuplicateKeys $(, $state)?> as $crate::SchemaRead<'de, C>>::read(reader, dst)
+            }
+        }
+    };
+}
+
+pub(crate) use set_container;
+
+map_container! {
+    #[cfg(feature = "std")]
+    /// A [`HashMap`](std::collections::HashMap) with a customizable length encoding and
+    /// [`DuplicateKeyPolicy`].
+    ///
+    /// # Examples
+    ///
+    /// Reject an encoded map that repeats a key, rather than letting the last
+    /// entry win:
+    ///
+    /// ```
+    /// # #[cfg(all(feature = "std", feature = "derive"))] {
+    /// # use std::collections::HashMap;
+    /// # use wincode::{ReadError, containers, len::BincodeLen};
+    /// # use wincode_derive::{SchemaWrite, SchemaRead};
+    /// #[derive(SchemaWrite, SchemaRead, PartialEq, Debug)]
+    /// struct MyStruct {
+    ///     #[wincode(with = "containers::HashMap<u32, u64, BincodeLen, containers::CheckUniqueKeys>")]
+    ///     map: HashMap<u32, u64>,
+    /// }
+    ///
+    /// let my_struct = MyStruct { map: HashMap::from([(1, 10), (2, 20)]) };
+    /// let bytes = wincode::serialize(&my_struct).unwrap();
+    /// assert_eq!(my_struct, wincode::deserialize(&bytes).unwrap());
+    ///
+    /// // The same two entries, but keyed on `1` twice.
+    /// let dupes = wincode::serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap();
+    /// assert!(matches!(
+    ///     wincode::deserialize::<MyStruct>(&dupes),
+    ///     Err(ReadError::Custom(_)),
+    /// ));
+    /// # }
+    /// ```
+    HashMap => StdHashMap<K: Hash | Eq, V, S: BuildHasher | Default = StdRandomState>,
+    StdHashMap::with_capacity_and_hasher,
+    cap_unique_keys
+}
+
+map_container! {
+    #[cfg(feature = "alloc")]
+    /// Like [`HashMap`], for [`BTreeMap`](alloc::collections::BTreeMap).
+    BTreeMap => AllocBTreeMap<K: Ord, V>,
+    |_| AllocBTreeMap::new()
+}
+
+set_container! {
+    #[cfg(feature = "std")]
+    /// Like [`HashMap`], for [`HashSet`](std::collections::HashSet). A set keys on the
+    /// element itself, so [`CheckUniqueKeys`] rejects a repeated value.
+    HashSet => StdHashSet<K: Hash | Eq, S: BuildHasher | Default = StdRandomState>,
+    StdHashSet::with_capacity_and_hasher,
+    cap_unique_keys
+}
+
+set_container! {
+    #[cfg(feature = "alloc")]
+    /// Like [`HashSet`], for [`BTreeSet`](alloc::collections::BTreeSet).
+    BTreeSet => AllocBTreeSet<K: Ord>,
+    |_| AllocBTreeSet::new()
+}
+
+#[cfg(feature = "indexmap")]
+pub use super::external::indexmap::{IndexMap, IndexSet};
+
 /// Newtype that collects a fallible iterator into `Result<C, E>` while preserving `size_hint`.
 ///
 /// Unlike `collect::<Result<V, E>>()`, which loses the size hint on error, this type
@@ -883,4 +1384,133 @@ where
     T: SchemaWrite<C>,
 {
     write_elem_iter::<T, Len, C>(writer, src.into_iter())
+}
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use {
+        crate::{
+            Deserialize, ReadError, Serialize, containers,
+            containers::CheckUniqueKeys,
+            deserialize,
+            len::{BincodeLen, UseIntLen},
+            serialize,
+        },
+        std::collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    };
+
+    fn dup_key_map_bytes() -> Vec<u8> {
+        serialize(&vec![(1u32, 10u64), (1, 20)]).unwrap()
+    }
+
+    fn dup_elem_set_bytes() -> Vec<u8> {
+        serialize(&vec![7u32, 7]).unwrap()
+    }
+
+    #[test]
+    fn allows_duplicates_by_default() {
+        let bytes = dup_key_map_bytes();
+
+        let plain: HashMap<u32, u64> = deserialize(&bytes).unwrap();
+        let loose = <containers::HashMap<u32, u64, BincodeLen>>::deserialize(&bytes).unwrap();
+        assert_eq!(loose, HashMap::from([(1, 20)]));
+        assert_eq!(loose, plain);
+
+        let bytes = dup_elem_set_bytes();
+        let plain: HashSet<u32> = deserialize(&bytes).unwrap();
+        let loose = <containers::HashSet<u32, BincodeLen>>::deserialize(&bytes).unwrap();
+        assert_eq!(loose, HashSet::from([7]));
+        assert_eq!(loose, plain);
+    }
+
+    #[test]
+    fn strict_maps_reject_duplicate_keys() {
+        let bytes = dup_key_map_bytes();
+
+        assert!(matches!(
+            <containers::HashMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+        assert!(matches!(
+            <containers::BTreeMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+    }
+
+    #[test]
+    fn strict_sets_reject_duplicate_elements() {
+        let bytes = dup_elem_set_bytes();
+
+        assert!(matches!(
+            <containers::HashSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+        assert!(matches!(
+            <containers::BTreeSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+    }
+
+    #[test]
+    fn strict_decoding_accepts_unique_keys() {
+        let map = BTreeMap::from([(1u32, 10u64), (2, 20), (3, 30)]);
+        let bytes = serialize(&map).unwrap();
+        let strict =
+            <containers::BTreeMap<u32, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes)
+                .unwrap();
+        assert_eq!(strict, map);
+
+        let set = BTreeSet::from([1u32, 2, 3]);
+        let bytes = serialize(&set).unwrap();
+        let strict =
+            <containers::BTreeSet<u32, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes).unwrap();
+        assert_eq!(strict, set);
+    }
+
+    /// Statically sized elements read through a trusted window and dynamic ones do not,
+    /// so the check has to hold on both paths.
+    #[test]
+    fn strict_decoding_covers_dynamically_sized_keys() {
+        let bytes = serialize(&vec![("a".to_string(), 1u64), ("a".to_string(), 2)]).unwrap();
+        assert!(matches!(
+            <containers::BTreeMap<String, u64, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+
+        let bytes = serialize(&vec!["a".to_string(), "a".to_string()]).unwrap();
+        assert!(matches!(
+            <containers::BTreeSet<String, BincodeLen, CheckUniqueKeys>>::deserialize(&bytes),
+            Err(ReadError::Custom(_)),
+        ));
+    }
+
+    #[test]
+    fn keyed_containers_encode_like_the_plain_schemas() {
+        // `BTreeMap`/`BTreeSet` iterate deterministically, so the bytes are comparable.
+        let map = BTreeMap::from([(1u32, 10u64), (2, 20)]);
+        let container = <containers::BTreeMap<u32, u64, BincodeLen>>::serialize(&map).unwrap();
+        assert_eq!(container, serialize(&map).unwrap());
+        assert_eq!(container, bincode::serialize(&map).unwrap());
+
+        let set = BTreeSet::from([1u32, 2]);
+        let container = <containers::BTreeSet<u32, BincodeLen>>::serialize(&set).unwrap();
+        assert_eq!(container, serialize(&set).unwrap());
+        assert_eq!(container, bincode::serialize(&set).unwrap());
+    }
+
+    #[test]
+    fn keyed_containers_customize_the_length_encoding() {
+        type ShortMap = containers::BTreeMap<u32, u64, UseIntLen<u16>>;
+
+        let map = BTreeMap::from([(1u32, 10u64), (2, 20)]);
+        let bytes = ShortMap::serialize(&map).unwrap();
+        assert_eq!(
+            bytes.len(),
+            size_of::<u16>() + map.len() * (size_of::<u32>() + size_of::<u64>()),
+        );
+        assert_eq!(ShortMap::deserialize(&bytes).unwrap(), map);
+
+        // The `u16` prefix is not interchangeable with the default `u64` one.
+        assert!(<containers::BTreeMap<u32, u64, BincodeLen>>::deserialize(&bytes).is_err());
+    }
 }
