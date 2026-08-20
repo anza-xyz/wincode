@@ -1172,19 +1172,12 @@ where
 
     #[inline]
     fn read(reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
-        let list = containers::read_elem_seq::<
-            T,
-            C::LengthEncoding,
-            containers::AllowDuplicateKeys,
-            C,
-            _,
-        >(
+        let list = containers::read_elem_seq::<T, C::LengthEncoding, C, _>(
             reader,
-            |len| len,
             |_| LinkedList::new(),
             |list, value| {
                 list.push_back(value);
-                false
+                Ok(())
             },
         )?;
         dst.write(list);

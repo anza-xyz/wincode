@@ -72,12 +72,6 @@
 //! ```
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
 use alloc::sync::Arc as AllocArc;
-#[cfg(feature = "std")]
-use core::hash::{BuildHasher, Hash};
-#[cfg(feature = "std")]
-use std::collections::{
-    HashMap as StdHashMap, HashSet as StdHashSet, hash_map::RandomState as StdRandomState,
-};
 use {
     crate::{
         TypeMeta,
@@ -109,6 +103,13 @@ use {
         collections::{self, BTreeMap as AllocBTreeMap, BTreeSet as AllocBTreeSet},
         rc::Rc as AllocRc,
         vec,
+    },
+};
+#[cfg(feature = "std")]
+use {
+    core::hash::{BuildHasher, Hash},
+    std::collections::{
+        HashMap as StdHashMap, HashSet as StdHashSet, hash_map::RandomState as StdRandomState,
     },
 };
 
@@ -606,20 +607,24 @@ macro_rules! seq_capacity {
 #[cfg(feature = "alloc")]
 pub(crate) use seq_capacity;
 
-/// Read a length-prefixed sequence of key/value pairs into a map-like collection,
-/// where `insert` reports whether an entry for that key already existed.
+/// Read a length-prefixed sequence of key/value pairs into a map-like collection.
+///
+/// `make` receives the decoded length and builds the collection; `insert` places one
+/// entry and may fail the read (see [`DuplicateKeyPolicy::check`]).
+///
+/// Reads the key and value separately rather than as a `(K, V)` tuple: the tuple read
+/// opens a nested trusted window per entry and carries a drop guard, costing ~9% on
+/// `HashMap<[u8; 16], PodStruct>` deserialization.
 #[cfg(feature = "alloc")]
 #[inline]
-pub(crate) fn read_kv_seq<'de, K, V, Len, Dup, C, M>(
+pub(crate) fn read_kv_seq<'de, K, V, Len, C, M>(
     mut reader: impl Reader<'de>,
-    capacity: impl FnOnce(usize) -> usize,
     make: impl FnOnce(usize) -> M,
-    mut insert: impl FnMut(&mut M, K::Dst, V::Dst) -> bool,
+    mut insert: impl FnMut(&mut M, K::Dst, V::Dst) -> ReadResult<()>,
 ) -> ReadResult<M>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    Dup: DuplicateKeyPolicy,
     K: SchemaRead<'de, C>,
     V: SchemaRead<'de, C>,
 {
@@ -627,12 +632,11 @@ where
 
     macro_rules! read_entries {
         ($reader:expr) => {{
-            // Reserve capacity, capped for unique keys; iteration still uses `len`.
-            let mut map = make(capacity(len));
+            let mut map = make(len);
             for _ in 0..len {
                 let k = K::get($reader.by_ref())?;
                 let v = V::get($reader.by_ref())?;
-                Dup::check(insert(&mut map, k, v))?;
+                insert(&mut map, k, v)?;
             }
             map
         }};
@@ -663,26 +667,23 @@ where
 /// Variant of [`read_kv_seq`] for collections of standalone elements rather than pairs.
 #[cfg(feature = "alloc")]
 #[inline]
-pub(crate) fn read_elem_seq<'de, T, Len, Dup, C, S>(
+pub(crate) fn read_elem_seq<'de, T, Len, C, S>(
     mut reader: impl Reader<'de>,
-    capacity: impl FnOnce(usize) -> usize,
     make: impl FnOnce(usize) -> S,
-    mut insert: impl FnMut(&mut S, T::Dst) -> bool,
+    mut insert: impl FnMut(&mut S, T::Dst) -> ReadResult<()>,
 ) -> ReadResult<S>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
-    Dup: DuplicateKeyPolicy,
     T: SchemaRead<'de, C>,
 {
     let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
 
     macro_rules! read_elems {
         ($reader:expr) => {{
-            // Reserve capacity, capped for unique keys; iteration still uses `len`.
-            let mut set = make(capacity(len));
+            let mut set = make(len);
             for _ in 0..len {
-                Dup::check(insert(&mut set, T::get($reader.by_ref())?))?;
+                insert(&mut set, T::get($reader.by_ref())?)?;
             }
             set
         }};
@@ -780,11 +781,15 @@ macro_rules! map_container {
                 reader: impl $crate::io::Reader<'de>,
                 dst: &mut core::mem::MaybeUninit<Self::Dst>,
             ) -> $crate::ReadResult<()> {
-                let map = $crate::containers::read_kv_seq::<$key, $value, Len, Dup, C, _>(
+                let map = $crate::containers::read_kv_seq::<$key, $value, Len, C, _>(
                     reader,
-                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
-                    |capacity| $with_capacity(capacity $(, <$state as Default>::default())?),
-                    |map, k, v| map.insert(k, v).is_some(),
+                    // Reserve capacity, capped for unique keys; iteration still uses
+                    // the decoded length.
+                    |len| $with_capacity(
+                        $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?)
+                        $(, <$state as Default>::default())?
+                    ),
+                    |map, k, v| Dup::check(map.insert(k, v).is_some()),
                 )?;
                 dst.write(map);
                 Ok(())
@@ -888,12 +893,16 @@ macro_rules! set_container {
                 reader: impl $crate::io::Reader<'de>,
                 dst: &mut core::mem::MaybeUninit<Self::Dst>,
             ) -> $crate::ReadResult<()> {
-                let set = $crate::containers::read_elem_seq::<$key, Len, Dup, C, _>(
+                let set = $crate::containers::read_elem_seq::<$key, Len, C, _>(
                     reader,
-                    |len| $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?),
-                    |capacity| $with_capacity(capacity $(, <$state as Default>::default())?),
+                    // Reserve capacity, capped for unique keys; iteration still uses
+                    // the decoded length.
+                    |len| $with_capacity(
+                        $crate::containers::seq_capacity!($key::Dst, len $(, $cap_unique_keys)?)
+                        $(, <$state as Default>::default())?
+                    ),
                     // `insert` reports whether the value is new, so negate it.
-                    |set, k| !set.insert(k),
+                    |set, k| Dup::check(!set.insert(k)),
                 )?;
                 dst.write(set);
                 Ok(())

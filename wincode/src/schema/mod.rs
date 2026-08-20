@@ -454,38 +454,32 @@ where
     size_of_elem_iter::<T, Len, C>(value.iter())
 }
 
+#[cold]
+fn short_iter() -> crate::WriteError {
+    crate::WriteError::Custom("ExactSizeIterator yielded fewer elements than its reported len()")
+}
+
 #[inline(always)]
 fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
+    mut src: impl ExactSizeIterator<Item: Borrow<T::Src>>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
 {
-    #[cold]
-    fn miscounted_iter() -> crate::WriteError {
-        crate::WriteError::Custom("ExactSizeIterator did not yield exactly its reported len()")
-    }
-
+    // Drive everything from the reported length rather than trusting the iterator to
+    // stop on its own: `0..len` caps writes at `len` (no over-run of the trusted
+    // window), and `short_iter` errors on early exhaustion (no partially initialized
+    // window, no length prefix disagreeing with the payload).
     let len = src.len();
     macro_rules! write_elems {
         ($w:expr) => {{
             Len::write($w.by_ref(), len)?;
-            // Driving this with `for _ in 0..len` + `next()` is measurably slower on
-            // hash table iterators. `remaining` still bounds writes to the
-            // reported `len`.
-            let mut remaining = len;
-            for item in src {
-                let Some(next) = remaining.checked_sub(1) else {
-                    return Err(miscounted_iter());
-                };
-                remaining = next;
+            for _ in 0..len {
+                let item = src.next().ok_or_else(short_iter)?;
                 T::write($w.by_ref(), item.borrow())?;
-            }
-            if remaining != 0 {
-                return Err(miscounted_iter());
             }
         }};
     }
@@ -494,8 +488,9 @@ where
         #[allow(clippy::arithmetic_side_effects)]
         let needed = Len::write_bytes_needed(len)? + size * len;
         // SAFETY: `needed` covers the encoded length plus exactly `len` items, which is
-        // what `write_elems!` writes, fully initializing the trusted window. It errors
-        // before `finish` if the iterator yields any other count.
+        // what `write_elems!` writes, fully initializing the trusted window. It writes
+        // at most `len` items (never past the window) and errors before `finish` if the
+        // iterator is short, satisfying the "no error implies fully initialized" contract.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         write_elems!(writer);
         writer.finish()?;
@@ -556,7 +551,7 @@ where
 #[cfg(feature = "alloc")]
 fn write_kv_iter<'a, K, V, Len, C>(
     mut writer: impl Writer,
-    src: impl ExactSizeIterator<Item = (&'a K::Src, &'a V::Src)>,
+    mut src: impl ExactSizeIterator<Item = (&'a K::Src, &'a V::Src)>,
 ) -> WriteResult<()>
 where
     C: ConfigCore,
@@ -564,29 +559,14 @@ where
     K: SchemaWrite<C, Src: Sized + 'a>,
     V: SchemaWrite<C, Src: Sized + 'a>,
 {
-    #[cold]
-    fn miscounted_iter() -> crate::WriteError {
-        crate::WriteError::Custom("ExactSizeIterator did not yield exactly its reported len()")
-    }
-
     let len = src.len();
     macro_rules! write_entries {
         ($w:expr) => {{
             Len::write($w.by_ref(), len)?;
-            // Driving this with `for _ in 0..len` + `next()` is ~40% slower on
-            // hash table iterators. `remaining` still bounds writes to the
-            // reported `len`.
-            let mut remaining = len;
-            for (k, v) in src {
-                let Some(next) = remaining.checked_sub(1) else {
-                    return Err(miscounted_iter());
-                };
-                remaining = next;
+            for _ in 0..len {
+                let (k, v) = src.next().ok_or_else(short_iter)?;
                 K::write($w.by_ref(), k)?;
                 V::write($w.by_ref(), v)?;
-            }
-            if remaining != 0 {
-                return Err(miscounted_iter());
             }
         }};
     }
@@ -602,7 +582,8 @@ where
         let needed = Len::write_bytes_needed(len)? + (key_size + value_size) * len;
         // SAFETY: `needed` covers the encoded length plus exactly `len` key/value pairs,
         // which is what `write_entries!` writes, fully initializing the trusted window. It
-        // errors before `finish` if the iterator yields any other count.
+        // writes at most `len` pairs (never past the window) and errors before `finish` if
+        // the iterator is short, satisfying the "no error implies fully initialized" contract.
         let mut writer = unsafe { writer.as_trusted_for(needed) }?;
         write_entries!(writer);
         writer.finish()?;
