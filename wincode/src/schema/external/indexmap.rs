@@ -1,9 +1,5 @@
 use {
-    crate::{
-        io::{Reader, Writer},
-        len::SeqLen,
-        schema::impls::{impl_seq_kv, impl_seq_v},
-    },
+    crate::schema::impls::{impl_seq_kv, impl_seq_v},
     core::hash::{BuildHasher, Hash},
     indexmap::{IndexMap, IndexSet},
 };

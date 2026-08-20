@@ -55,6 +55,8 @@ pub enum ReadError {
     InvalidCharLead(u8),
     #[error("Trailing bytes remain after deserialization")]
     TrailingBytes,
+    #[error("Duplicate key encountered while decoding a keyed collection of {0}")]
+    DuplicateKey(&'static str),
     #[error("Custom error: {0}")]
     Custom(&'static str),
     #[error("Zero-copy read would be unaligned")]
@@ -127,6 +129,11 @@ pub const fn invalid_value(msg: &'static str) -> ReadError {
 #[cold]
 pub const fn trailing_bytes() -> ReadError {
     ReadError::TrailingBytes
+}
+
+#[cold]
+pub const fn duplicate_key(key: &'static str) -> ReadError {
+    ReadError::DuplicateKey(key)
 }
 
 impl From<PreallocationError> for ReadError {
