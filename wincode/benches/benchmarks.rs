@@ -1,5 +1,37 @@
+//! # Running these benchmarks
+//!
+//! You can run the full suite with `cargo bench`. It needs no special flags and gives the
+//! general view: how wincode compares against bincode across the type and collection
+//! shapes below.
+//!
+//! In order to do a targeted comparison of a specific code change, run a side-by-side
+//! baseline comparison on a single benchmark instead. A criterion timing depends on the
+//! layout of the whole binary, so an unrelated edit elsewhere can move a number further
+//! than the change under test does. Build against both revisions with 64-byte function
+//! alignment, and measure one benchmark per process, pinned to a core:
+//!
+//! ```text
+//! # build only: RUSTFLAGS applies at build time, and the measured run must not be cargo's
+//! RUSTFLAGS="-Cllvm-args=-align-all-functions=6" cargo bench --bench benchmarks --no-run
+//!
+//! # copy the binary name printed above, and record a baseline from one benchmark
+//! taskset -c 4 target/release/deps/benchmarks-<hash> --bench \
+//!     --exact "BTreeMap<u64, u64>/wincode/deserialize/1000" --save-baseline before
+//!
+//! # rebuild on the other revision, then compare its binary against that baseline
+//! taskset -c 4 target/release/deps/benchmarks-<other-hash> --bench \
+//!     --exact "BTreeMap<u64, u64>/wincode/deserialize/1000" --baseline before
+//! ```
+//!
+//! `--list` prints the available ids. Each bench fn is `#[inline(never)]`, so those
+//! binaries also carry one symbol per benchmark, and `objdump -d` on it shows what a
+//! change did to the emitted instructions.
+
 use {
-    criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main},
+    criterion::{
+        Bencher, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
+        measurement::WallTime,
+    },
     rand::{Rng as _, SeedableRng},
     serde::{Deserialize, Serialize},
     std::{
@@ -53,53 +85,110 @@ where
     vec![0u8; size]
 }
 
+/// Build a benchmark's data when criterion runs this, then time `body` against it.
+///
+/// Keep `new_data` behind this helper: criterion filters inside `bench_function`, so
+/// setup left in the enclosing bench fn runs even for benchmarks a `--bench` filter
+/// excluded, and every measurement then depends on what the other groups allocated.
+fn run_with_t<T, R>(
+    new_data: impl Fn() -> T,
+    body: impl Fn(&T) -> R,
+) -> impl FnMut(&mut Bencher<'_, WallTime>) {
+    move |b| {
+        let data = new_data();
+        b.iter(|| body(black_box(&data)));
+    }
+}
+
+/// [`run_with_t`] plus a buffer sized for the encoding, for the in-place writes.
+///
+/// The buffer arrives without `black_box`, unlike the data: whether the writer is the
+/// slice or a reference to it changes what is measured, so that choice stays with the
+/// body, and so does the `black_box` that pins it.
+fn run_with_buf<T, R>(
+    new_data: impl Fn() -> T,
+    body: impl Fn(&mut [u8], &T) -> R,
+) -> impl FnMut(&mut Bencher<'_, WallTime>)
+where
+    T: SchemaWrite<DefaultConfig, Src = T>,
+{
+    move |b| {
+        let data = new_data();
+        let mut buffer = create_bench_buffer(&data);
+        b.iter(|| body(buffer.as_mut_slice(), black_box(&data)));
+    }
+}
+
+/// [`run_with_t`] for the deserialization benchmarks, which measure against encoded bytes.
+fn run_with_bytes<T, R>(
+    new_data: impl Fn() -> T,
+    body: impl Fn(&[u8]) -> R,
+) -> impl FnMut(&mut Bencher<'_, WallTime>)
+where
+    T: SchemaWrite<DefaultConfig, Src = T> + Serialize,
+{
+    move |b| {
+        let bytes = verify_serialize_into(&new_data());
+        b.iter(|| body(black_box(&bytes)));
+    }
+}
+
+#[inline(never)]
 fn bench_primitives_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Primitives");
     group.throughput(Throughput::Elements(1));
 
-    let data = 0xDEADBEEFCAFEBABEu64;
-    let serialized = verify_serialize_into(&data);
+    let new_data = || 0xDEADBEEFCAFEBABEu64;
 
     // In-place serialization (measures pure serialization, no allocation)
-    group.bench_function("u64/wincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "u64/wincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("u64/bincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| {
-            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
-        });
-    });
+    group.bench_function(
+        "u64/bincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            bincode::serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("u64/wincode/serialize", |b| {
-        b.iter(|| serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "u64/wincode/serialize",
+        run_with_t(new_data, |d| serialize(d).unwrap()),
+    );
 
-    group.bench_function("u64/bincode/serialize", |b| {
-        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "u64/bincode/serialize",
+        run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
+    );
 
-    group.bench_function("u64/wincode/serialized_size", |b| {
-        b.iter(|| serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "u64/wincode/serialized_size",
+        run_with_t(new_data, |d| serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("u64/bincode/serialized_size", |b| {
-        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "u64/bincode/serialized_size",
+        run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("u64/wincode/deserialize", |b| {
-        b.iter(|| deserialize::<u64>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "u64/wincode/deserialize",
+        run_with_bytes(new_data, |s| deserialize::<u64>(s).unwrap()),
+    );
 
-    group.bench_function("u64/bincode/deserialize", |b| {
-        b.iter(|| bincode::deserialize::<u64>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "u64/bincode/deserialize",
+        run_with_bytes(new_data, |s| bincode::deserialize::<u64>(s).unwrap()),
+    );
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_char_deserialization(c: &mut Criterion) {
     c.bench_function("char/wincode/deserialize", |b| {
         let str: String = rand::prelude::SmallRng::seed_from_u64(0x42)
@@ -119,407 +208,377 @@ fn bench_char_deserialization(c: &mut Criterion) {
     });
 }
 
+#[inline(never)]
 fn bench_vec_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Vec<u64>");
 
     for size in [100, 1_000, 10_000] {
-        let data: Vec<u64> = (0..size).map(|i| i as u64).collect();
-        let data_size = serialized_size(&data).unwrap();
-        group.throughput(Throughput::Bytes(data_size));
+        let new_data = || -> Vec<u64> { (0..size).collect() };
+        group.throughput(Throughput::Elements(size));
 
-        let serialized = verify_serialize_into(&data);
-
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
-            },
+            run_with_buf(new_data, |buffer, d| {
+                serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
-            },
+            run_with_buf(new_data, |buffer, d| {
+                bincode::serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
         // Allocating serialization
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| deserialize::<Vec<u64>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| deserialize::<Vec<u64>>(s).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| bincode::deserialize::<Vec<u64>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| bincode::deserialize::<Vec<u64>>(s).unwrap()),
         );
     }
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_struct_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("SimpleStruct");
     group.throughput(Throughput::Elements(1));
 
-    let data = SimpleStruct {
+    let new_data = || SimpleStruct {
         id: 12345,
         value: 0xDEADBEEF,
         flag: true,
     };
-    let serialized = verify_serialize_into(&data);
 
-    group.bench_function("wincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("bincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| {
-            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
-        });
-    });
+    group.bench_function(
+        "bincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            bincode::serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("wincode/serialize", |b| {
-        b.iter(|| serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialize",
+        run_with_t(new_data, |d| serialize(d).unwrap()),
+    );
 
-    group.bench_function("bincode/serialize", |b| {
-        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "bincode/serialize",
+        run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
+    );
 
-    group.bench_function("wincode/serialized_size", |b| {
-        b.iter(|| serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialized_size",
+        run_with_t(new_data, |d| serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("bincode/serialized_size", |b| {
-        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "bincode/serialized_size",
+        run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("wincode/deserialize", |b| {
-        b.iter(|| deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "wincode/deserialize",
+        run_with_bytes(new_data, |s| deserialize::<SimpleStruct>(s).unwrap()),
+    );
 
-    group.bench_function("bincode/deserialize", |b| {
-        b.iter(|| bincode::deserialize::<SimpleStruct>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "bincode/deserialize",
+        run_with_bytes(new_data, |s| {
+            bincode::deserialize::<SimpleStruct>(s).unwrap()
+        }),
+    );
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_pod_struct_single_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("PodStruct");
     group.throughput(Throughput::Elements(1));
 
-    let data = PodStruct {
+    let new_data = || PodStruct {
         a: [42u8; 32],
         b: [17u8; 16],
         c: [99u8; 8],
     };
-    let serialized = verify_serialize_into(&data);
 
-    group.bench_function("wincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("bincode/serialize_into", |b| {
-        let mut buffer = create_bench_buffer(&data);
-        b.iter(|| {
-            bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(&data)).unwrap()
-        });
-    });
+    group.bench_function(
+        "bincode/serialize_into",
+        run_with_buf(new_data, |buffer, d| {
+            bincode::serialize_into(black_box(buffer), d).unwrap()
+        }),
+    );
 
-    group.bench_function("wincode/serialize", |b| {
-        b.iter(|| serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialize",
+        run_with_t(new_data, |d| serialize(d).unwrap()),
+    );
 
-    group.bench_function("bincode/serialize", |b| {
-        b.iter(|| bincode::serialize(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "bincode/serialize",
+        run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
+    );
 
-    group.bench_function("wincode/serialized_size", |b| {
-        b.iter(|| serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "wincode/serialized_size",
+        run_with_t(new_data, |d| serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("bincode/serialized_size", |b| {
-        b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
-    });
+    group.bench_function(
+        "bincode/serialized_size",
+        run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
+    );
 
-    group.bench_function("wincode/deserialize", |b| {
-        b.iter(|| deserialize::<PodStruct>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "wincode/deserialize",
+        run_with_bytes(new_data, |s| deserialize::<PodStruct>(s).unwrap()),
+    );
 
-    group.bench_function("bincode/deserialize", |b| {
-        b.iter(|| bincode::deserialize::<PodStruct>(black_box(&serialized)).unwrap());
-    });
+    group.bench_function(
+        "bincode/deserialize",
+        run_with_bytes(new_data, |s| bincode::deserialize::<PodStruct>(s).unwrap()),
+    );
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_hashmap_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("HashMap<u64, u64>");
 
     for size in [100, 1_000] {
-        let data: HashMap<u64, u64> = (0..size).map(|i: u64| (i, i.wrapping_mul(2))).collect();
+        let new_data =
+            || -> HashMap<u64, u64> { (0..size).map(|i: u64| (i, i.wrapping_mul(2))).collect() };
         group.throughput(Throughput::Elements(size));
 
-        let serialized = verify_serialize_into(&data);
-
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
-            },
+            run_with_buf(new_data, |buffer, d| {
+                serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
-            },
+            run_with_buf(new_data, |buffer, d| {
+                bincode::serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| deserialize::<HashMap<u64, u64>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| deserialize::<HashMap<u64, u64>>(s).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| bincode::deserialize::<HashMap<u64, u64>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| {
+                bincode::deserialize::<HashMap<u64, u64>>(s).unwrap()
+            }),
         );
     }
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_hashmap_pod_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("HashMap<[u8; 16], PodStruct>");
 
     for size in [100, 1_000] {
-        let data: HashMap<[u8; 16], PodStruct> = (0..size)
-            .map(|i| {
-                let mut key = [0u8; 16];
-                key[0] = i as u8;
-                key[1] = (i >> 8) as u8;
-                (
-                    key,
-                    PodStruct {
-                        a: [i as u8; 32],
-                        b: [i as u8; 16],
-                        c: [i as u8; 8],
-                    },
-                )
-            })
-            .collect();
+        let new_data = || -> HashMap<[u8; 16], PodStruct> {
+            (0..size)
+                .map(|i| {
+                    let mut key = [0u8; 16];
+                    key[0] = i as u8;
+                    key[1] = (i >> 8) as u8;
+                    (
+                        key,
+                        PodStruct {
+                            a: [i as u8; 32],
+                            b: [i as u8; 16],
+                            c: [i as u8; 8],
+                        },
+                    )
+                })
+                .collect()
+        };
         group.throughput(Throughput::Elements(size));
 
-        let serialized = verify_serialize_into(&data);
-
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap())
-            },
+            run_with_buf(new_data, |buffer, d| {
+                serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    bincode::serialize_into(black_box(buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
-            },
+            run_with_buf(new_data, |buffer, d| {
+                bincode::serialize_into(black_box(buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| {
+                deserialize::<HashMap<[u8; 16], PodStruct>>(s).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/deserialize", size),
-            &serialized,
-            |b, s| {
-                b.iter(|| {
-                    bincode::deserialize::<HashMap<[u8; 16], PodStruct>>(black_box(s)).unwrap()
-                })
-            },
+            run_with_bytes(new_data, |s| {
+                bincode::deserialize::<HashMap<[u8; 16], PodStruct>>(s).unwrap()
+            }),
         );
     }
 
     group.finish();
 }
 
+#[inline(never)]
 fn bench_pod_struct_comparison(c: &mut Criterion) {
     let mut group = c.benchmark_group("Vec<PodStruct>");
 
     for size in [1_000, 10_000] {
-        let data: Vec<PodStruct> = (0..size)
-            .map(|i| PodStruct {
-                a: [i as u8; 32],
-                b: [i as u8; 16],
-                c: [i as u8; 8],
-            })
-            .collect();
-        let data_size = serialized_size(&data).unwrap();
-        group.throughput(Throughput::Bytes(data_size));
-
-        let serialized = verify_serialize_into(&data);
+        let new_data = || -> Vec<PodStruct> {
+            (0..size)
+                .map(|i| PodStruct {
+                    a: [i as u8; 32],
+                    b: [i as u8; 16],
+                    c: [i as u8; 8],
+                })
+                .collect()
+        };
+        group.throughput(Throughput::Elements(size));
 
         // In-place serialization
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d)).unwrap()
-                })
-            },
+            run_with_buf(new_data, |mut buffer, d| {
+                serialize_into(black_box(&mut buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize_into", size),
-            &data,
-            |b, d| {
-                let mut buffer = create_bench_buffer(d);
-                b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                        .unwrap()
-                })
-            },
+            run_with_buf(new_data, |mut buffer, d| {
+                bincode::serialize_into(black_box(&mut buffer), d).unwrap()
+            }),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialize", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/serialized_size", size),
-            &data,
-            |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+            run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("wincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| deserialize::<Vec<PodStruct>>(s).unwrap()),
         );
 
-        group.bench_with_input(
+        group.bench_function(
             BenchmarkId::new("bincode/deserialize", size),
-            &serialized,
-            |b, s| b.iter(|| bincode::deserialize::<Vec<PodStruct>>(black_box(s)).unwrap()),
+            run_with_bytes(new_data, |s| {
+                bincode::deserialize::<Vec<PodStruct>>(s).unwrap()
+            }),
         );
     }
 
@@ -555,52 +614,55 @@ enum MixedSizedEnum {
 // Macro to reduce duplication across enum benchmarks.
 macro_rules! bench_enum {
     ($fn_name:ident, $group_name:literal, $type:ty, $data:expr) => {
+        #[inline(never)]
         fn $fn_name(c: &mut Criterion) {
             let mut group = c.benchmark_group($group_name);
-            let data: $type = $data;
-            let data_size = serialized_size(&data).unwrap();
-            group.throughput(Throughput::Bytes(data_size));
+            let new_data = || -> $type { $data };
+            group.throughput(Throughput::Elements(1));
 
-            let serialized = verify_serialize_into(&data);
+            group.bench_function(
+                "wincode/serialize_into",
+                run_with_buf(new_data, |mut buffer, d| {
+                    serialize_into(black_box(&mut buffer), d).unwrap()
+                }),
+            );
 
-            group.bench_function("wincode/serialize_into", |b| {
-                let mut buffer = create_bench_buffer(&data);
-                b.iter(|| {
-                    serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data)).unwrap()
-                });
-            });
+            group.bench_function(
+                "bincode/serialize_into",
+                run_with_buf(new_data, |mut buffer, d| {
+                    bincode::serialize_into(black_box(&mut buffer), d).unwrap()
+                }),
+            );
 
-            group.bench_function("bincode/serialize_into", |b| {
-                let mut buffer = create_bench_buffer(&data);
-                b.iter(|| {
-                    bincode::serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(&data))
-                        .unwrap()
-                });
-            });
+            group.bench_function(
+                "wincode/serialize",
+                run_with_t(new_data, |d| serialize(d).unwrap()),
+            );
 
-            group.bench_function("wincode/serialize", |b| {
-                b.iter(|| serialize(black_box(&data)).unwrap());
-            });
+            group.bench_function(
+                "bincode/serialize",
+                run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
+            );
 
-            group.bench_function("bincode/serialize", |b| {
-                b.iter(|| bincode::serialize(black_box(&data)).unwrap());
-            });
+            group.bench_function(
+                "wincode/serialized_size",
+                run_with_t(new_data, |d| serialized_size(d).unwrap()),
+            );
 
-            group.bench_function("wincode/serialized_size", |b| {
-                b.iter(|| serialized_size(black_box(&data)).unwrap());
-            });
+            group.bench_function(
+                "bincode/serialized_size",
+                run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
+            );
 
-            group.bench_function("bincode/serialized_size", |b| {
-                b.iter(|| bincode::serialized_size(black_box(&data)).unwrap());
-            });
+            group.bench_function(
+                "wincode/deserialize",
+                run_with_bytes(new_data, |s| deserialize::<$type>(s).unwrap()),
+            );
 
-            group.bench_function("wincode/deserialize", |b| {
-                b.iter(|| deserialize::<$type>(black_box(&serialized)).unwrap());
-            });
-
-            group.bench_function("bincode/deserialize", |b| {
-                b.iter(|| bincode::deserialize::<$type>(black_box(&serialized)).unwrap());
-            });
+            group.bench_function(
+                "bincode/deserialize",
+                run_with_bytes(new_data, |s| bincode::deserialize::<$type>(s).unwrap()),
+            );
 
             group.finish();
         }
@@ -610,93 +672,57 @@ macro_rules! bench_enum {
 // Macro to reduce duplication across Vec enum benchmarks.
 macro_rules! bench_vec_enum {
     ($fn_name:ident, $group_name:literal, $type:ty, $data_gen:expr) => {
+        #[inline(never)]
         fn $fn_name(c: &mut Criterion) {
             let mut group = c.benchmark_group($group_name);
 
             for size in [100, 1_000, 10_000] {
-                let data: Vec<$type> = $data_gen(size);
-                let data_size = serialized_size(&data).unwrap();
+                let new_data = || -> Vec<$type> { $data_gen(size) };
+                group.throughput(Throughput::Elements(size));
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("wincode/serialize_into", size),
-                        &data,
-                        |b, d| {
-                            let mut buffer = create_bench_buffer(d);
-                            b.iter(|| {
-                                serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                                    .unwrap()
-                            })
-                        },
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("wincode/serialize_into", size),
+                    run_with_buf(new_data, |mut buffer, d| {
+                        serialize_into(black_box(&mut buffer), d).unwrap()
+                    }),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("bincode/serialize_into", size),
-                        &data,
-                        |b, d| {
-                            let mut buffer = create_bench_buffer(d);
-                            b.iter(|| {
-                                bincode::serialize_into(
-                                    black_box(&mut buffer.as_mut_slice()),
-                                    black_box(d),
-                                )
-                                .unwrap()
-                            })
-                        },
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("bincode/serialize_into", size),
+                    run_with_buf(new_data, |mut buffer, d| {
+                        bincode::serialize_into(black_box(&mut buffer), d).unwrap()
+                    }),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("wincode/serialize", size),
-                        &data,
-                        |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("wincode/serialize", size),
+                    run_with_t(new_data, |d| serialize(d).unwrap()),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("bincode/serialize", size),
-                        &data,
-                        |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("bincode/serialize", size),
+                    run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("wincode/serialized_size", size),
-                        &data,
-                        |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("wincode/serialized_size", size),
+                    run_with_t(new_data, |d| serialized_size(d).unwrap()),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("bincode/serialized_size", size),
-                        &data,
-                        |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("bincode/serialized_size", size),
+                    run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
+                );
 
-                let serialized = verify_serialize_into(&data);
+                group.bench_function(
+                    BenchmarkId::new("wincode/deserialize", size),
+                    run_with_bytes(new_data, |s| deserialize::<Vec<$type>>(s).unwrap()),
+                );
 
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("wincode/deserialize", size),
-                        &serialized,
-                        |b, s| b.iter(|| deserialize::<Vec<$type>>(black_box(s)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
-
-                group
-                    .bench_with_input(
-                        BenchmarkId::new("bincode/deserialize", size),
-                        &serialized,
-                        |b, s| b.iter(|| bincode::deserialize::<Vec<$type>>(black_box(s)).unwrap()),
-                    )
-                    .throughput(Throughput::Bytes(data_size));
+                group.bench_function(
+                    BenchmarkId::new("bincode/deserialize", size),
+                    run_with_bytes(new_data, |s| bincode::deserialize::<Vec<$type>>(s).unwrap()),
+                );
             }
 
             group.finish();
@@ -756,21 +782,18 @@ bench_vec_enum!(
         (0..size)
             .map(|i| match i % 4 {
                 0 => SameSizedEnum::Transfer {
-                    amount: i as u64,
+                    amount: i,
                     fee: 5000,
                 },
                 1 => SameSizedEnum::Stake {
-                    lamports: i as u64,
+                    lamports: i,
                     rent: 1000,
                 },
                 2 => SameSizedEnum::Withdraw {
-                    amount: i as u64,
-                    timestamp: i as u64,
+                    amount: i,
+                    timestamp: i,
                 },
-                _ => SameSizedEnum::Close {
-                    refund: i as u64,
-                    slot: i as u64,
-                },
+                _ => SameSizedEnum::Close { refund: i, slot: i },
             })
             .collect()
     }
@@ -784,12 +807,8 @@ bench_vec_enum!(
         (0..size)
             .map(|i| match i % 3 {
                 0 => MixedSizedEnum::Small { flag: i as u8 },
-                1 => MixedSizedEnum::Medium { value: i as u64 },
-                _ => MixedSizedEnum::Large {
-                    x: i as u64,
-                    y: i as u64,
-                    z: i as u64,
-                },
+                1 => MixedSizedEnum::Medium { value: i },
+                _ => MixedSizedEnum::Large { x: i, y: i, z: i },
             })
             .collect()
     }
@@ -797,76 +816,56 @@ bench_vec_enum!(
 
 macro_rules! bench_collection {
     ($fn_name:ident, $group_name:literal, $type:ty, $data_gen:expr) => {
+        #[inline(never)]
         fn $fn_name(c: &mut Criterion) {
             let mut group = c.benchmark_group($group_name);
 
             for size in [100, 1_000] {
-                let data: $type = $data_gen(size);
+                let new_data = || -> $type { $data_gen(size) };
                 group.throughput(Throughput::Elements(size));
 
-                let serialized = verify_serialize_into(&data);
-
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("wincode/serialize_into", size),
-                    &data,
-                    |b, d| {
-                        let mut buffer = create_bench_buffer(d);
-                        b.iter(|| {
-                            serialize_into(black_box(&mut buffer.as_mut_slice()), black_box(d))
-                                .unwrap()
-                        })
-                    },
+                    run_with_buf(new_data, |mut buffer, d| {
+                        serialize_into(black_box(&mut buffer), d).unwrap()
+                    }),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("bincode/serialize_into", size),
-                    &data,
-                    |b, d| {
-                        let mut buffer = create_bench_buffer(d);
-                        b.iter(|| {
-                            bincode::serialize_into(
-                                black_box(&mut buffer.as_mut_slice()),
-                                black_box(d),
-                            )
-                            .unwrap()
-                        })
-                    },
+                    run_with_buf(new_data, |mut buffer, d| {
+                        bincode::serialize_into(black_box(&mut buffer), d).unwrap()
+                    }),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("wincode/serialize", size),
-                    &data,
-                    |b, d| b.iter(|| serialize(black_box(d)).unwrap()),
+                    run_with_t(new_data, |d| serialize(d).unwrap()),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("bincode/serialize", size),
-                    &data,
-                    |b, d| b.iter(|| bincode::serialize(black_box(d)).unwrap()),
+                    run_with_t(new_data, |d| bincode::serialize(d).unwrap()),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("wincode/serialized_size", size),
-                    &data,
-                    |b, d| b.iter(|| serialized_size(black_box(d)).unwrap()),
+                    run_with_t(new_data, |d| serialized_size(d).unwrap()),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("bincode/serialized_size", size),
-                    &data,
-                    |b, d| b.iter(|| bincode::serialized_size(black_box(d)).unwrap()),
+                    run_with_t(new_data, |d| bincode::serialized_size(d).unwrap()),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("wincode/deserialize", size),
-                    &serialized,
-                    |b, s| b.iter(|| deserialize::<$type>(black_box(s)).unwrap()),
+                    run_with_bytes(new_data, |s| deserialize::<$type>(s).unwrap()),
                 );
 
-                group.bench_with_input(
+                group.bench_function(
                     BenchmarkId::new("bincode/deserialize", size),
-                    &serialized,
-                    |b, s| b.iter(|| bincode::deserialize::<$type>(black_box(s)).unwrap()),
+                    run_with_bytes(new_data, |s| bincode::deserialize::<$type>(s).unwrap()),
                 );
             }
 
