@@ -233,6 +233,7 @@
 //! |`uuid`|disabled|Enables support for the `uuid` crate.|
 //! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
 //! |`bumpalo`|disabled|Enables support for the `bumpalo` crate.|
+//! |`glam`|disabled|Enables support for the `glam` crate using its public array and column-array component order.|
 //!
 //! # Derive attributes
 //!

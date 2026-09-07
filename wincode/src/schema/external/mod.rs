@@ -6,6 +6,8 @@ mod bv;
 mod bytes;
 #[cfg(feature = "ecow")]
 mod ecow;
+#[cfg(feature = "glam")]
+mod glam;
 #[cfg(feature = "indexmap")]
 mod indexmap;
 #[cfg(feature = "smallvec")]

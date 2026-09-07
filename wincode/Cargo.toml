@@ -23,7 +23,7 @@ default = ["std"]
 alloc = []
 bv = ["std", "dep:bv"]
 bv-strict = ["bv"]
-std = ["alloc", "thiserror/std"]
+std = ["alloc", "thiserror/std", "glam?/std"]
 derive = ["dep:wincode-derive"]
 indexmap = ["alloc", "dep:indexmap"]
 uuid = ["dep:uuid"]
@@ -33,12 +33,14 @@ bytes-extra-platforms = ["bytes", "bytes/extra-platforms"]
 ecow = ["alloc", "dep:ecow"]
 smallvec = ["alloc", "dep:smallvec"]
 bumpalo = ["alloc", "dep:bumpalo"]
+glam = ["dep:glam", "glam/all-types", "glam/nostd-libm"]
 
 [dependencies]
 bumpalo = { version = "3.20.3", features = ["collections", "boxed"], optional = true }
 bytes = { version = "1.11.1", optional = true, default-features = false }
 bv = { version = "0.11.1", optional = true, default-features = false }
 ecow = { version = "0.2.6", optional = true, default-features = false }
+glam = { version = "0.33.5", optional = true, default-features = false }
 indexmap = { version = "2.13.1", optional = true, default-features = false }
 pastey = "0.2.2"
 smallvec = { version = "1.15.1", optional = true, default-features = false, features = ["const_generics"] }
@@ -55,6 +57,7 @@ rand = { version = "0.9.2" }
 serde = { version = "1.0.227", features = ["derive", "rc"] }
 criterion = { version = "0.7.0", features = ["html_reports"] }
 ecow = { version = "0.2.6", features = ["serde"], default-features = false }
+glam = { version = "0.33.5", features = ["all-types", "nostd-libm", "serde"], default-features = false }
 indexmap = { version = "2.13.1", features = ["serde"], default-features = false }
 smallvec = { version = "1.15.1", features = ["const_generics", "serde"], default-features = false }
 uuid = { version = "1.23.1", features = ["serde"] }
