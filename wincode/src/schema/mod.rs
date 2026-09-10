@@ -454,6 +454,11 @@ where
     size_of_elem_iter::<T, Len, C>(value.iter())
 }
 
+#[cold]
+fn short_iter() -> crate::WriteError {
+    crate::WriteError::Custom("ExactSizeIterator yielded fewer elements than its reported len()")
+}
+
 #[inline(always)]
 fn write_elem_iter<T, Len, C>(
     mut writer: impl Writer,
@@ -464,13 +469,6 @@ where
     Len: SeqLen<C>,
     T: SchemaWrite<C>,
 {
-    #[cold]
-    fn short_iter() -> crate::WriteError {
-        crate::WriteError::Custom(
-            "ExactSizeIterator yielded fewer elements than its reported len()",
-        )
-    }
-
     // Drive everything from the reported length rather than trusting the iterator to
     // stop on its own: `0..len` caps writes at `len` (no over-run of the trusted
     // window), and `short_iter` errors on early exhaustion (no partially initialized
