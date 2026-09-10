@@ -4,17 +4,18 @@ use {
         common::{
             Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
             default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            move_bounds_to_where, turbofish_without_lifetimes,
         },
     },
     darling::{
         Error, FromDeriveInput, Result,
         ast::{Data, Fields, Style},
     },
-    proc_macro2::TokenStream,
+    proc_macro2::{Span, TokenStream},
     quote::quote,
     syn::{
-        DeriveInput, GenericParam, Generics, Path, PredicateType, Token, Type, WherePredicate,
-        parse_quote, punctuated::Punctuated,
+        DeriveInput, GenericParam, Generics, Ident, Path, PredicateType, Token, Type,
+        WherePredicate, parse_quote, punctuated::Punctuated,
     },
 };
 
@@ -22,7 +23,15 @@ fn impl_struct(
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
-) -> (TokenStream, TokenStream, TokenStream) {
+    impl_generics: &Generics,
+    self_ty: &TokenStream,
+) -> (
+    TokenStream,
+    TokenStream,
+    TokenStream,
+    Vec<TokenStream>,
+    Vec<TokenStream>,
+) {
     if fields.is_empty() {
         return (
             quote! {Ok(0)},
@@ -33,26 +42,104 @@ fn impl_struct(
                     zero_copy: true,
                 }
             },
+            Vec::new(),
+            Vec::new(),
         );
     }
 
-    let target = fields
-        .unskipped_iter()
-        .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
-    let mut size_count_idents = Vec::with_capacity(fields.len());
+    // Chain functions are free fns carrying the impl's own generics and where clause, so they
+    // name the field schemas exactly as the impl does.
+    let (chain_generics, _, chain_where) = impl_generics.split_for_impl();
 
-    let writes = fields.struct_members_iter()
-        .filter_map(|(field, ident)| {
-            if field.skip.is_none() {
-                let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
-                let write = quote! { #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
-                size_count_idents.push(ident);
-                Some(write)
-            } else {
-                None
+    let metas = fields.plan_metas(TraitImpl::SchemaWrite, crate_name);
+    // Each field's target type and member. One entry per declaration, so an index here is also
+    // an index into the plan; a skipped field keeps its slot and holds none, rather than being
+    // filtered out.
+    let write_targets = fields
+        .struct_members_iter()
+        .map(|(field, ident)| match field.skip {
+            Some(_) => None,
+            None => Some((field.target_fully_qualified(TraitImpl::SchemaWrite), ident)),
+        })
+        .collect::<Vec<_>>();
+
+    let chain_name =
+        |index: usize| Ident::new(&format!("__wincode_write_chain_{index}"), Span::call_site());
+    let write_through = |write: &Option<_>| {
+        write.as_ref().map(|(target, ident)| {
+            quote! {
+                #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?;
+            }
+        })
+    };
+
+    // Path to the write plan, shared by the guards below, which look up each field by index.
+    let plan = quote!(<#self_ty as #crate_name::WriteFieldPlan<__WincodeConfig>>::PLAN);
+
+    let chain_turbofish = turbofish_without_lifetimes(impl_generics);
+
+    // One chain function per field, handing off to the next field's chain fn while its window
+    // continues, so emission stays linear.
+    let chain_fns = write_targets
+        .iter()
+        .enumerate()
+        .map(|(index, write)| {
+            let name = chain_name(index);
+            let body = write_through(write);
+            let next = (index + 1 < fields.len()).then(|| {
+                let next_name = chain_name(index + 1);
+                let next_index = index + 1;
+                quote! {
+                    if const { #plan[#next_index].is_in_window() } {
+                        return #next_name #chain_turbofish(writer, src);
+                    }
+                }
+            });
+            quote! {
+                #[inline(always)]
+                fn #name #chain_generics(
+                    mut writer: impl #crate_name::io::Writer,
+                    src: &#self_ty,
+                ) -> #crate_name::WriteResult<()>
+                #chain_where
+                {
+                    #body
+                    #next
+                    Ok(())
+                }
             }
         })
         .collect::<Vec<_>>();
+
+    // An entry point per declaration, since any of them may open a window; the chain covers
+    // the rest.
+    let write_steps = write_targets
+        .iter()
+        .enumerate()
+        .map(|(index, write)| {
+            let name = chain_name(index);
+            let direct = write_through(write);
+            quote! {
+                if const { #plan[#index].opens_window() } {
+                    // Starts the chain that writes this field and every static one after it.
+                    // SAFETY: the run's size is the sum of the serialized sizes of the fields it
+                    // covers, which are each statically sized. The chain writes exactly those
+                    // fields, so it fills the trusted window exactly once.
+                    let size = const { #plan[#index].window_size() };
+                    let mut window =
+                        unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
+                    #name #chain_turbofish(#crate_name::io::Writer::by_ref(&mut window), src)?;
+                    #crate_name::io::Writer::finish(&mut window)?;
+                } else if const { #plan[#index].is_direct() } {
+                    #direct
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // Terms of the `size_of` sum, one per field that is actually written.
+    let (targets, size_count_idents): (Vec<_>, Vec<_>) =
+        write_targets.into_iter().flatten().unzip();
 
     let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name);
 
@@ -63,28 +150,17 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += #target::size_of(&src.#size_count_idents)?;
+                total += #targets::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
         quote! {
-            match <Self as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `write` on each field will write exactly `size` bytes,
-                    // fully initializing the trusted window.
-                    let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
-                    #(#writes)*
-                    #crate_name::io::Writer::finish(&mut writer)?;
-                }
-                #crate_name::TypeMeta::Dynamic => {
-                    #(#writes)*
-                }
-            }
+            #(#write_steps)*
             Ok(())
         },
         type_meta_impl,
+        metas,
+        chain_fns,
     )
 }
 
@@ -247,7 +323,7 @@ fn impl_enum(
             }
         },
         quote! {
-           #type_meta_impl
+            #type_meta_impl
         },
     )
 }
@@ -290,6 +366,7 @@ fn append_generics(
     let mut generics = generics.clone();
     append_where_clause(&mut generics, data);
     append_config(&mut generics, crate_name);
+    move_bounds_to_where(&mut generics);
     generics
 }
 
@@ -304,20 +381,36 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let ident = &args.ident;
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
-    let (size_of_impl, write_impl, type_meta_impl) = match &args.data {
+    let self_ty = quote! { #ident #ty_generics };
+
+    let (size_of_impl, write_impl, type_meta_impl, metas, chain_fns) = match &args.data {
         Data::Struct(fields) => {
             if args.tag_encoding.is_some() {
                 return Err(Error::custom("`tag_encoding` is only supported for enums"));
             }
             // Only structs are eligible being marked zero-copy, so only the struct
             // impl needs the repr.
-            impl_struct(fields, &repr, &crate_name)
+            impl_struct(fields, &repr, &crate_name, &appended_generics, &self_ty)
         }
-        Data::Enum(v) => impl_enum(v, args.tag_encoding.as_ref(), &crate_name),
+        Data::Enum(v) => {
+            let (size_of, write, meta) = impl_enum(v, args.tag_encoding.as_ref(), &crate_name);
+            (size_of, write, meta, Vec::new(), Vec::new())
+        }
     };
 
+    let plan_impl = (!metas.is_empty()).then(|| {
+        quote! {
+            impl #impl_generics #crate_name::WriteFieldPlan<__WincodeConfig> for #ident #ty_generics
+                #where_clause
+            {
+                const PLAN: &'static [#crate_name::FieldPlan] =
+                    &#crate_name::TypeMeta::field_plan([#(#metas),*]);
+            }
+        }
+    });
     Ok(quote! {
         const _: () = {
+            #plan_impl
             unsafe impl #impl_generics #crate_name::SchemaWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = Self;
 
@@ -331,6 +424,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
 
                 #[inline]
                 fn write(mut writer: impl #crate_name::io::Writer, src: &Self::Src) -> #crate_name::WriteResult<()> {
+                    #(#chain_fns)*
                     #write_impl
                 }
             }

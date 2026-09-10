@@ -68,3 +68,8 @@ quote.workspace = true
 name = "benchmarks"
 harness = false
 required-features = ["std", "derive"]
+
+[[bench]]
+name = "wire_layout"
+harness = false
+required-features = ["std", "derive"]
