@@ -13,8 +13,9 @@ use {
         rc::Rc,
     },
     syn::{
-        DeriveInput, Expr, GenericArgument, Generics, Ident, Lifetime, LitInt, Member, Path, Type,
-        TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject, Visibility, parse_quote,
+        DeriveInput, Expr, GenericArgument, GenericParam, Generics, Ident, Lifetime, LitInt,
+        Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
+        Visibility, WherePredicate, parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
@@ -300,6 +301,13 @@ pub(crate) trait FieldsExt {
         repr: &StructRepr,
         crate_name: &Path,
     ) -> TokenStream;
+    /// One `TypeMeta` per declaration, in order, for [`TypeMeta::field_plan`] to plan windows
+    /// over.
+    ///
+    /// A skipped field carries no wire bytes, so it enters as a zero-sized static rather than
+    /// being left out: it stays inside whichever window it was declared in and displaces
+    /// nothing, which keeps the derive emitting fields in declaration order.
+    fn plan_metas(&self, trait_impl: TraitImpl, crate_name: &Path) -> Vec<TokenStream>;
     /// Get an iterator over the fields and their identifiers for the struct members.
     ///
     /// If the field has a named identifier, return it.
@@ -356,6 +364,18 @@ impl FieldsExt for Fields<Field> {
                 #crate_name::TypeMeta::Dynamic
             }
         }
+    }
+
+    fn plan_metas(&self, trait_impl: TraitImpl, crate_name: &Path) -> Vec<TokenStream> {
+        self.iter()
+            .map(|field| {
+                if field.skip.is_some() {
+                    return quote! { #crate_name::TypeMeta::Static { size: 0, zero_copy: true } };
+                }
+                let target = field.target_fully_qualified(trait_impl);
+                quote! { #target::TYPE_META }
+            })
+            .collect()
     }
 
     fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)> {
@@ -746,6 +766,49 @@ impl StructRepr {
     /// Zero-copy deserialization is only supported for `#[repr(transparent)]` and `#[repr(C)]` structs.
     pub(crate) fn is_zero_copy_eligible(&self) -> bool {
         matches!(self.layout, Layout::Transparent | Layout::C)
+    }
+}
+
+/// A turbofish naming a `Generics`' type and const parameters.
+///
+/// Lifetimes are left out for inference: a turbofish may omit them, but cannot name a late bound
+/// one, which is any lifetime a function does not constrain in a where clause.
+pub(crate) fn turbofish_without_lifetimes(generics: &Generics) -> TokenStream {
+    let args = generics.params.iter().filter_map(|param| match param {
+        GenericParam::Type(param) => Some(&param.ident),
+        GenericParam::Const(param) => Some(&param.ident),
+        GenericParam::Lifetime(_) => None,
+    });
+    quote!(::<#(#args),*>)
+}
+
+/// Move each parameter's inline bounds into the where clause.
+///
+/// Bounds reach an impl from two places: inline, from the struct's declaration, and the where
+/// clause (field predicates appended by the derive). Both end up in the latter, so anything
+/// reusing an impl's generics states them once.
+pub(crate) fn move_bounds_to_where(generics: &mut Generics) {
+    let predicates: Vec<WherePredicate> = generics
+        .params
+        .iter_mut()
+        .filter_map(|param| match param {
+            GenericParam::Type(param) if !param.bounds.is_empty() => {
+                let ident = &param.ident;
+                let bounds = std::mem::take(&mut param.bounds);
+                Some(parse_quote!(#ident: #bounds))
+            }
+            GenericParam::Lifetime(param) if !param.bounds.is_empty() => {
+                let lifetime = &param.lifetime;
+                let bounds = std::mem::take(&mut param.bounds);
+                Some(parse_quote!(#lifetime: #bounds))
+            }
+            // Nothing to move: already bare, or a const parameter, which cannot be bounded.
+            _ => None,
+        })
+        .collect();
+
+    if !predicates.is_empty() {
+        generics.make_where_clause().predicates.extend(predicates);
     }
 }
 

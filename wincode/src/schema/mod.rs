@@ -201,6 +201,135 @@ impl TypeMeta {
             zero_copy: all_zero_copy,
         }
     }
+
+    /// Decide which declarations a trusted window covers.
+    ///
+    /// A struct is [`Self::Dynamic`] as soon as one field is, but every maximal run of
+    /// statically sized fields still has a fixed total size, so the derive can cover each run
+    /// with its own window.
+    ///
+    /// A run of two or more fields opens one with [`FieldPlan::OpensWindow`], followed by
+    /// [`FieldPlan::InWindow`] entries. Dynamic fields and lone static ones use
+    /// [`FieldPlan::Direct`]: a window has to check the parent, build the child and advance the
+    /// parent again, so a single field will not benefit. Skipped declarations should be supplied
+    /// as zero-sized static fields, which keeps them inside whichever window they were declared
+    /// in and so keeps the derive's field order intact.
+    #[doc(hidden)]
+    #[expect(clippy::arithmetic_side_effects)]
+    pub const fn field_plan<const N: usize>(types: [Self; N]) -> [FieldPlan; N] {
+        let mut plan = [FieldPlan::InWindow; N];
+        let mut i = 0;
+        while i < N {
+            match types[i] {
+                Self::Dynamic => {
+                    plan[i] = FieldPlan::Direct;
+                    i += 1;
+                }
+                Self::Static { .. } => {
+                    let start = i;
+                    let mut window_size = 0usize;
+                    while i < N {
+                        let Self::Static { size, .. } = types[i] else {
+                            break;
+                        };
+                        window_size = window_size
+                            .checked_add(size)
+                            .expect("static field run size overflows usize");
+                        i += 1;
+                    }
+                    plan[start] = if i - start == 1 {
+                        FieldPlan::Direct
+                    } else {
+                        FieldPlan::OpensWindow { window_size }
+                    };
+                }
+            }
+        }
+        plan
+    }
+}
+
+/// One declaration's place in the window plan [`TypeMeta::field_plan`] computes.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldPlan {
+    /// Open a window over the run of two or more fields starting here. Where it ends is left
+    /// to [`Self::InWindow`], which the derive walks field by field.
+    OpensWindow {
+        /// Count of wire bytes the window covers.
+        window_size: usize,
+    },
+    /// Process this declaration through the parent reader or writer, bypassing any window: it
+    /// is dynamic, or a lone static field no window would pay for.
+    Direct,
+    /// A window opened at an earlier declaration already covers this one.
+    InWindow,
+}
+
+impl FieldPlan {
+    /// Whether a window opens at this declaration.
+    pub const fn opens_window(self) -> bool {
+        matches!(self, Self::OpensWindow { .. })
+    }
+
+    /// Whether a window opened earlier reaches this declaration.
+    pub const fn is_in_window(self) -> bool {
+        matches!(self, Self::InWindow)
+    }
+
+    /// Whether this declaration bypasses windows, going through the parent reader or writer.
+    pub const fn is_direct(self) -> bool {
+        matches!(self, Self::Direct)
+    }
+
+    /// Count of wire bytes the window opening here covers, or 0 if none opens here.
+    pub const fn window_size(self) -> usize {
+        match self {
+            Self::OpensWindow { window_size } => window_size,
+            Self::Direct | Self::InWindow => 0,
+        }
+    }
+}
+
+/// The plan the `SchemaWrite` derive follows when it writes a struct's fields.
+///
+/// It holds one entry per declaration, in declaration order, saying whether that field opens a
+/// trusted window, falls inside one already open, or goes straight through the parent writer.
+/// The derive implements this for every type it derives, then reads it back from `if const`
+/// guards to pick each field's path.
+///
+/// The derive writes this plan and its generated code is the only consumer, so a hand-written
+/// one is unused at best and unsound at worst: each window's size is passed to
+/// [`Writer::as_trusted_for`], which then lets that many bytes be written with no further
+/// bounds check, and a size larger than the fields it covers writes past the buffer.
+///
+/// # Why an associated const
+///
+/// The guards need the plan as a constant, and it depends on both the config and the struct's
+/// own generics. Of the ways to hold one:
+///
+/// - a `const` item can name neither, because an item in a fn body does not inherit the
+///   generics of the impl around it;
+/// - an inline `const { .. }` can name both, but every guard is its own anonymous constant, so
+///   each would restate the whole list of field metas;
+/// - an associated const names both -- the struct through `Self`, the config through the
+///   trait's parameter -- and states the metas once.
+#[doc(hidden)]
+pub trait WriteFieldPlan<C> {
+    /// The plan [`TypeMeta::field_plan`] computed for this type under `C`.
+    const PLAN: &'static [FieldPlan];
+}
+
+/// The same, for the `SchemaRead` derive, which plans a struct's reads the same way.
+///
+/// It is a separate trait for two reasons: its metas are projected through the input lifetime
+/// `'de`, and the two plans can genuinely differ, since a `bool` is zero-copy to write but not
+/// to read. See [`WriteFieldPlan`] for why the plan lives in an associated const, and why only
+/// the derive should implement it.
+#[doc(hidden)]
+pub trait ReadFieldPlan<'de, C> {
+    /// The plan [`TypeMeta::field_plan`] computed for this type under `C`.
+    const PLAN: &'static [FieldPlan];
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
@@ -2044,6 +2173,182 @@ mod tests {
                 zero_copy: false
             }
         ));
+    }
+
+    /// Only a run of two or more adjacent static fields opens a window. A static field with no
+    /// static neighbour is planned as `Direct`, like a dynamic one.
+    #[test]
+    fn field_plan_leaves_lone_static_fields_direct() {
+        use crate::FieldPlan;
+
+        const S: TypeMeta = TypeMeta::Static {
+            size: 4,
+            zero_copy: true,
+        };
+        const D: TypeMeta = TypeMeta::Dynamic;
+
+        assert_eq!(
+            TypeMeta::field_plan([S, D, S, D, S]),
+            [
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct
+            ],
+            "no two static fields adjoin, so nothing is worth a window"
+        );
+        assert_eq!(
+            TypeMeta::field_plan([S, S, D, S]),
+            [
+                FieldPlan::OpensWindow { window_size: 8 },
+                FieldPlan::InWindow,
+                FieldPlan::Direct,
+                FieldPlan::Direct
+            ],
+            "the pair wins a window, the field left alone after it does not"
+        );
+        assert_eq!(
+            TypeMeta::field_plan([S, S, S]),
+            [
+                FieldPlan::OpensWindow { window_size: 12 },
+                FieldPlan::InWindow,
+                FieldPlan::InWindow
+            ],
+            "an all-static struct is one window"
+        );
+    }
+
+    /// Round-trip against bincode for each shape the prefix window can take.
+    #[test]
+    fn dynamic_struct_static_prefix_roundtrips() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u8,
+            b: u32,
+            c: u64,
+            tail: Vec<u8>,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct NoPrefix {
+            head: Vec<u8>,
+            a: u8,
+            b: u32,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Split {
+            a: u8,
+            head: Vec<u8>,
+            b: u32,
+            tail: Vec<u8>,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Skipped {
+            a: u8,
+            #[wincode(skip)]
+            #[serde(skip)]
+            ignored: u64,
+            b: u32,
+            tail: Vec<u8>,
+        }
+
+        fn check<T>(value: &T)
+        where
+            T: SchemaWrite<DefaultConfig, Src = T>
+                + for<'de> SchemaRead<'de, DefaultConfig, Dst = T>
+                + serde::Serialize
+                + serde::de::DeserializeOwned
+                + core::fmt::Debug
+                + PartialEq,
+        {
+            let encoded = serialize(value).unwrap();
+            assert_eq!(encoded, bincode::serialize(value).unwrap());
+            assert_eq!(&deserialize::<T>(&encoded).unwrap(), value);
+        }
+
+        for tail in [vec![], vec![7u8; 5]] {
+            check(&Prefix {
+                a: 1,
+                b: 2,
+                c: 3,
+                tail: tail.clone(),
+            });
+            check(&NoPrefix {
+                head: tail.clone(),
+                a: 1,
+                b: 2,
+                c: 3,
+            });
+            check(&Split {
+                a: 1,
+                head: tail.clone(),
+                b: 2,
+                tail: tail.clone(),
+                c: 3,
+            });
+            check(&Skipped {
+                a: 1,
+                ignored: 0,
+                b: 2,
+                tail: tail.clone(),
+            });
+        }
+    }
+
+    /// The window is sized from the schema, so a prefix that does not fit has to fail before
+    /// anything goes through it.
+    #[test]
+    fn dynamic_struct_static_prefix_rejects_short_input() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u64,
+            b: u64,
+            tail: Vec<u8>,
+        }
+
+        let encoded = serialize(&Prefix {
+            a: 1,
+            b: 2,
+            tail: vec![9],
+        })
+        .unwrap();
+
+        for truncated in 0..encoded.len() {
+            assert!(deserialize::<Prefix>(&encoded[..truncated]).is_err());
+        }
+
+        let mut buffer = [0u8; 8];
+        assert!(
+            crate::serialize_into(
+                buffer.as_mut_slice(),
+                &Prefix {
+                    a: 1,
+                    b: 2,
+                    tail: vec![],
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
