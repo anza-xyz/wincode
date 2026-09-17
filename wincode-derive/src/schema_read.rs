@@ -108,28 +108,14 @@ fn impl_struct(
 
     let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name);
 
-    let drop_guard = (0..fields.len()).map(|i| {
-        // Generate code to drop already initialized fields in reverse order.
-        let drop = fields.fields[..i]
-            .iter()
-            .rev()
-            .enumerate()
-            .map(|(j, field)| {
-                let ident = field.struct_member_ident(i - 1 - j);
-                quote! {
-                    ::core::ptr::drop_in_place(&raw mut (*dst_ptr).#ident);
-                }
-            });
-        let cnt = Literal::usize_unsuffixed(i);
-        if i == 0 {
-            quote! {
-                0 => {}
-            }
-        } else {
-            quote! {
-                #cnt => {
-                    unsafe { #(#drop)* }
-                }
+    // Drop the initialized prefix in reverse: a declaration is live exactly when the count
+    // reached past it.
+    let drop_guard = fields.iter().enumerate().rev().map(|(index, field)| {
+        let ident = field.struct_member_ident(index);
+        let reached = Literal::usize_unsuffixed(index);
+        quote! {
+            if init_count > #reached {
+                unsafe { ::core::ptr::drop_in_place(&raw mut (*dst_ptr).#ident); }
             }
         }
     });
@@ -168,11 +154,8 @@ fn impl_struct(
                 fn drop(&mut self) {
                     let dst_ptr = self.dst_ptr;
                     let init_count = self.init_count;
-                    match init_count {
-                        #(#drop_guard)*
-                        // Impossible, given the `init_count` is bounded by the number of fields.
-                        _ => { debug_assert!(false, "init_count out of bounds"); },
-                    }
+                    debug_assert!((init_count as usize) <= #num_fields, "init_count out of bounds");
+                    #(#drop_guard)*
                 }
             }
 
