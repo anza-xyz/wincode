@@ -1308,6 +1308,51 @@ where
     Ok(())
 }
 
+/// Allocate a container and decode `len` items into its uninitialized storage.
+///
+/// For statically sized encodings, requests a trusted byte window before calling
+/// `make`. Readers that validate this window reject truncated input before allocation;
+/// other readers retain their normal checks during decoding. Dynamic encodings
+/// cannot be checked upfront.
+///
+/// `get_slice` must return at least `len` slots. On success, `len` slots are initialized, but
+/// the caller must update any container bookkeeping (for example, a vector's length).
+/// On decode failure, initialized elements are dropped as in [`decode_into_slice_t`].
+///
+/// # Panics
+///
+/// Panics if `get_slice` returns a slice whose length is less than `len`.
+#[inline]
+pub fn decode_into_container_t<'de, T, C, A>(
+    mut reader: impl Reader<'de>,
+    len: usize,
+    make: impl FnOnce(usize) -> A,
+    get_slice: impl FnOnce(&mut A) -> &mut [MaybeUninit<T::Dst>],
+) -> ReadResult<A>
+where
+    T: SchemaRead<'de, C>,
+    C: ConfigCore,
+{
+    macro_rules! decode {
+        ($reader:expr) => {{
+            let mut container = make(len);
+            let slice = &mut get_slice(&mut container)[..len];
+            decode_into_slice_t::<T, C>($reader, slice)?;
+            container
+        }};
+    }
+
+    Ok(match T::TYPE_META {
+        TypeMeta::Static { size, .. } => {
+            // SAFETY: `T::TYPE_META` specifies a static size, so `len` reads of `T::Dst`
+            // will consume `size * len` bytes, fully consuming the trusted window.
+            let reader = unsafe { reader.as_trusted_for_seq(len, size) }?;
+            decode!(reader)
+        }
+        TypeMeta::Dynamic => decode!(reader),
+    })
+}
+
 /// Encode a sequence of `T` from an iterator into the [`Writer`].
 ///
 /// Writes the sequence length (encoded per `Len`) followed by each item

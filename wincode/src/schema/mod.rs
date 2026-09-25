@@ -574,7 +574,7 @@ mod tests {
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer, test_util::NoBorrowReader},
+            io::{self, Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen, UseIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
@@ -3853,6 +3853,46 @@ mod tests {
                 prop_assert!(wincode_deserialized.is_err());
             }
         });
+    }
+
+    #[test]
+    fn test_vec_len_exceeding_input_fails_before_reading() {
+        /// Slice reader that panics if anything past the length prefix is read.
+        struct PrefixOnlyReader<'a>(&'a [u8]);
+
+        unsafe impl<'a> Reader<'a> for PrefixOnlyReader<'a> {
+            fn copy_into_slice(&mut self, dst: &mut [u8]) -> io::ReadResult<()> {
+                assert!(
+                    dst.len() <= size_of::<u64>(),
+                    "elements read before the length was checked"
+                );
+                self.0.copy_into_slice(dst)
+            }
+
+            fn copy_into_uninit_slice(
+                &mut self,
+                dst: &mut [MaybeUninit<u8>],
+            ) -> io::ReadResult<()> {
+                assert!(
+                    dst.len() <= size_of::<u64>(),
+                    "elements read before the length was checked"
+                );
+                self.0.copy_into_uninit_slice(dst)
+            }
+
+            unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> io::ReadResult<impl Reader<'a>> {
+                unsafe { self.0.as_trusted_for(n_bytes) }
+            }
+        }
+
+        // Keep the length prefix of 64 but only 4 of the elements.
+        let mut serialized = serialize(&vec![1u8; 64]).unwrap();
+        serialized.truncate(size_of::<u64>() + 4);
+        let decoded = <Vec<u8> as SchemaRead<DefaultConfig>>::get(PrefixOnlyReader(&serialized));
+        assert!(matches!(
+            decoded,
+            Err(ReadError::Io(io::ReadError::ReadSizeLimit(64)))
+        ));
     }
 
     #[test]
