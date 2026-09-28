@@ -3856,42 +3856,20 @@ mod tests {
     }
 
     #[test]
-    fn test_vec_len_exceeding_input_fails_before_reading() {
-        /// Slice reader that panics if anything past the length prefix is read.
-        struct PrefixOnlyReader<'a>(&'a [u8]);
+    fn test_vec_len_exceeding_input_fails_before_allocating() {
+        let values = vec![1u32, 2];
+        let mut serialized = serialize(&values).unwrap();
+        serialized.truncate(serialized.len() - 1);
 
-        unsafe impl<'a> Reader<'a> for PrefixOnlyReader<'a> {
-            fn copy_into_slice(&mut self, dst: &mut [u8]) -> io::ReadResult<()> {
-                assert!(
-                    dst.len() <= size_of::<u64>(),
-                    "elements read before the length was checked"
-                );
-                self.0.copy_into_slice(dst)
-            }
-
-            fn copy_into_uninit_slice(
-                &mut self,
-                dst: &mut [MaybeUninit<u8>],
-            ) -> io::ReadResult<()> {
-                assert!(
-                    dst.len() <= size_of::<u64>(),
-                    "elements read before the length was checked"
-                );
-                self.0.copy_into_uninit_slice(dst)
-            }
-
-            unsafe fn as_trusted_for(&mut self, n_bytes: usize) -> io::ReadResult<impl Reader<'a>> {
-                unsafe { self.0.as_trusted_for(n_bytes) }
-            }
-        }
-
-        // Keep the length prefix of 64 but only 4 of the elements.
-        let mut serialized = serialize(&vec![1u8; 64]).unwrap();
-        serialized.truncate(size_of::<u64>() + 4);
-        let decoded = <Vec<u8> as SchemaRead<DefaultConfig>>::get(PrefixOnlyReader(&serialized));
+        let decoded = containers::decode_into_container_t::<u32, DefaultConfig, Vec<u32>>(
+            &serialized[size_of::<u64>()..],
+            values.len(),
+            |_| panic!("allocation attempted before rejecting truncated input"),
+            Vec::spare_capacity_mut,
+        );
         assert!(matches!(
             decoded,
-            Err(ReadError::Io(io::ReadError::ReadSizeLimit(64)))
+            Err(ReadError::Io(io::ReadError::ReadSizeLimit(8)))
         ));
     }
 
