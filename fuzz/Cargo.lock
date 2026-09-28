@@ -2343,9 +2343,9 @@ dependencies = [
 
 [[package]]
 name = "solana-hash"
-version = "4.5.0"
+version = "4.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f4c847893a2ea50b4ae3ca723b124e07cd0544fecea3598f785168f9b78333f"
+checksum = "c7507df0d2c6350053d125e3df200976fdc68d2a942637d11ac657fe7220949a"
 dependencies = [
  "bytemuck",
  "bytemuck_derive",
@@ -2353,7 +2353,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "solana-sanitize",
- "wincode 0.5.5",
+ "wincode 0.6.1",
 ]
 
 [[package]]
@@ -3535,13 +3535,14 @@ dependencies = [
 
 [[package]]
 name = "wincode"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "pastey",
  "proc-macro2",
  "quote",
  "thiserror",
  "uuid",
+ "wincode-derive 0.5.1",
 ]
 
 [[package]]
@@ -3558,7 +3559,7 @@ dependencies = [
 
 [[package]]
 name = "wincode-derive"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -3585,8 +3586,8 @@ dependencies = [
  "solana-transaction",
  "uuid",
  "wincode 0.5.5",
- "wincode 0.6.0",
- "wincode-derive 0.5.0",
+ "wincode 0.6.1",
+ "wincode-derive 0.5.1",
 ]
 
 [[package]]
