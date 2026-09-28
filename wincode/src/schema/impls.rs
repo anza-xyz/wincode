@@ -566,13 +566,17 @@ where
     #[inline]
     fn read_with_context(
         ctx: context::Len,
-        mut reader: impl Reader<'de>,
+        reader: impl Reader<'de>,
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> ReadResult<()> {
         let len = ctx.0;
-        let mut vec = Vec::with_capacity(len);
-        decode_into_slice_t::<T, C>(reader.by_ref(), &mut vec.spare_capacity_mut()[..len])?;
-        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        let mut vec = containers::decode_into_container_t::<T, C, _>(
+            reader,
+            len,
+            Vec::with_capacity,
+            Vec::spare_capacity_mut,
+        )?;
+        // SAFETY: `decode_into_container_t` initializes all `len` elements on success.
         unsafe { vec.set_len(len) };
         dst.write(vec);
         Ok(())

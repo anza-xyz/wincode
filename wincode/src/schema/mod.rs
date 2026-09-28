@@ -574,7 +574,7 @@ mod tests {
             config::{self, Config, ConfigCore, Configuration, DefaultConfig},
             containers, context, deserialize, deserialize_exact, deserialize_mut,
             error::{self, invalid_tag_encoding},
-            io::{Reader, Writer, test_util::NoBorrowReader},
+            io::{self, Reader, Writer, test_util::NoBorrowReader},
             len::{BincodeLen, FixIntLen, UseIntLen},
             pod_wrapper,
             proptest_config::proptest_cfg,
@@ -3853,6 +3853,24 @@ mod tests {
                 prop_assert!(wincode_deserialized.is_err());
             }
         });
+    }
+
+    #[test]
+    fn test_vec_len_exceeding_input_fails_before_allocating() {
+        let values = vec![1u32, 2];
+        let mut serialized = serialize(&values).unwrap();
+        serialized.truncate(serialized.len() - 1);
+
+        let decoded = containers::decode_into_container_t::<u32, DefaultConfig, Vec<u32>>(
+            &serialized[size_of::<u64>()..],
+            values.len(),
+            |_| panic!("allocation attempted before rejecting truncated input"),
+            Vec::spare_capacity_mut,
+        );
+        assert!(matches!(
+            decoded,
+            Err(ReadError::Io(io::ReadError::ReadSizeLimit(8)))
+        ));
     }
 
     #[test]
