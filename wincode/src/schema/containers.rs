@@ -423,9 +423,16 @@ macro_rules! impl_heap_slice {
                 dst: &mut MaybeUninit<Self::Dst>,
             ) -> ReadResult<()> {
                 let len = Len::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-                let mut $uninit = $target::<[T::Dst]>::new_uninit_slice(len);
-                decode_into_slice_t::<T, C>(reader, $get_slice)?;
-                // SAFETY: `decode_into_slice_t` initialized all elements on success.
+                let $uninit = decode_into_container_t::<T, C, _>(
+                    reader,
+                    len,
+                    $target::<[T::Dst]>::new_uninit_slice,
+                    // The allocation is fresh and unshared, so unchecked mutable
+                    // access to Rc/Arc storage is valid here.
+                    |$uninit| $get_slice,
+                )?;
+                // SAFETY: The allocation has exactly `len` slots, and
+                // `decode_into_container_t` initialized all of them on success.
                 let container = unsafe { $uninit.assume_init() };
                 dst.write(container);
                 Ok(())
@@ -434,10 +441,10 @@ macro_rules! impl_heap_slice {
     };
 }
 
-impl_heap_slice!(Box => AllocBox, |uninit| &mut *uninit);
-impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(&mut uninit) });
+impl_heap_slice!(Box => AllocBox, |uninit| uninit.as_mut());
+impl_heap_slice!(Rc  => AllocRc,  |uninit| unsafe { rc_get_mut_unchecked(uninit) });
 #[cfg(all(feature = "alloc", target_has_atomic = "ptr"))]
-impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(&mut uninit) });
+impl_heap_slice!(Arc => AllocArc, |uninit| unsafe { arc_get_mut_unchecked(uninit) });
 
 #[cfg(feature = "alloc")]
 unsafe impl<T, Len, C: ConfigCore> SchemaWrite<C> for VecDeque<T, Len>
@@ -1315,8 +1322,10 @@ where
 /// other readers retain their normal checks during decoding. Dynamic encodings
 /// cannot be checked upfront.
 ///
-/// `get_slice` must return at least `len` slots. On success, `len` slots are initialized, but
-/// the caller must update any container bookkeeping (for example, a vector's length).
+/// `get_slice` must return at least `len` slots. On success, the first `len` slots
+/// are initialized. The caller must finalize the container, for example by setting
+/// a vector's length or calling `assume_init()` on a boxed or reference-counted
+/// slice whose allocation contains exactly `len` slots.
 /// On decode failure, initialized elements are dropped as in [`decode_into_slice_t`].
 ///
 /// # Panics
