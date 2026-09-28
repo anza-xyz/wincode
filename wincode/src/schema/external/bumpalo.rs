@@ -2,7 +2,7 @@ use {
     crate::{
         ReadResult, SchemaRead, SchemaReadContext, SchemaWrite, TypeMeta, WriteResult,
         config::{Config, ConfigCore},
-        containers::decode_into_slice_t,
+        containers::decode_into_container_t,
         error::invalid_utf8_encoding,
         io::{Reader, Writer},
         len::SeqLen,
@@ -31,13 +31,16 @@ where
         dst: &mut MaybeUninit<Self::Dst>,
     ) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<T::Dst>(reader.by_ref())?;
-        let mut vec: Vec<'bump, T::Dst> = Vec::with_capacity_in(len, ctx);
-        // SAFETY: `Vec::with_capacity_in(len, ctx)` allocated storage for at
-        // least `len` elements, and `as_mut_ptr` points to that uninitialized
-        // storage while `vec` is alive and not reallocated.
-        let slice = unsafe { from_raw_parts_mut(vec.as_mut_ptr().cast::<MaybeUninit<_>>(), len) };
-        decode_into_slice_t::<T, C>(reader, slice)?;
-        // SAFETY: `decode_into_slice_t` initializes all `len` elements on success.
+        let mut vec = decode_into_container_t::<T, C, Vec<T::Dst>>(
+            reader,
+            len,
+            |len| Vec::with_capacity_in(len, ctx),
+            // SAFETY: `Vec::with_capacity_in(len, ctx)` allocated storage for at
+            // least `len` elements, and `as_mut_ptr` points to that uninitialized
+            // storage while `vec` is alive and not reallocated.
+            |vec| unsafe { from_raw_parts_mut(vec.as_mut_ptr().cast::<MaybeUninit<_>>(), len) },
+        )?;
+        // SAFETY: `decode_into_container_t` initializes all `len` elements on success.
         unsafe { vec.set_len(len) };
 
         dst.write(vec);
