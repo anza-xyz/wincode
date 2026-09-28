@@ -574,7 +574,7 @@ where
             reader,
             len,
             Vec::with_capacity,
-            |vec| vec.spare_capacity_mut(),
+            Vec::spare_capacity_mut,
         )?;
         // SAFETY: `decode_into_container_t` initializes all `len` elements on success.
         unsafe { vec.set_len(len) };
