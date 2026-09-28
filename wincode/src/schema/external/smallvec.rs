@@ -2,7 +2,7 @@ use {
     crate::{
         ReadResult, SchemaRead, SchemaWrite, WriteResult,
         config::Config,
-        containers::decode_into_slice_t,
+        containers::decode_into_container_t,
         io::{Reader, Writer},
         len::SeqLen,
         schema::{size_of_elem_slice, write_elem_slice_prealloc_check},
@@ -39,17 +39,9 @@ where
     fn read(mut reader: impl Reader<'de>, dst: &mut MaybeUninit<Self::Dst>) -> ReadResult<()> {
         let len = C::LengthEncoding::read_prealloc_check::<T::Dst>(reader.by_ref())?;
 
-        // Reserve capacity through `dst` in place. Moving a `SmallVec::with_capacity(len)`
-        // local into `dst` would memcpy its whole `[T::Dst; N]` inline region;
-        // building empty in `dst` and growing in place leaves that region uninit.
-        let values = dst.write(SmallVec::new());
-        values.reserve_exact(len);
-
-        // `dst` now owns a reserved (possibly heap) allocation, but the caller
-        // still treats it as uninitialized and will not drop it. Free it on any
-        // early exit -- an `Err` return *or* a panic while decoding -- so the
-        // allocation cannot leak. The guard is disarmed only once `dst` holds the
-        // fully initialized value.
+        // `dst` owns the reserved (possibly heap) allocation from `make` on, but the caller
+        // still treats it as uninitialized and will not drop it. `Guard` frees it on any
+        // early exit -- an `Err` return *or* a panic while decoding.
         struct Guard<'a, U>(&'a mut MaybeUninit<U>);
         impl<U> Drop for Guard<'_, U> {
             fn drop(&mut self) {
@@ -59,17 +51,24 @@ where
                 unsafe { self.0.assume_init_drop() };
             }
         }
-        let guard = Guard(dst);
 
-        // SAFETY: `dst` was initialized with the empty `SmallVec` above.
-        let ptr: *mut T::Dst = unsafe { guard.0.assume_init_mut() }.as_mut_ptr();
-        // SAFETY: the buffer has capacity for `len` elements. On error (or panic)
-        // `decode_into_slice_t` drops any elements it initialized; on success it
-        // initializes all `len` of them.
-        let slice = unsafe { from_raw_parts_mut(ptr.cast::<MaybeUninit<T::Dst>>(), len) };
-        decode_into_slice_t::<T, C>(reader, slice)?;
+        let guard = decode_into_container_t::<T, C, _>(
+            reader,
+            len,
+            // Build in place, since moving a `SmallVec::with_capacity(len)` local into `dst`
+            // would memcpy its whole `[T::Dst; N]` inline region.
+            move |len| {
+                dst.write(SmallVec::new()).reserve_exact(len);
+                Guard(dst)
+            },
+            // SAFETY: `dst` holds an empty `SmallVec` with capacity for `len` elements.
+            |guard| unsafe {
+                let ptr = guard.0.assume_init_mut().as_mut_ptr();
+                from_raw_parts_mut(ptr.cast::<MaybeUninit<T::Dst>>(), len)
+            },
+        )?;
 
-        // SAFETY: `decode_into_slice_t` initialized all `len` elements on success.
+        // SAFETY: `decode_into_container_t` initialized all `len` elements on success.
         unsafe { guard.0.assume_init_mut().set_len(len) };
         // `dst` now fully owns the value; keep it rather than dropping via `guard`.
         core::mem::forget(guard);
