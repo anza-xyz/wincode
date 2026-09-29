@@ -84,7 +84,6 @@ for target in "${targets[@]}"; do
     cat <<EOF >> "$MANIFEST_FILE"
 		{
 			"Name": "$target",
-			"SeedCorpusGroup": "$target",
 			"Confs": [
 				{
 					"Name": "$target",
