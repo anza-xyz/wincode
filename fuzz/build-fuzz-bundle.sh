@@ -55,15 +55,15 @@ echo "Generating $MANIFEST_FILE..."
 
 cat <<EOF > "$MANIFEST_FILE"
 {
-	"Version": 3,
-	"Revision": {
-		"Commit": "$COMMIT",
-		"Checkouts": {
+	"version": 3,
+	"revision": {
+		"commit": "$COMMIT",
+		"checkouts": {
 			"$REPO_URL": "$COMMIT"
 		}
 	},
 
-	"Lineages": [
+	"lineages": [
 EOF
 
 count=0
@@ -83,24 +83,24 @@ for target in "${targets[@]}"; do
     
     cat <<EOF >> "$MANIFEST_FILE"
 		{
-			"Name": "$target",
-			"Confs": [
+			"name": "$target",
+			"confs": [
 				{
-					"Name": "$target",
-					"Driver": {
-						"Type": "libfuzzer",
-						"Params": {
-							"BinaryPathInBundle": "$binary_path",
-							"CoverageBinaryPathInBundle": "$coverage_binary_path",
-							"SourcesPathInBundle": "./src/",
-							"SourcesOriginalPath": "$(pwd)"
+					"name": "$target",
+					"driver": {
+						"type": "libfuzzer",
+						"params": {
+							"binary_path_in_bundle": "$binary_path",
+							"coverage_binary_path_in_bundle": "$coverage_binary_path",
+							"sources_path_in_bundle": "./src/",
+							"sources_original_path": "$(pwd)"
 						}
 					},
-					"Architecture": {
-						"Name": "amd64"
+					"architecture": {
+						"name": "amd64"
 					},
-					"MemoryKiB": 1048576,
-					"Cores": 1
+					"memory_kib": 1048576,
+					"cores": 1
 				}
 			]
 		}$comma
