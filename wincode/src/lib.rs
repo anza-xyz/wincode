@@ -233,6 +233,7 @@
 //! |`uuid`|disabled|Enables support for the `uuid` crate.|
 //! |`uuid-serde-compat`|disabled|Encodes and decodes `uuid::Uuid` with an additional length prefix, making it compatible with `serde`'s serialization scheme. Note that enabling this will result in strictly worse performance.|
 //! |`bumpalo`|disabled|Enables support for the `bumpalo` crate.|
+//! |`zerocopy`|disabled|Enables support for `zerocopy`'s byte-order-aware numeric types (`zerocopy::byteorder::{U16, …, I128, F32, F64}`). Each is encoded as its in-memory bytes under any configuration, so they are zero-copy, and a `#[repr(C)]` struct of them has alignment 1.|
 //!
 //! # Derive attributes
 //!

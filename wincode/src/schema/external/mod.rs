@@ -12,3 +12,5 @@ pub(crate) mod indexmap;
 mod smallvec;
 #[cfg(feature = "uuid")]
 mod uuid;
+#[cfg(feature = "zerocopy")]
+mod zerocopy;

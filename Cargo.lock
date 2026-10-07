@@ -1021,6 +1021,7 @@ dependencies = [
  "uuid",
  "wincode",
  "wincode-derive",
+ "zerocopy",
 ]
 
 [[package]]

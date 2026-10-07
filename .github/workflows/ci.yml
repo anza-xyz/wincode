@@ -51,6 +51,8 @@ jobs:
         run: cargo test --all-features --doc --no-fail-fast --workspace
       - name: test uuid no serde compat
         run: cargo test uuid --no-default-features --features alloc,uuid --no-fail-fast --workspace
+      - name: test zerocopy no_std
+        run: cargo test zerocopy --no-default-features --features alloc,derive,zerocopy --no-fail-fast --workspace
 
   deny:
     name: cargo-deny
