@@ -232,12 +232,13 @@ where
 
     #[inline(always)]
     fn write_bytes_needed(len: usize) -> WriteResult<usize> {
-        if let TypeMeta::Static { size, .. } = <T as SchemaWrite<C>>::TYPE_META {
-            return Ok(size);
-        }
+        // Validate the length before the static-size fast path returns.
         let Ok(len) = T::Src::try_from(len) else {
             return Err(write_length_encoding_overflow(type_name::<T::Src>()));
         };
+        if let TypeMeta::Static { size, .. } = <T as SchemaWrite<C>>::TYPE_META {
+            return Ok(size);
+        }
         T::size_of(&len)
     }
 }
@@ -269,12 +270,13 @@ macro_rules! impl_use_int_primitive {
 
                 #[inline(always)]
                 fn write_bytes_needed(len: usize) -> WriteResult<usize> {
-                    if let TypeMeta::Static { size, .. } = <$type as SchemaWrite<C>>::TYPE_META {
-                        return Ok(size);
-                    }
+                    // Validate the length before the static-size fast path returns.
                     let Ok(len) = <$type>::try_from(len) else {
                         return Err(write_length_encoding_overflow(type_name::<$type>()));
                     };
+                    if let TypeMeta::Static { size, .. } = <$type as SchemaWrite<C>>::TYPE_META {
+                        return Ok(size);
+                    }
                     <$type as SchemaWrite<C>>::size_of(&len)
                 }
             }
@@ -355,7 +357,11 @@ macro_rules! impl_fix_int {
             }
 
             #[inline(always)]
-            fn write_bytes_needed(_: usize) -> WriteResult<usize> {
+            fn write_bytes_needed(len: usize) -> WriteResult<usize> {
+                // Validate the length just like `write` does.
+                let Ok(_) = <$type>::try_from(len) else {
+                    return Err(write_length_encoding_overflow(type_name::<$type>()));
+                };
                 Ok(size_of::<$type>())
             }
         }
