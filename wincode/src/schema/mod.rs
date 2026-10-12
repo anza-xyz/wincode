@@ -2441,6 +2441,59 @@ mod tests {
     }
 
     #[test]
+    fn test_seq_len_overflow_size_of_matches_write() {
+        // `size_of`/`serialized_size` must reject a length that overflows a statically sized
+        // length encoding, just like `serialize`/`serialize_into` do.
+        #[track_caller]
+        fn assert_fits<T, C>(src: &T, config: C, size: usize)
+        where
+            C: Config + Copy,
+            T: SchemaWrite<C, Src = T> + ?Sized,
+        {
+            assert_eq!(config::serialized_size(src, config).unwrap(), size as u64);
+            assert_eq!(config::serialize(src, config).unwrap().len(), size);
+        }
+
+        #[track_caller]
+        fn assert_overflows<T, C>(src: &T, config: C)
+        where
+            C: Config + Copy,
+            T: SchemaWrite<C, Src = T> + ?Sized,
+        {
+            assert!(matches!(
+                config::serialize(src, config),
+                Err(WriteError::LengthEncodingOverflow(_))
+            ));
+            assert!(matches!(
+                config::serialize_into(&mut vec![], src, config),
+                Err(WriteError::LengthEncodingOverflow(_))
+            ));
+            assert!(matches!(
+                config::serialized_size(src, config),
+                Err(WriteError::LengthEncodingOverflow(_))
+            ));
+        }
+
+        let fix_u8_cfg = Configuration::default().with_length_encoding::<FixIntLen<u8>>();
+        assert_fits(&vec![0u8; 255], fix_u8_cfg, 1 + 255);
+        assert_fits(&"a".repeat(255), fix_u8_cfg, 1 + 255);
+        assert_overflows(&vec![0u8; 256], fix_u8_cfg);
+        assert_overflows(&"a".repeat(256), fix_u8_cfg);
+
+        let u16_cfg = Configuration::default().with_length_encoding::<u16>();
+        assert_fits(&vec![0u8; 65_535], u16_cfg, 2 + 65_535);
+        assert_fits(&"a".repeat(65_535), u16_cfg, 2 + 65_535);
+        assert_overflows(&vec![0u8; 65_536], u16_cfg);
+        assert_overflows(&"a".repeat(65_536), u16_cfg);
+
+        let use_int_u16_cfg = Configuration::default().with_length_encoding::<UseIntLen<u16>>();
+        assert_fits(&vec![0u8; 65_535], use_int_u16_cfg, 2 + 65_535);
+        assert_fits(&"a".repeat(65_535), use_int_u16_cfg, 2 + 65_535);
+        assert_overflows(&vec![0u8; 65_536], use_int_u16_cfg);
+        assert_overflows(&"a".repeat(65_536), use_int_u16_cfg);
+    }
+
+    #[test]
     fn test_phantom_data() {
         let val = PhantomData::<StructStatic>;
         let serialized = serialize(&val).unwrap();
