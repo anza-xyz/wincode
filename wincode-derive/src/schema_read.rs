@@ -557,10 +557,11 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 // Workaround for https://github.com/rust-lang/rust/issues/48214.
                 lifetimes: Some(parse_quote!(for<'_wincode_internal>)),
                 // Types are only zero-copy if they do not have any padding.
+                // The sum starts at `0` so field-less structs still produce an expression.
                 bounded_ty: parse_quote!(
                     __WincodeAssert<
                         {
-                            #(core::mem::size_of::<#field_tys>())+* == core::mem::size_of::<#ident>()
+                            0 #(+ core::mem::size_of::<#field_tys>())* == core::mem::size_of::<#ident>()
                         },
                     >
                 ),
