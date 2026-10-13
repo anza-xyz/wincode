@@ -543,6 +543,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 // Unfortunate, but generics in a zero-copy context are presumably a more niche use-case,
                 // so we'll deal with it for now.
                 && args.generics.type_params().next().is_none()
+                && args.generics.const_params().next().is_none()
                 // Types containing references are not zero-copy eligible.
                 && args.generics.lifetimes().next().is_none()
                 // `ZeroCopy<C>` cannot certify a contextual read implementation because its
