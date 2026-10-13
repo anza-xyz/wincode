@@ -7,6 +7,8 @@ on:
 
 env:
   NIGHTLY: nightly-2025-06-23
+  # Override .cargo/config.toml so cached builds are portable across runner CPUs.
+  RUSTFLAGS: ""
 
 jobs:
   nightly:

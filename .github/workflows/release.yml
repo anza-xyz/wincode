@@ -17,6 +17,10 @@ on:
         default: "master"
         type: string
 
+env:
+  # Override .cargo/config.toml so builds are portable across runner CPUs.
+  RUSTFLAGS: ""
+
 jobs:
   check:
     runs-on: ubuntu-latest
