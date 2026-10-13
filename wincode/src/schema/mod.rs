@@ -4775,6 +4775,42 @@ mod tests {
     }
 
     #[test]
+    fn test_const_generic_struct_zero_copy_repr() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct ConstC<const N: usize> {
+            bytes: [u8; N],
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        #[repr(transparent)]
+        struct ConstTransparent<const N: usize>([u8; N]);
+
+        assert_eq!(
+            <ConstC<4> as SchemaRead<'_, DefaultConfig>>::TYPE_META,
+            TypeMeta::Static {
+                size: 4,
+                zero_copy: true
+            }
+        );
+
+        proptest!(proptest_cfg(), |(bytes: [u8; 4])| {
+            let value = ConstC { bytes };
+            let serialized = serialize(&value).unwrap();
+            prop_assert_eq!(&serialized, &bytes);
+            let deserialized: ConstC<4> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(value, deserialized);
+
+            let value = vec![ConstTransparent(bytes), ConstTransparent(bytes)];
+            let serialized = serialize(&value).unwrap();
+            let deserialized: Vec<ConstTransparent<4>> = deserialize(&serialized).unwrap();
+            prop_assert_eq!(value, deserialized);
+        });
+    }
+
+    #[test]
     fn test_generic_struct_with_existing_bound() {
         #[derive(
             SchemaWrite,
