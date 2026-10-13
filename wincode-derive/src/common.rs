@@ -317,7 +317,7 @@ pub(crate) trait FieldsExt {
     ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone;
     /// Get an iterator over the fields that do not have `skip` attribute.
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone;
-    /// Get an iterator over fields that contain a lifetime parameter.
+    /// Get an iterator over the unskipped fields that contain a lifetime parameter.
     fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field>;
 }
 
@@ -390,7 +390,7 @@ impl FieldsExt for Fields<Field> {
     }
 
     fn fields_with_lifetime_iter(&self) -> impl Iterator<Item = &Field> {
-        self.iter().filter(|field| field.has_lifetime())
+        self.unskipped_iter().filter(|field| field.has_lifetime())
     }
 }
 
