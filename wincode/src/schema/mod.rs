@@ -2176,6 +2176,115 @@ mod tests {
         );
     }
 
+    #[test]
+    fn non_copy_context_reaches_only_its_field() {
+        // A non-copyable context, so it can be moved into only one field's read.
+        struct Offset(u32);
+
+        struct AddOffset;
+
+        unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, Offset> for AddOffset {
+            type Dst = u32;
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: 4,
+                zero_copy: false,
+            };
+
+            fn read_with_context(
+                ctx: Offset,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<u32>,
+            ) -> ReadResult<()> {
+                dst.write(<u32 as SchemaRead<'de, C>>::get(reader)? + ctx.0);
+                Ok(())
+            }
+        }
+
+        // Leaves `TYPE_META` at its dynamic default, as most context adapters do.
+        struct AddOffsetDynamic;
+
+        unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, Offset> for AddOffsetDynamic {
+            type Dst = u32;
+
+            fn read_with_context(
+                ctx: Offset,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<u32>,
+            ) -> ReadResult<()> {
+                dst.write(<u32 as SchemaRead<'de, C>>::get(reader)? + ctx.0);
+                Ok(())
+            }
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct AfterDynamic {
+            a: u64,
+            b: u64,
+            #[wincode(with = "AddOffsetDynamic", context)]
+            c: u32,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct After {
+            a: u64,
+            b: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Before {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            a: u64,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Between {
+            a: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Only {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        let bytes = serialize(&(1u64, 2u64, 10u32)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, After>(Offset(5), &bytes).unwrap(),
+            After { a: 1, b: 2, c: 15 }
+        );
+        assert_eq!(
+            crate::deserialize_with_context::<_, AfterDynamic>(Offset(5), &bytes).unwrap(),
+            AfterDynamic { a: 1, b: 2, c: 15 }
+        );
+        let bytes = serialize(&(10u32, 1u64, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Before>(Offset(5), &bytes).unwrap(),
+            Before { c: 15, a: 1, b: 2 }
+        );
+        let bytes = serialize(&(1u64, 10u32, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Between>(Offset(5), &bytes).unwrap(),
+            Between { a: 1, c: 15, b: 2 }
+        );
+        let bytes = serialize(&10u32).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Only>(Offset(5), &bytes).unwrap(),
+            Only { c: 15 }
+        );
+    }
+
     /// Round-trip against bincode for each shape the prefix window can take.
     #[test]
     fn dynamic_struct_static_prefix_roundtrips() {

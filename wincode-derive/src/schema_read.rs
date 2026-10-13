@@ -142,11 +142,6 @@ fn impl_struct(
     let ident = &args.ident;
     let metas = fields.plan_metas(TraitImpl::SchemaRead, crate_name);
 
-    let (ctx_param, ctx_arg) = match &args.context {
-        Some(ctx) => (quote! { ctx: #ctx, }, quote! { ctx, }),
-        None => (quote! {}, quote! {}),
-    };
-
     let chain_turbofish = turbofish_without_lifetimes(impl_generics);
     // The guards below share this call to the read plan.
     let plan = quote!(__wincode_plan #chain_turbofish(::core::marker::PhantomData));
@@ -158,16 +153,21 @@ fn impl_struct(
     let chain_fns = fields
         .iter()
         .enumerate()
+        .filter(|(_, field)| field.context.is_none())
         .map(|(index, field)| {
             let name = chain_name(index);
             let body = read_field(index, field);
-            let next = (index + 1 < num_fields).then(|| {
+            let next_in_chain = fields
+                .fields
+                .get(index + 1)
+                .is_some_and(|next| next.context.is_none());
+            let next = next_in_chain.then(|| {
                 let next_name = chain_name(index + 1);
                 let next_index = index + 1;
                 quote! {
                     if const { #plan[#next_index].is_in_window() } {
                         return unsafe {
-                            #next_name #chain_turbofish(#ctx_arg reader, dst_ptr, init_count)
+                            #next_name #chain_turbofish(reader, dst_ptr, init_count)
                         };
                     }
                 }
@@ -175,7 +175,6 @@ fn impl_struct(
             quote! {
                 #[inline(always)]
                 unsafe fn #name #chain_generics(
-                    #ctx_param
                     mut reader: impl #crate_name::io::Reader<'de>,
                     dst_ptr: *mut #self_ty,
                     init_count: &mut #counter_ty,
@@ -198,6 +197,9 @@ fn impl_struct(
         .map(|(index, field)| {
             let name = chain_name(index);
             let direct = read_field(index, field);
+            if field.context.is_some() {
+                return direct;
+            }
             quote! {
                 if const { #plan[#index].opens_window() } {
                     // Starts the chain that reads this field and every static one after it.
@@ -207,7 +209,7 @@ fn impl_struct(
                     let size = const { #plan[#index].window_size() };
                     unsafe {
                         let window = #crate_name::io::Reader::as_trusted_for(&mut reader, size)?;
-                        #name #chain_turbofish(#ctx_arg window, dst_ptr, init_count)?;
+                        #name #chain_turbofish(window, dst_ptr, init_count)?;
                     }
                 } else if const { #plan[#index].is_direct() } {
                     #direct

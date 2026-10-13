@@ -307,6 +307,9 @@ pub(crate) trait FieldsExt {
     /// A skipped field carries no wire bytes, so it enters as a zero-sized static rather than
     /// being left out: it stays inside whichever window it was declared in and displaces
     /// nothing, which keeps the derive emitting fields in declaration order.
+    ///
+    /// Treat fields with context as dynamic on the read side, since chain functions don't carry the
+    /// context and only the field's own direct read may consume it.
     fn plan_metas(&self, trait_impl: TraitImpl, crate_name: &Path) -> Vec<TokenStream>;
     /// Get an iterator over the fields and their identifiers for the struct members.
     ///
@@ -371,6 +374,9 @@ impl FieldsExt for Fields<Field> {
             .map(|field| {
                 if field.skip.is_some() {
                     return quote! { #crate_name::TypeMeta::Static { size: 0, zero_copy: true } };
+                }
+                if matches!(trait_impl, TraitImpl::SchemaRead) && field.context.is_some() {
+                    return quote! { #crate_name::TypeMeta::Dynamic };
                 }
                 let target = field.target_fully_qualified(trait_impl);
                 quote! { #target::TYPE_META }
