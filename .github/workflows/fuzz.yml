@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Override .cargo/config.toml so cached builds are portable across runner CPUs.
+  RUSTFLAGS: ""
+
 jobs:
   upload:
     runs-on: ubuntu-latest
