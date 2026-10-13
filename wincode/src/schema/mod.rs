@@ -1941,6 +1941,61 @@ mod tests {
     }
 
     #[test]
+    fn test_skipped_field_with_lifetime() {
+        // Skipped fields are never read, so their type needs no `SchemaRead` impl,
+        // even when it borrows.
+        #[derive(Debug, PartialEq, Eq)]
+        struct NotSchema;
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct Test<'a> {
+            a: &'a str,
+            #[wincode(skip)]
+            b: Option<&'a NotSchema>,
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        enum TestEnum<'a> {
+            X(&'a str, #[wincode(skip)] Option<&'a NotSchema>),
+            Y {
+                a: u8,
+                #[wincode(skip)]
+                b: Option<&'a NotSchema>,
+            },
+        }
+
+        let not_schema = NotSchema;
+
+        let serialized = serialize(&Test {
+            a: "wincode",
+            b: Some(&not_schema),
+        })
+        .unwrap();
+        let deserialized: Test<'_> = deserialize(&serialized).unwrap();
+        assert_eq!(
+            deserialized,
+            Test {
+                a: "wincode",
+                b: None
+            }
+        );
+
+        let serialized = serialize(&TestEnum::X("wincode", Some(&not_schema))).unwrap();
+        let deserialized: TestEnum<'_> = deserialize(&serialized).unwrap();
+        assert_eq!(deserialized, TestEnum::X("wincode", None));
+
+        let serialized = serialize(&TestEnum::Y {
+            a: 1,
+            b: Some(&not_schema),
+        })
+        .unwrap();
+        let deserialized: TestEnum<'_> = deserialize(&serialized).unwrap();
+        assert_eq!(deserialized, TestEnum::Y { a: 1, b: None });
+    }
+
+    #[test]
     fn test_enum_equivalence() {
         #[derive(
             SchemaWrite,
