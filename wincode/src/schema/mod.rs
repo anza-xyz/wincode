@@ -3610,6 +3610,53 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_struct_repr_c() {
+        #[derive(
+            Debug,
+            SchemaWrite,
+            SchemaRead,
+            Default,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct EmptyStruct {}
+
+        #[derive(
+            Debug,
+            SchemaWrite,
+            SchemaRead,
+            Default,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        #[repr(C)]
+        struct UnitStruct;
+
+        let empty = EmptyStruct::default();
+        let serialized = serialize(&empty).unwrap();
+        assert_eq!(serialized, bincode::serialize(&empty).unwrap());
+        assert!(serialized.is_empty());
+        let deserialized: EmptyStruct = deserialize(&serialized).unwrap();
+        assert_eq!(empty, deserialized);
+        assert_eq!(EmptyStruct::from_bytes(&serialized).unwrap(), &empty);
+
+        let unit = UnitStruct;
+        let serialized = serialize(&unit).unwrap();
+        assert_eq!(serialized, bincode::serialize(&unit).unwrap());
+        assert!(serialized.is_empty());
+        let deserialized: UnitStruct = deserialize(&serialized).unwrap();
+        assert_eq!(unit, deserialized);
+        assert_eq!(UnitStruct::from_bytes(&serialized).unwrap(), &unit);
+    }
+
+    #[test]
     fn test_pod_zero_copy() {
         #[derive(Debug, PartialEq, Eq, proptest_derive::Arbitrary, Clone, Copy)]
         #[repr(transparent)]
