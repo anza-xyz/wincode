@@ -15,7 +15,7 @@ use {
     syn::{
         DeriveInput, Expr, GenericArgument, GenericParam, Generics, Ident, Lifetime, LitInt,
         Member, Path, Type, TypeImplTrait, TypeParamBound, TypeReference, TypeTraitObject,
-        Visibility, WherePredicate, parse_quote,
+        Visibility, parse_quote,
         spanned::Spanned,
         visit::{self, Visit},
         visit_mut::{self, VisitMut},
@@ -775,6 +775,25 @@ impl StructRepr {
     }
 }
 
+/// Return `Generics` that keep the trailing params and where predicates of `full`, skipping as
+/// many leading ones as `prefix` has. Expects `full` to start with `prefix`'s params and
+/// predicates, unchanged and in order.
+pub(crate) fn added_generics(prefix: &Generics, full: &Generics) -> Generics {
+    let param_count = prefix.params.len();
+    let prefix_where = prefix.where_clause.as_ref();
+    let predicate_count = prefix_where.map_or(0, |clause| clause.predicates.len());
+    let params = full.params.iter().skip(param_count).cloned().collect();
+    let mut rest = Generics {
+        params,
+        ..Generics::default()
+    };
+    if let Some(clause) = &full.where_clause {
+        let predicates = clause.predicates.iter().skip(predicate_count).cloned();
+        rest.make_where_clause().predicates.extend(predicates);
+    }
+    rest
+}
+
 /// A turbofish naming a `Generics`' type and const parameters.
 ///
 /// Lifetimes are left out for inference: a turbofish may omit them, but cannot name a late bound
@@ -786,36 +805,6 @@ pub(crate) fn turbofish_without_lifetimes(generics: &Generics) -> TokenStream {
         GenericParam::Lifetime(_) => None,
     });
     quote!(::<#(#args),*>)
-}
-
-/// Move each parameter's inline bounds into the where clause.
-///
-/// Bounds reach an impl from two places: inline, from the struct's declaration, and the where
-/// clause (field predicates appended by the derive). Both end up in the latter, so anything
-/// reusing an impl's generics states them once.
-pub(crate) fn move_bounds_to_where(generics: &mut Generics) {
-    let predicates: Vec<WherePredicate> = generics
-        .params
-        .iter_mut()
-        .filter_map(|param| match param {
-            GenericParam::Type(param) if !param.bounds.is_empty() => {
-                let ident = &param.ident;
-                let bounds = std::mem::take(&mut param.bounds);
-                Some(parse_quote!(#ident: #bounds))
-            }
-            GenericParam::Lifetime(param) if !param.bounds.is_empty() => {
-                let lifetime = &param.lifetime;
-                let bounds = std::mem::take(&mut param.bounds);
-                Some(parse_quote!(#lifetime: #bounds))
-            }
-            // Nothing to move: already bare, or a const parameter, which cannot be bounded.
-            _ => None,
-        })
-        .collect();
-
-    if !predicates.is_empty() {
-        generics.make_where_clause().predicates.extend(predicates);
-    }
 }
 
 /// Extract the `#[repr]` attribute from the derive input, returning an error if the type is packed (not supported).

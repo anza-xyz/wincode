@@ -2177,6 +2177,86 @@ mod tests {
     }
 
     #[test]
+    fn self_reaches_field_types_and_skip_defaults() {
+        macro_rules! default_of {
+            ($ty:ty) => {
+                <$ty>::DEFAULT
+            };
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Skips {
+            a: u64,
+            #[wincode(skip(default_val = Self::DEFAULT))]
+            direct: u8,
+            // `Self` should resolve even when passed through a macro.
+            #[wincode(skip(default_val = default_of!(Self)))]
+            via_macro: u8,
+            b: u64,
+        }
+
+        impl Skips {
+            const DEFAULT: u8 = 7;
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Node {
+            value: u64,
+            next: Option<Box<Self>>,
+        }
+
+        // The inherent impl header has to repeat these bounds.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Bounded<T: Copy>
+        where
+            T: Default,
+        {
+            a: u64,
+            b: u64,
+            t: T,
+        }
+
+        let skips = Skips {
+            a: 1,
+            direct: 0,
+            via_macro: 0,
+            b: 2,
+        };
+        assert_eq!(
+            deserialize::<Skips>(&serialize(&skips).unwrap()).unwrap(),
+            Skips {
+                a: 1,
+                direct: 7,
+                via_macro: 7,
+                b: 2,
+            }
+        );
+        let node = Node {
+            value: 1,
+            next: Some(Box::new(Node {
+                value: 2,
+                next: None,
+            })),
+        };
+        assert_eq!(
+            deserialize::<Node>(&serialize(&node).unwrap()).unwrap(),
+            node
+        );
+        let bounded = Bounded {
+            a: 1,
+            b: 2,
+            t: 3u16,
+        };
+        assert_eq!(
+            deserialize::<Bounded<u16>>(&serialize(&bounded).unwrap()).unwrap(),
+            bounded
+        );
+    }
+
+    #[test]
     fn non_copy_context_reaches_only_its_field() {
         // A non-copyable context, so it can be moved into only one field's read.
         struct Offset(u32);
