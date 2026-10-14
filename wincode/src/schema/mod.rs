@@ -2132,8 +2132,6 @@ mod tests {
         ));
     }
 
-    /// Only a run of two or more adjacent static fields opens a window. A static field with no
-    /// static neighbour is planned as `Direct`, like a dynamic one.
     #[test]
     fn field_plan_leaves_lone_static_fields_direct() {
         use crate::FieldPlan;
@@ -2365,7 +2363,6 @@ mod tests {
         );
     }
 
-    /// Round-trip against bincode for each shape the prefix window can take.
     #[test]
     fn dynamic_struct_static_prefix_roundtrips() {
         #[derive(
@@ -2408,6 +2405,7 @@ mod tests {
         #[wincode(internal)]
         struct Skipped {
             a: u8,
+            // Enters the plan as a zero-sized static, inside the window around it.
             #[wincode(skip)]
             #[serde(skip)]
             ignored: u64,
@@ -2458,8 +2456,6 @@ mod tests {
         }
     }
 
-    /// The window is sized from the schema, so a prefix that does not fit has to fail before
-    /// anything goes through it.
     #[test]
     fn dynamic_struct_static_prefix_rejects_short_input() {
         #[derive(
@@ -2483,6 +2479,7 @@ mod tests {
             assert!(deserialize::<Prefix>(&encoded[..truncated]).is_err());
         }
 
+        // Shorter than the 16-byte window over `a` and `b`.
         let mut buffer = [0u8; 8];
         assert!(
             crate::serialize_into(
