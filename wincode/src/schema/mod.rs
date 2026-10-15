@@ -201,6 +201,94 @@ impl TypeMeta {
             zero_copy: all_zero_copy,
         }
     }
+
+    /// Decide which declarations a trusted window covers.
+    ///
+    /// A struct is [`Self::Dynamic`] as soon as one field is, but every maximal run of
+    /// statically sized fields still has a fixed total size, so the derive can cover each run
+    /// with its own window.
+    ///
+    /// A run of two or more fields opens one with [`FieldPlan::OpensWindow`], followed by
+    /// [`FieldPlan::InWindow`] entries. Dynamic fields and lone static ones use
+    /// [`FieldPlan::Direct`]: a window has to check the parent, build the child and advance the
+    /// parent again, so a single field will not benefit. Skipped declarations should be supplied
+    /// as zero-sized static fields, which keeps them inside whichever window they were declared
+    /// in and so keeps the derive's field order intact.
+    #[doc(hidden)]
+    #[expect(clippy::arithmetic_side_effects)]
+    pub const fn field_plan<const N: usize>(types: [Self; N]) -> [FieldPlan; N] {
+        let mut plan = [FieldPlan::InWindow; N];
+        let mut i = 0;
+        while i < N {
+            match types[i] {
+                Self::Dynamic => {
+                    plan[i] = FieldPlan::Direct;
+                    i += 1;
+                }
+                Self::Static { .. } => {
+                    let start = i;
+                    let mut window_size = 0usize;
+                    while i < N {
+                        let Self::Static { size, .. } = types[i] else {
+                            break;
+                        };
+                        window_size = window_size
+                            .checked_add(size)
+                            .expect("static field run size overflows usize");
+                        i += 1;
+                    }
+                    plan[start] = if i - start == 1 {
+                        FieldPlan::Direct
+                    } else {
+                        FieldPlan::OpensWindow { window_size }
+                    };
+                }
+            }
+        }
+        plan
+    }
+}
+
+/// One declaration's place in the window plan [`TypeMeta::field_plan`] computes.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldPlan {
+    /// Open a window over the run of two or more fields starting here. Where it ends is left
+    /// to [`Self::InWindow`], which the derive walks field by field.
+    OpensWindow {
+        /// Count of wire bytes the window covers.
+        window_size: usize,
+    },
+    /// Process this declaration through the parent reader or writer, bypassing any window: it
+    /// is dynamic, or a lone static field no window would pay for.
+    Direct,
+    /// A window opened at an earlier declaration already covers this one.
+    InWindow,
+}
+
+impl FieldPlan {
+    /// Whether a window opens at this declaration.
+    pub const fn opens_window(self) -> bool {
+        matches!(self, Self::OpensWindow { .. })
+    }
+
+    /// Whether a window opened earlier reaches this declaration.
+    pub const fn is_in_window(self) -> bool {
+        matches!(self, Self::InWindow)
+    }
+
+    /// Whether this declaration bypasses windows, going through the parent reader or writer.
+    pub const fn is_direct(self) -> bool {
+        matches!(self, Self::Direct)
+    }
+
+    /// Count of wire bytes the window opening here covers, or 0 if none opens here.
+    pub const fn window_size(self) -> usize {
+        match self {
+            Self::OpensWindow { window_size } => window_size,
+            Self::Direct | Self::InWindow => 0,
+        }
+    }
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
@@ -2097,6 +2185,368 @@ mod tests {
                 zero_copy: false
             }
         ));
+    }
+
+    #[test]
+    fn field_plan_leaves_lone_static_fields_direct() {
+        use crate::FieldPlan;
+
+        const S: TypeMeta = TypeMeta::Static {
+            size: 4,
+            zero_copy: true,
+        };
+        const D: TypeMeta = TypeMeta::Dynamic;
+
+        assert_eq!(
+            TypeMeta::field_plan([S, D, S, D, S]),
+            [
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct,
+                FieldPlan::Direct
+            ],
+            "no two static fields adjoin, so nothing is worth a window"
+        );
+        assert_eq!(
+            TypeMeta::field_plan([S, S, D, S]),
+            [
+                FieldPlan::OpensWindow { window_size: 8 },
+                FieldPlan::InWindow,
+                FieldPlan::Direct,
+                FieldPlan::Direct
+            ],
+            "the pair wins a window, the field left alone after it does not"
+        );
+        assert_eq!(
+            TypeMeta::field_plan([S, S, S]),
+            [
+                FieldPlan::OpensWindow { window_size: 12 },
+                FieldPlan::InWindow,
+                FieldPlan::InWindow
+            ],
+            "an all-static struct is one window"
+        );
+    }
+
+    #[test]
+    fn self_reaches_field_types_and_skip_defaults() {
+        macro_rules! default_of {
+            ($ty:ty) => {
+                <$ty>::DEFAULT
+            };
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Skips {
+            a: u64,
+            #[wincode(skip(default_val = Self::DEFAULT))]
+            direct: u8,
+            // `Self` should resolve even when passed through a macro.
+            #[wincode(skip(default_val = default_of!(Self)))]
+            via_macro: u8,
+            b: u64,
+        }
+
+        impl Skips {
+            const DEFAULT: u8 = 7;
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Node {
+            value: u64,
+            next: Option<Box<Self>>,
+        }
+
+        // The inherent impl header has to repeat these bounds.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Bounded<T: Copy>
+        where
+            T: Default,
+        {
+            a: u64,
+            b: u64,
+            t: T,
+        }
+
+        let skips = Skips {
+            a: 1,
+            direct: 0,
+            via_macro: 0,
+            b: 2,
+        };
+        assert_eq!(
+            deserialize::<Skips>(&serialize(&skips).unwrap()).unwrap(),
+            Skips {
+                a: 1,
+                direct: 7,
+                via_macro: 7,
+                b: 2,
+            }
+        );
+        let node = Node {
+            value: 1,
+            next: Some(Box::new(Node {
+                value: 2,
+                next: None,
+            })),
+        };
+        assert_eq!(
+            deserialize::<Node>(&serialize(&node).unwrap()).unwrap(),
+            node
+        );
+        let bounded = Bounded {
+            a: 1,
+            b: 2,
+            t: 3u16,
+        };
+        assert_eq!(
+            deserialize::<Bounded<u16>>(&serialize(&bounded).unwrap()).unwrap(),
+            bounded
+        );
+    }
+
+    #[test]
+    fn non_copy_context_reaches_only_its_field() {
+        // A non-copyable context, so it can be moved into only one field's read.
+        struct Offset(u32);
+
+        struct AddOffset;
+
+        unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, Offset> for AddOffset {
+            type Dst = u32;
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: 4,
+                zero_copy: false,
+            };
+
+            fn read_with_context(
+                ctx: Offset,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<u32>,
+            ) -> ReadResult<()> {
+                dst.write(<u32 as SchemaRead<'de, C>>::get(reader)? + ctx.0);
+                Ok(())
+            }
+        }
+
+        // Leaves `TYPE_META` at its dynamic default, as most context adapters do.
+        struct AddOffsetDynamic;
+
+        unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, Offset> for AddOffsetDynamic {
+            type Dst = u32;
+
+            fn read_with_context(
+                ctx: Offset,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<u32>,
+            ) -> ReadResult<()> {
+                dst.write(<u32 as SchemaRead<'de, C>>::get(reader)? + ctx.0);
+                Ok(())
+            }
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct AfterDynamic {
+            a: u64,
+            b: u64,
+            #[wincode(with = "AddOffsetDynamic", context)]
+            c: u32,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct After {
+            a: u64,
+            b: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Before {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            a: u64,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Between {
+            a: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Only {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        let bytes = serialize(&(1u64, 2u64, 10u32)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, After>(Offset(5), &bytes).unwrap(),
+            After { a: 1, b: 2, c: 15 }
+        );
+        assert_eq!(
+            crate::deserialize_with_context::<_, AfterDynamic>(Offset(5), &bytes).unwrap(),
+            AfterDynamic { a: 1, b: 2, c: 15 }
+        );
+        let bytes = serialize(&(10u32, 1u64, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Before>(Offset(5), &bytes).unwrap(),
+            Before { c: 15, a: 1, b: 2 }
+        );
+        let bytes = serialize(&(1u64, 10u32, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Between>(Offset(5), &bytes).unwrap(),
+            Between { a: 1, c: 15, b: 2 }
+        );
+        let bytes = serialize(&10u32).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Only>(Offset(5), &bytes).unwrap(),
+            Only { c: 15 }
+        );
+    }
+
+    #[test]
+    fn dynamic_struct_static_prefix_roundtrips() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u8,
+            b: u32,
+            c: u64,
+            tail: Vec<u8>,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct NoPrefix {
+            head: Vec<u8>,
+            a: u8,
+            b: u32,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Split {
+            a: u8,
+            head: Vec<u8>,
+            b: u32,
+            tail: Vec<u8>,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Skipped {
+            a: u8,
+            // Enters the plan as a zero-sized static, inside the window around it.
+            #[wincode(skip)]
+            #[serde(skip)]
+            ignored: u64,
+            b: u32,
+            tail: Vec<u8>,
+        }
+
+        fn check<T>(value: &T)
+        where
+            T: SchemaWrite<DefaultConfig, Src = T>
+                + for<'de> SchemaRead<'de, DefaultConfig, Dst = T>
+                + serde::Serialize
+                + serde::de::DeserializeOwned
+                + core::fmt::Debug
+                + PartialEq,
+        {
+            let encoded = serialize(value).unwrap();
+            assert_eq!(encoded, bincode::serialize(value).unwrap());
+            assert_eq!(&deserialize::<T>(&encoded).unwrap(), value);
+        }
+
+        for tail in [vec![], vec![7u8; 5]] {
+            check(&Prefix {
+                a: 1,
+                b: 2,
+                c: 3,
+                tail: tail.clone(),
+            });
+            check(&NoPrefix {
+                head: tail.clone(),
+                a: 1,
+                b: 2,
+                c: 3,
+            });
+            check(&Split {
+                a: 1,
+                head: tail.clone(),
+                b: 2,
+                tail: tail.clone(),
+                c: 3,
+            });
+            check(&Skipped {
+                a: 1,
+                ignored: 0,
+                b: 2,
+                tail: tail.clone(),
+            });
+        }
+    }
+
+    #[test]
+    fn dynamic_struct_static_prefix_rejects_short_input() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u64,
+            b: u64,
+            tail: Vec<u8>,
+        }
+
+        let encoded = serialize(&Prefix {
+            a: 1,
+            b: 2,
+            tail: vec![9],
+        })
+        .unwrap();
+
+        for truncated in 0..encoded.len() {
+            assert!(deserialize::<Prefix>(&encoded[..truncated]).is_err());
+        }
+
+        // Shorter than the 16-byte window over `a` and `b`.
+        let mut buffer = [0u8; 8];
+        assert!(
+            crate::serialize_into(
+                buffer.as_mut_slice(),
+                &Prefix {
+                    a: 1,
+                    b: 2,
+                    tail: vec![],
+                }
+            )
+            .is_err()
+        );
     }
 
     #[test]
