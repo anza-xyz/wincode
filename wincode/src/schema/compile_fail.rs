@@ -310,6 +310,43 @@ fn associated_type_cannot_hide_ordinary_input_borrow() {}
 #[cfg(feature = "derive")]
 fn context_assert_zero_copy_is_unsupported() {}
 
+/// Skipped fields are not serialized, so a struct with a skipped field that takes up bytes must
+/// not implement `ZeroCopy`. Otherwise `from_bytes` compiles and panics at runtime.
+///
+/// ```compile_fail
+/// use wincode::{SchemaRead, SchemaWrite, ZeroCopy, serialize};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// #[repr(C)]
+/// struct Skipped {
+///     a: [u8; 4],
+///     #[wincode(skip)]
+///     b: [u8; 4],
+/// }
+///
+/// let serialized = serialize(&Skipped { a: [1; 4], b: [2; 4] }).unwrap();
+/// let _ = Skipped::from_bytes(&serialized);
+/// ```
+///
+/// Zero-sized skipped fields keep the `ZeroCopy` impl.
+///
+/// ```
+/// use wincode::{SchemaRead, SchemaWrite, ZeroCopy, serialize};
+///
+/// #[derive(SchemaRead, SchemaWrite)]
+/// #[repr(C)]
+/// struct Skipped {
+///     a: [u8; 4],
+///     #[wincode(skip)]
+///     b: [u8; 0],
+/// }
+///
+/// let serialized = serialize(&Skipped { a: [1; 4], b: [] }).unwrap();
+/// assert_eq!(Skipped::from_bytes(&serialized).unwrap().a, [1; 4]);
+/// ```
+#[cfg(all(feature = "derive", feature = "alloc"))]
+fn derive_skipped_field_must_be_zero_sized_for_zero_copy() {}
+
 /// A `read_<field>` on an `UninitBuilder` must not launder the reader lifetime: reading
 /// from a short-lived reader into a longer-lived borrowed field (here `'static`) would
 /// leave a dangling reference after `assume_init`.

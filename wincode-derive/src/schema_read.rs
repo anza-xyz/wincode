@@ -550,13 +550,14 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
                 // context and destination are not represented by the marker.
                 && args.context.is_none() =>
         {
-            let field_tys = fields.iter().map(|field| &field.ty);
+            let field_tys = fields.unskipped_iter().map(|field| &field.ty);
             let mut bounds = Punctuated::new();
             bounds.push(parse_quote!(__WincodeIsTrue));
             let no_pad_predicate = WherePredicate::Type(PredicateType {
                 // Workaround for https://github.com/rust-lang/rust/issues/48214.
                 lifetimes: Some(parse_quote!(for<'_wincode_internal>)),
                 // Types are only zero-copy if they do not have any padding.
+                // Skipped fields are not serialized, so they count as padding, same as `TYPE_META`.
                 // The sum starts at `0` so field-less structs still produce an expression.
                 bounded_ty: parse_quote!(
                     __WincodeAssert<
