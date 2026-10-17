@@ -2026,6 +2026,43 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_field_names_matching_derive_locals() {
+        // Variant fields are bound to locals in the derived impls, so their names
+        // must not shadow the impls' own `reader`, `dst`, `writer`, ... bindings.
+        #[derive(
+            SchemaWrite,
+            SchemaRead,
+            Debug,
+            PartialEq,
+            Eq,
+            serde::Serialize,
+            serde::Deserialize,
+            proptest_derive::Arbitrary,
+        )]
+        #[wincode(internal)]
+        enum Enum {
+            Transfer {
+                src: u64,
+                dst: u64,
+                total: u64,
+            },
+            Io {
+                reader: u32,
+                writer: String,
+                summed_sizes: u8,
+            },
+        }
+
+        proptest!(proptest_cfg(), |(e: Enum)| {
+            let serialized = serialize(&e).unwrap();
+            let bincode_serialized = bincode::serialize(&e).unwrap();
+            prop_assert_eq!(&serialized, &bincode_serialized);
+            let deserialized: Enum = deserialize(&serialized).unwrap();
+            prop_assert_eq!(deserialized, e);
+        });
+    }
+
+    #[test]
     fn enum_with_tag_encoding_roundtrip() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
         #[wincode(internal, tag_encoding = "u8")]
