@@ -2191,6 +2191,9 @@ mod tests {
             // `Self` should resolve even when passed through a macro.
             #[wincode(skip(default_val = default_of!(Self)))]
             via_macro: u8,
+            // `Self::Dst` should resolve through the schema trait.
+            #[wincode(skip(default_val = core::mem::size_of::<Self::Dst>()))]
+            dst_size: usize,
             b: u64,
         }
 
@@ -2221,6 +2224,7 @@ mod tests {
             a: 1,
             direct: 0,
             via_macro: 0,
+            dst_size: 0,
             b: 2,
         };
         assert_eq!(
@@ -2229,6 +2233,7 @@ mod tests {
                 a: 1,
                 direct: 7,
                 via_macro: 7,
+                dst_size: core::mem::size_of::<Skips>(),
                 b: 2,
             }
         );

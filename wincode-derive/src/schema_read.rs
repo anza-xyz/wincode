@@ -3,8 +3,7 @@ use {
         assert_zero_copy::assert_zero_copy,
         common::{
             Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
-            added_generics, default_tag_encoding, extract_repr, generic_field_types,
-            get_crate_name, turbofish_without_lifetimes,
+            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -24,8 +23,12 @@ fn impl_struct(
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
-    fn_generics: &Generics,
-) -> (TokenStream, TokenStream, Vec<TokenStream>, Vec<TokenStream>) {
+) -> (
+    TokenStream,
+    TokenStream,
+    Vec<TokenStream>,
+    Vec<(TokenStream, TokenStream)>,
+) {
     if fields.is_empty() {
         return (
             quote! {},
@@ -37,8 +40,6 @@ fn impl_struct(
             Vec::new(),
         );
     }
-
-    let (chain_generics, _, chain_where) = fn_generics.split_for_impl();
 
     let num_fields = fields.len();
     // Declaration order ties together the reads below, the `init_count` they keep, the plan
@@ -139,9 +140,9 @@ fn impl_struct(
     let ident = &args.ident;
     let metas = fields.plan_metas(TraitImpl::SchemaRead, crate_name);
 
-    let chain_turbofish = turbofish_without_lifetimes(fn_generics);
+    let helper_trait = helper_trait_ref(args.context.as_ref());
     // The guards below share this call to the read plan.
-    let plan = quote!(<Self as __WincodeReadPlan<'de, __WincodeConfig>>::PLAN);
+    let plan = quote!(<Self as #helper_trait>::PLAN);
     let chain_name =
         |index: usize| Ident::new(&format!("__wincode_read_chain_{index}"), Span::call_site());
 
@@ -164,25 +165,32 @@ fn impl_struct(
                 quote! {
                     if const { #plan[#next_index].is_in_window() } {
                         return unsafe {
-                            Self::#next_name #chain_turbofish(reader, dst_ptr, init_count)
+                            <Self as #helper_trait>::#next_name(reader, dst_ptr, init_count)
                         };
                     }
                 }
             });
-            quote! {
-                #[inline(always)]
-                unsafe fn #name #chain_generics(
-                    mut reader: impl #crate_name::io::Reader<'de>,
-                    dst_ptr: *mut Self,
-                    init_count: &mut #counter_ty,
-                ) -> #crate_name::ReadResult<()>
-                #chain_where
-                {
-                    #body
-                    #next
-                    Ok(())
-                }
-            }
+            (
+                quote! {
+                    unsafe fn #name(
+                        reader: impl #crate_name::io::Reader<'de>,
+                        dst_ptr: *mut Self,
+                        init_count: &mut #counter_ty,
+                    ) -> #crate_name::ReadResult<()>;
+                },
+                quote! {
+                    #[inline(always)]
+                    unsafe fn #name(
+                        mut reader: impl #crate_name::io::Reader<'de>,
+                        dst_ptr: *mut Self,
+                        init_count: &mut #counter_ty,
+                    ) -> #crate_name::ReadResult<()> {
+                        #body
+                        #next
+                        Ok(())
+                    }
+                },
+            )
         })
         .collect::<Vec<_>>();
 
@@ -206,7 +214,7 @@ fn impl_struct(
                     let size = const { #plan[#index].window_size() };
                     unsafe {
                         let window = #crate_name::io::Reader::as_trusted_for(&mut reader, size)?;
-                        Self::#name #chain_turbofish(window, dst_ptr, init_count)?;
+                        <Self as #helper_trait>::#name(window, dst_ptr, init_count)?;
                     }
                 } else if const { #plan[#index].is_direct() } {
                     #direct
@@ -563,19 +571,27 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     where_clause.predicates.extend(predicates);
 }
 
+/// Return the name of the private helper trait, applied to the schema impl's lifetime, config and
+/// context.
+fn helper_trait_ref(context: Option<&Type>) -> TokenStream {
+    match context {
+        Some(ctx) => quote!(__WincodeRead<'de, __WincodeConfig, #ctx>),
+        None => quote!(__WincodeRead<'de, __WincodeConfig>),
+    }
+}
+
 fn append_generics(
-    own: &Generics,
+    generics: &Generics,
     data: &Data<Variant, Field>,
     crate_name: &Path,
     context: Option<&Type>,
-) -> (Generics, Generics) {
-    let mut generics = own.clone();
+) -> Generics {
+    let mut generics = generics.clone();
     append_de_lifetime(&mut generics, data, context);
     append_where_clause(&mut generics, data);
     append_context_copy_bound(&mut generics, data, context);
     append_config(&mut generics, crate_name);
-    let added = added_generics(own, &generics);
-    (generics, added)
+    generics
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
@@ -583,7 +599,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let args = SchemaArgs::from_derive_input(&input)?;
 
     let crate_name = get_crate_name(&args);
-    let (appended_generics, fn_generics) = append_generics(
+    let appended_generics = append_generics(
         &args.generics,
         &args.data,
         &crate_name,
@@ -601,7 +617,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             }
             // Only structs are eligible being marked zero-copy, so only the struct
             // impl needs the repr.
-            impl_struct(&args, fields, &repr, &crate_name, &fn_generics)
+            impl_struct(&args, fields, &repr, &crate_name)
         }
         Data::Enum(v) => {
             let (read, meta) = impl_enum(v, args.tag_encoding.as_ref(), &crate_name);
@@ -699,32 +715,39 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         ),
     };
 
-    // The plan is an associated const, so const-eval runs it once per instantiation rather than
-    // once per guard. The struct defines the chain functions in an inherent impl, so they see
-    // `Self` and the struct's bounds as the schema impl does.
-    let (own_generics, _, own_where) = args.generics.split_for_impl();
+    // A private subtrait of the schema trait holds the plan and the chain functions, so they
+    // inherit `Self`, the schema trait's associated types and the struct's bounds.
+    // The plan is its associated const, so const-eval computes it once per instantiation.
     let field_count = metas.len();
+    let (chain_decls, chain_defs): (Vec<_>, Vec<_>) = chain_fns.into_iter().unzip();
+    // The context is a trait parameter, since a context type may name the struct's lifetimes.
+    let helper_trait_decl = match &args.context {
+        Some(_) => {
+            quote!(__WincodeRead<'de, __WincodeConfig: #crate_name::config::ConfigCore, __WincodeContext>:
+            #crate_name::SchemaReadContext<'de, __WincodeConfig, __WincodeContext>)
+        }
+        None => quote!(__WincodeRead<'de, __WincodeConfig: #crate_name::config::ConfigCore>:
+            #crate_name::SchemaRead<'de, __WincodeConfig>),
+    };
+    let helper_trait = helper_trait_ref(args.context.as_ref());
     // Context fields are always direct, so a struct of only those never consults its plan.
-    let struct_fns = (!chain_fns.is_empty()).then(|| {
+    let helper_impl = (!chain_decls.is_empty()).then(|| {
         quote! {
-            trait __WincodeReadPlan<'de, __WincodeConfig> {
+            trait #helper_trait_decl {
                 const PLAN: [#crate_name::FieldPlan; #field_count];
+                #(#chain_decls)*
             }
 
-            impl #impl_generics __WincodeReadPlan<'de, __WincodeConfig> for #ident #ty_generics #where_clause {
+            impl #impl_generics #helper_trait for #ident #ty_generics #where_clause {
                 const PLAN: [#crate_name::FieldPlan; #field_count] =
                     #crate_name::TypeMeta::field_plan([#(#metas),*]);
-            }
-
-            #[doc(hidden)]
-            impl #own_generics #ident #ty_generics #own_where {
-                #(#chain_fns)*
+                #(#chain_defs)*
             }
         }
     });
     Ok(quote! {
         const _: () = {
-            #struct_fns
+            #helper_impl
             #zero_copy_impl
 
             unsafe impl #impl_generics #trait_impl for #ident #ty_generics #where_clause {
@@ -742,34 +765,4 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         };
         #zero_copy_asserts
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use {super::*, quote::ToTokens};
-
-    #[test]
-    fn added_generics_exclude_the_structs_own() {
-        // Struct's params and bounds should not appear in the added generics.
-        let input: DeriveInput = parse_quote! {
-            struct S<'a, T: Copy> where T: Default {
-                r: &'a T,
-                t: T,
-            }
-        };
-        let args = SchemaArgs::from_derive_input(&input).unwrap();
-        let (_, added) =
-            append_generics(&args.generics, &args.data, &parse_quote!(::wincode), None);
-
-        assert_eq!(
-            added.params.to_token_stream().to_string(),
-            quote!('de: 'a, __WincodeConfig: ::wincode::config::Config).to_string()
-        );
-        let predicates = added.where_clause.unwrap().predicates;
-        assert!(!predicates.is_empty());
-        let struct_predicate = quote!(T: Default).to_string();
-        for predicate in &predicates {
-            assert_ne!(predicate.to_token_stream().to_string(), struct_predicate);
-        }
-    }
 }

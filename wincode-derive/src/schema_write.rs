@@ -3,8 +3,7 @@ use {
         assert_zero_copy::assert_zero_copy,
         common::{
             Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
-            added_generics, default_tag_encoding, extract_repr, generic_field_types,
-            get_crate_name, turbofish_without_lifetimes,
+            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -23,13 +22,12 @@ fn impl_struct(
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
-    fn_generics: &Generics,
 ) -> (
     TokenStream,
     TokenStream,
     TokenStream,
     Vec<TokenStream>,
-    Vec<TokenStream>,
+    Vec<(TokenStream, TokenStream)>,
 ) {
     if fields.is_empty() {
         return (
@@ -45,8 +43,6 @@ fn impl_struct(
             Vec::new(),
         );
     }
-
-    let (chain_generics, _, chain_where) = fn_generics.split_for_impl();
 
     let metas = fields.plan_metas(TraitImpl::SchemaWrite, crate_name);
     // Each field's target type and member. One entry per declaration, so an index here is also
@@ -70,9 +66,9 @@ fn impl_struct(
         })
     };
 
-    let chain_turbofish = turbofish_without_lifetimes(fn_generics);
+    let helper_trait = quote!(__WincodeWrite<__WincodeConfig>);
     // The guards below share this call to the write plan.
-    let plan = quote!(<Self as __WincodeWritePlan<__WincodeConfig>>::PLAN);
+    let plan = quote!(<Self as #helper_trait>::PLAN);
 
     // One chain function per field, handing off to the next field's chain fn while its window
     // continues, so emission stays linear.
@@ -87,23 +83,29 @@ fn impl_struct(
                 let next_index = index + 1;
                 quote! {
                     if const { #plan[#next_index].is_in_window() } {
-                        return Self::#next_name #chain_turbofish(writer, src);
+                        return <Self as #helper_trait>::#next_name(writer, src);
                     }
                 }
             });
-            quote! {
-                #[inline(always)]
-                fn #name #chain_generics(
-                    mut writer: impl #crate_name::io::Writer,
-                    src: &Self,
-                ) -> #crate_name::WriteResult<()>
-                #chain_where
-                {
-                    #body
-                    #next
-                    Ok(())
-                }
-            }
+            (
+                quote! {
+                    fn #name(
+                        writer: impl #crate_name::io::Writer,
+                        src: &Self,
+                    ) -> #crate_name::WriteResult<()>;
+                },
+                quote! {
+                    #[inline(always)]
+                    fn #name(
+                        mut writer: impl #crate_name::io::Writer,
+                        src: &Self,
+                    ) -> #crate_name::WriteResult<()> {
+                        #body
+                        #next
+                        Ok(())
+                    }
+                },
+            )
         })
         .collect::<Vec<_>>();
 
@@ -124,7 +126,7 @@ fn impl_struct(
                     let size = const { #plan[#index].window_size() };
                     let mut window =
                         unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
-                    Self::#name #chain_turbofish(#crate_name::io::Writer::by_ref(&mut window), src)?;
+                    <Self as #helper_trait>::#name(#crate_name::io::Writer::by_ref(&mut window), src)?;
                     #crate_name::io::Writer::finish(&mut window)?;
                 } else if const { #plan[#index].is_direct() } {
                     #direct
@@ -355,15 +357,14 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
 }
 
 fn append_generics(
-    own: &Generics,
+    generics: &Generics,
     data: &Data<Variant, Field>,
     crate_name: &Path,
-) -> (Generics, Generics) {
-    let mut generics = own.clone();
+) -> Generics {
+    let mut generics = generics.clone();
     append_where_clause(&mut generics, data);
     append_config(&mut generics, crate_name);
-    let added = added_generics(own, &generics);
-    (generics, added)
+    generics
 }
 
 pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
@@ -371,7 +372,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let args = SchemaArgs::from_derive_input(&input)?;
 
     let crate_name = get_crate_name(&args);
-    let (appended_generics, fn_generics) = append_generics(&args.generics, &args.data, &crate_name);
+    let appended_generics = append_generics(&args.generics, &args.data, &crate_name);
     let (impl_generics, _, where_clause) = appended_generics.split_for_impl();
     let (_, ty_generics, _) = args.generics.split_for_impl();
     let ident = &args.ident;
@@ -384,7 +385,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             }
             // Only structs are eligible being marked zero-copy, so only the struct
             // impl needs the repr.
-            impl_struct(fields, &repr, &crate_name, &fn_generics)
+            impl_struct(fields, &repr, &crate_name)
         }
         Data::Enum(v) => {
             let (size_of, write, meta) = impl_enum(v, args.tag_encoding.as_ref(), &crate_name);
@@ -392,31 +393,30 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
-    // The plan is an associated const, so const-eval runs it once per instantiation rather than
-    // once per guard. The struct defines the chain functions in an inherent impl, so they see
-    // `Self` and the struct's bounds as the schema impl does.
-    let (own_generics, _, own_where) = args.generics.split_for_impl();
+    // A private subtrait of the schema trait holds the plan and the chain functions, so they
+    // inherit `Self`, the schema trait's associated types and the struct's bounds.
+    // The plan is its associated const, so const-eval computes it once per instantiation.
     let field_count = metas.len();
-    let struct_fns = (!metas.is_empty()).then(|| {
+    let (chain_decls, chain_defs): (Vec<_>, Vec<_>) = chain_fns.into_iter().unzip();
+    let helper_impl = (!metas.is_empty()).then(|| {
         quote! {
-            trait __WincodeWritePlan<__WincodeConfig> {
+            trait __WincodeWrite<__WincodeConfig: #crate_name::config::ConfigCore>:
+                #crate_name::SchemaWrite<__WincodeConfig>
+            {
                 const PLAN: [#crate_name::FieldPlan; #field_count];
+                #(#chain_decls)*
             }
 
-            impl #impl_generics __WincodeWritePlan<__WincodeConfig> for #ident #ty_generics #where_clause {
+            impl #impl_generics __WincodeWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
                 const PLAN: [#crate_name::FieldPlan; #field_count] =
                     #crate_name::TypeMeta::field_plan([#(#metas),*]);
-            }
-
-            #[doc(hidden)]
-            impl #own_generics #ident #ty_generics #own_where {
-                #(#chain_fns)*
+                #(#chain_defs)*
             }
         }
     });
     Ok(quote! {
         const _: () = {
-            #struct_fns
+            #helper_impl
             unsafe impl #impl_generics #crate_name::SchemaWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = Self;
 
