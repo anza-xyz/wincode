@@ -5,7 +5,7 @@ use {
         util::Flag,
     },
     proc_macro2::{Span, TokenStream},
-    quote::{ToTokens as _, quote},
+    quote::{ToTokens, quote},
     std::{
         borrow::Cow,
         collections::{HashSet, VecDeque},
@@ -221,6 +221,16 @@ impl Field {
         }
     }
 
+    /// Bind an enum variant field to `binding` in a pattern or constructor.
+    ///
+    /// Return `name: binding` for a named field, or just `binding` for a tuple field.
+    pub(crate) fn enum_member_binding(&self, binding: impl ToTokens) -> TokenStream {
+        match &self.ident {
+            Some(ident) => quote! { #ident: #binding },
+            None => binding.into_token_stream(),
+        }
+    }
+
     /// Like [`Self::struct_member_ident`], but return a `String`.
     pub(crate) fn struct_member_ident_to_string(&self, index: usize) -> String {
         if let Some(ident) = &self.ident {
@@ -305,16 +315,18 @@ pub(crate) trait FieldsExt {
     /// If the field has a named identifier, return it.
     /// Otherwise (tuple struct), return an anonymous identifier.
     fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)>;
-    /// Get an iterator over the fields and their identifiers for the enum members.
+    /// Get an iterator over the fields of an enum variant, each paired with an
+    /// anonymous identifier to bind it to.
     ///
-    /// If the field has a named identifier, return it.
-    /// Otherwise (tuple enum), return an anonymous identifier.
+    /// Named fields get an anonymous identifier too, so a field name can't shadow
+    /// the locals of the derived impl (e.g. `reader`, `dst`, `writer`). Use
+    /// [`Field::enum_member_binding`] to bind the field in patterns and constructors.
     ///
     /// Note this is unnecessary for unit enums, as they will not have fields.
     fn enum_members_iter(
         &self,
         prefix: Option<&str>,
-    ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone;
+    ) -> impl Iterator<Item = (&Field, Ident)> + Clone;
     /// Get an iterator over the fields that do not have `skip` attribute.
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone;
     /// Get an iterator over the unskipped fields that contain a lifetime parameter.
@@ -367,22 +379,8 @@ impl FieldsExt for Fields<Field> {
     fn enum_members_iter(
         &self,
         prefix: Option<&str>,
-    ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone {
-        let mut alpha = anon_ident_iter(prefix);
-        self.iter().map(move |field| {
-            (
-                field,
-                if let Some(ident) = &field.ident {
-                    Cow::Borrowed(ident)
-                } else {
-                    Cow::Owned(
-                        alpha
-                            .next()
-                            .expect("alpha iterator should never be exhausted"),
-                    )
-                },
-            )
-        })
+    ) -> impl Iterator<Item = (&Field, Ident)> + Clone {
+        self.iter().zip(anon_ident_iter(prefix))
     }
 
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone {
