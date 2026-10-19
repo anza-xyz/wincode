@@ -2255,6 +2255,29 @@ mod tests {
     }
 
     #[test]
+    fn skipped_context_field_stays_in_its_window() {
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "u8")]
+        struct Foo {
+            a: u64,
+            // Skipped, so it never reads the context and stays inside the window over `a` and `b`.
+            #[wincode(skip, context)]
+            ignored: u64,
+            b: u64,
+        }
+
+        let bytes = serialize(&(1u64, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Foo>(0u8, &bytes).unwrap(),
+            Foo {
+                a: 1,
+                ignored: 0,
+                b: 2
+            }
+        );
+    }
+
+    #[test]
     fn non_copy_context_reaches_only_its_field() {
         // A non-copyable context, so it can be moved into only one field's read.
         struct Offset(u32);

@@ -150,14 +150,14 @@ fn impl_struct(
     let chain_fns = fields
         .iter()
         .enumerate()
-        .filter(|(_, field)| field.context.is_none())
+        .filter(|(_, field)| !field.reads_context())
         .map(|(index, field)| {
             let name = chain_name(index);
             let body = read_field(index, field);
             let next_in_chain = fields
                 .fields
                 .get(index + 1)
-                .is_some_and(|next| next.context.is_none());
+                .is_some_and(|next| !next.reads_context());
             let next = next_in_chain.then(|| {
                 let next_name = chain_name(index + 1);
                 let next_index = index + 1;
@@ -194,7 +194,7 @@ fn impl_struct(
         .map(|(index, field)| {
             let name = chain_name(index);
             let direct = read_field(index, field);
-            if field.context.is_some() {
+            if field.reads_context() {
                 return direct;
             }
             quote! {
@@ -468,7 +468,7 @@ fn context_requires_copy(data: &Data<Variant, Field>) -> bool {
     fn fields_require_copy(fields: &Fields<Field>) -> bool {
         fields
             .iter()
-            .filter(|field| field.skip.is_none() && field.context.is_some())
+            .filter(|field| field.reads_context())
             .nth(1)
             .is_some()
     }
