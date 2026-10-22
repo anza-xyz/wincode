@@ -10,10 +10,10 @@ use {
         Error, FromDeriveInput, Result,
         ast::{Data, Fields, Style},
     },
-    proc_macro2::{Literal, TokenStream},
+    proc_macro2::{Literal, Span, TokenStream},
     quote::quote,
     syn::{
-        DeriveInput, GenericParam, Generics, Lifetime, Path, PredicateType, Token, Type,
+        DeriveInput, GenericParam, Generics, Ident, Lifetime, Path, PredicateType, Token, Type,
         WhereClause, WherePredicate, parse_quote, punctuated::Punctuated,
     },
 };
@@ -23,7 +23,12 @@ fn impl_struct(
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
-) -> (TokenStream, TokenStream) {
+) -> (
+    TokenStream,
+    TokenStream,
+    Vec<TokenStream>,
+    Vec<(TokenStream, TokenStream)>,
+) {
     if fields.is_empty() {
         return (
             quote! {},
@@ -31,80 +36,84 @@ fn impl_struct(
                 size: 0,
                 zero_copy: true,
             }},
+            Vec::new(),
+            Vec::new(),
         );
     }
 
     let num_fields = fields.len();
-    let read_impl = fields
-        .iter()
-        .enumerate()
-        .map(|(i, field)| {
-            let ident = field.struct_member_ident(i);
-            let fully_qualified = field.target_fully_qualified(TraitImpl::SchemaRead);
-            let declared_ty = &field.ty;
-            let read_ty = field
-                .ty
-                .with_lifetime_excluding("de", &field.context_lifetimes);
-            // Keep the cast target explicit so the reader's associated `Dst` must match
-            // the type being placed into the field. Inferring `_` here would let an adapter
-            // initialize an unrelated type through the raw field pointer.
-            let read_dst_ty = quote! { ::core::mem::MaybeUninit<#read_ty> };
-            // `read_ty` only potentially differs from the declared field type only in lifetimes,
-            // which do not affect layout. The coercion assertion below separately proves the
-            // value-level lifetime conversion is sound.
-            let assert_safe_lifetime_shortening = if read_ty == *declared_ty {
-                quote! {}
-            } else {
-                quote! {
-                    // Reading directly into the field bypasses an ordinary assignment, so make
-                    // Rust prove that replacing input lifetimes with the field's declared
-                    // lifetimes is a valid coercion. An outlives bound alone is insufficient for
-                    // contravariant or invariant types.
-                    // This inline const is type-checked at compile time and emits no runtime code.
-                    const {
-                        let _: fn(#read_ty) -> #declared_ty =
-                            |value: #read_ty| -> #declared_ty { value };
+    // Declaration order ties together the reads below, the `init_count` they keep, the plan
+    // built from `plan_metas`, and the drop guard that drops the first `init_count` fields.
+    // All four index the same positions, so all four have to agree.
+
+    // One field's read, performed using `reader`. The caller gates on the const plan, either
+    // starting the chained run at this field or reading it directly.
+    let read_field = |i: usize, field: &Field| {
+        let ident = field.struct_member_ident(i);
+        let fully_qualified = field.target_fully_qualified(TraitImpl::SchemaRead);
+        let declared_ty = &field.ty;
+        let read_ty = field
+            .ty
+            .with_lifetime_excluding("de", &field.context_lifetimes);
+        // Keep the cast target explicit so the reader's associated `Dst` must match
+        // the type being placed into the field. Inferring `_` here would let an adapter
+        // initialize an unrelated type through the raw field pointer.
+        let read_dst_ty = quote! { ::core::mem::MaybeUninit<#read_ty> };
+        // `read_ty` only potentially differs from the declared field type only in lifetimes,
+        // which do not affect layout. The coercion assertion below separately proves the
+        // value-level lifetime conversion is sound.
+        let assert_safe_lifetime_shortening = if read_ty == *declared_ty {
+            quote! {}
+        } else {
+            quote! {
+                // Reading directly into the field bypasses an ordinary assignment, so make
+                // Rust prove that replacing input lifetimes with the field's declared
+                // lifetimes is a valid coercion. An outlives bound alone is insufficient for
+                // contravariant or invariant types.
+                // This inline const is type-checked at compile time and emits no runtime code.
+                const {
+                    let _: fn(#read_ty) -> #declared_ty =
+                        |value: #read_ty| -> #declared_ty { value };
+                }
+            }
+        };
+        let init_count = if i == num_fields - 1 {
+            quote! {}
+        } else {
+            quote! { *init_count += 1; }
+        };
+        if let Some(mode) = &field.skip {
+            let val = mode.default_val_token_stream();
+            quote! {
+                unsafe { (&raw mut (*dst_ptr).#ident).write(#val); }
+                #init_count
+            }
+        } else {
+            match &field.context {
+                Some(_) => {
+                    quote! {
+                        #assert_safe_lifetime_shortening
+                        #fully_qualified::read_with_context(
+                            ctx,
+                            #crate_name::io::Reader::by_ref(&mut reader),
+                            unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
+                        )?;
+                        #init_count
                     }
                 }
-            };
-            let init_count = if i == num_fields - 1 {
-                quote! {}
-            } else {
-                quote! { *init_count += 1; }
-            };
-            if let Some(mode) = &field.skip {
-                let val = mode.default_val_token_stream();
-                quote! {
-                    unsafe { (&raw mut (*dst_ptr).#ident).write(#val); }
-                    #init_count
-                }
-            } else {
-                match &field.context {
-                    Some(_) => {
-                        quote! {
-                            #assert_safe_lifetime_shortening
-                            #fully_qualified::read_with_context(
-                                ctx,
-                                #crate_name::io::Reader::by_ref(&mut reader),
-                                unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
-                            )?;
-                            #init_count
-                        }
-                    }
-                    None => {
-                        quote! {
-                            #assert_safe_lifetime_shortening
-                            #fully_qualified::read(
-                                #crate_name::io::Reader::by_ref(&mut reader),
-                                unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
-                            )?;
-                            #init_count
-                        }
+                None => {
+                    quote! {
+                        #assert_safe_lifetime_shortening
+                        #fully_qualified::read(
+                            #crate_name::io::Reader::by_ref(&mut reader),
+                            unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
+                        )?;
+                        #init_count
                     }
                 }
             }
-        })
-        .collect::<Vec<_>>();
+        }
+    };
 
     let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name);
 
@@ -129,10 +138,91 @@ fn impl_struct(
     };
 
     let ident = &args.ident;
-    let trait_impl = match &args.context {
-        Some(ctx) => quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx>),
-        None => quote!(#crate_name::SchemaRead<'de, __WincodeConfig>),
-    };
+    let metas = fields.plan_metas(TraitImpl::SchemaRead, crate_name);
+
+    let helper_trait = helper_trait_ref(args.context.as_ref());
+    // The guards below share this call to the read plan.
+    let plan = quote!(<Self as #helper_trait>::PLAN);
+    let chain_name =
+        |index: usize| Ident::new(&format!("__wincode_read_chain_{index}"), Span::call_site());
+
+    // One chain function per field, handing off to the next field's chain fn while its window
+    // continues, so emission stays linear.
+    let chain_fns = fields
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| !field.reads_context())
+        .map(|(index, field)| {
+            let name = chain_name(index);
+            let body = read_field(index, field);
+            let next_in_chain = fields
+                .fields
+                .get(index + 1)
+                .is_some_and(|next| !next.reads_context());
+            let next = next_in_chain.then(|| {
+                let next_name = chain_name(index + 1);
+                let next_index = index + 1;
+                quote! {
+                    if const { #plan[#next_index].is_in_window() } {
+                        return unsafe {
+                            <Self as #helper_trait>::#next_name(reader, dst_ptr, init_count)
+                        };
+                    }
+                }
+            });
+            (
+                quote! {
+                    unsafe fn #name(
+                        reader: impl #crate_name::io::Reader<'de>,
+                        dst_ptr: *mut Self,
+                        init_count: &mut #counter_ty,
+                    ) -> #crate_name::ReadResult<()>;
+                },
+                quote! {
+                    #[inline(always)]
+                    unsafe fn #name(
+                        mut reader: impl #crate_name::io::Reader<'de>,
+                        dst_ptr: *mut Self,
+                        init_count: &mut #counter_ty,
+                    ) -> #crate_name::ReadResult<()> {
+                        #body
+                        #next
+                        Ok(())
+                    }
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // An entry point per declaration, since any of them may open a window; the chain covers
+    // the rest.
+    let read_steps = fields
+        .iter()
+        .enumerate()
+        .map(|(index, field)| {
+            let name = chain_name(index);
+            let direct = read_field(index, field);
+            if field.reads_context() {
+                return direct;
+            }
+            quote! {
+                if const { #plan[#index].opens_window() } {
+                    // Starts the chain that reads this field and every static one after it.
+                    // SAFETY: the run's size is the sum of the serialized sizes of the fields it
+                    // covers, which are each statically sized. The chain reads exactly those
+                    // fields, so it consumes the trusted window exactly once.
+                    let size = const { #plan[#index].window_size() };
+                    unsafe {
+                        let window = #crate_name::io::Reader::as_trusted_for(&mut reader, size)?;
+                        <Self as #helper_trait>::#name(window, dst_ptr, init_count)?;
+                    }
+                } else if const { #plan[#index].is_direct() } {
+                    #direct
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
@@ -159,27 +249,15 @@ fn impl_struct(
                 }
             }
 
-            match <Self as #trait_impl>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `read` on each field will consume exactly `size` bytes,
-                    // fully consuming the trusted window.
-                    let mut reader = unsafe { #crate_name::io::Reader::as_trusted_for(&mut reader, size) }?;
-                    #init_guard
-                    #(#read_impl)*
-                    ::core::mem::forget(guard);
-                }
-                #crate_name::TypeMeta::Dynamic => {
-                    #init_guard
-                    #(#read_impl)*
-                    ::core::mem::forget(guard);
-                }
-            }
+            #init_guard
+            #(#read_steps)*
+            ::core::mem::forget(guard);
         },
         quote! {
             #type_meta_impl
         },
+        metas,
+        chain_fns,
     )
 }
 
@@ -398,7 +476,7 @@ fn context_requires_copy(data: &Data<Variant, Field>) -> bool {
     fn fields_require_copy(fields: &Fields<Field>) -> bool {
         fields
             .iter()
-            .filter(|field| field.skip.is_none() && field.context.is_some())
+            .filter(|field| field.reads_context())
             .nth(1)
             .is_some()
     }
@@ -493,6 +571,15 @@ fn append_where_clause(generics: &mut Generics, data: &Data<Variant, Field>) {
     where_clause.predicates.extend(predicates);
 }
 
+/// Return the name of the private helper trait, applied to the schema impl's lifetime, config and
+/// context.
+fn helper_trait_ref(context: Option<&Type>) -> TokenStream {
+    match context {
+        Some(ctx) => quote!(__WincodeRead<'de, __WincodeConfig, #ctx>),
+        None => quote!(__WincodeRead<'de, __WincodeConfig>),
+    }
+}
+
 fn append_generics(
     generics: &Generics,
     data: &Data<Variant, Field>,
@@ -523,7 +610,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let ident = &args.ident;
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
-    let (read_impl, type_meta_impl) = match &args.data {
+    let (read_impl, type_meta_impl, metas, chain_fns) = match &args.data {
         Data::Struct(fields) => {
             if args.tag_encoding.is_some() {
                 return Err(Error::custom("`tag_encoding` is only supported for enums"));
@@ -532,7 +619,10 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             // impl needs the repr.
             impl_struct(&args, fields, &repr, &crate_name)
         }
-        Data::Enum(v) => impl_enum(v, args.tag_encoding.as_ref(), &crate_name),
+        Data::Enum(v) => {
+            let (read, meta) = impl_enum(v, args.tag_encoding.as_ref(), &crate_name);
+            (read, meta, Vec::new(), Vec::new())
+        }
     };
 
     // Provide a `ZeroCopy` impl for the type if its `repr` is eligible and all its fields are zero-copy.
@@ -628,8 +718,39 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
         ),
     };
 
+    // A private subtrait of the schema trait holds the plan and the chain functions, so they
+    // inherit `Self`, the schema trait's associated types and the struct's bounds.
+    // The plan is its associated const, so const-eval computes it once per instantiation.
+    let field_count = metas.len();
+    let (chain_decls, chain_defs): (Vec<_>, Vec<_>) = chain_fns.into_iter().unzip();
+    // The context is a trait parameter, since a context type may name the struct's lifetimes.
+    let helper_trait_decl = match &args.context {
+        Some(_) => {
+            quote!(__WincodeRead<'de, __WincodeConfig: #crate_name::config::ConfigCore, __WincodeContext>:
+            #crate_name::SchemaReadContext<'de, __WincodeConfig, __WincodeContext>)
+        }
+        None => quote!(__WincodeRead<'de, __WincodeConfig: #crate_name::config::ConfigCore>:
+            #crate_name::SchemaRead<'de, __WincodeConfig>),
+    };
+    let helper_trait = helper_trait_ref(args.context.as_ref());
+    // Context fields are always direct, so a struct of only those never consults its plan.
+    let helper_impl = (!chain_decls.is_empty()).then(|| {
+        quote! {
+            trait #helper_trait_decl {
+                const PLAN: [#crate_name::FieldPlan; #field_count];
+                #(#chain_decls)*
+            }
+
+            impl #impl_generics #helper_trait for #ident #ty_generics #where_clause {
+                const PLAN: [#crate_name::FieldPlan; #field_count] =
+                    #crate_name::TypeMeta::field_plan([#(#metas),*]);
+                #(#chain_defs)*
+            }
+        }
+    });
     Ok(quote! {
         const _: () = {
+            #helper_impl
             #zero_copy_impl
 
             unsafe impl #impl_generics #trait_impl for #ident #ty_generics #where_clause {

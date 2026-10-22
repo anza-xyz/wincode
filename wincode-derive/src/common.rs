@@ -209,6 +209,11 @@ impl Field {
         self.target().with_infer(&self.ty)
     }
 
+    /// Whether the field's read consumes the context.
+    pub(crate) fn reads_context(&self) -> bool {
+        self.context.is_some() && self.skip.is_none()
+    }
+
     /// Get the identifier for a struct member.
     ///
     /// If the field has a named identifier, return it.
@@ -300,6 +305,16 @@ pub(crate) trait FieldsExt {
         repr: &StructRepr,
         crate_name: &Path,
     ) -> TokenStream;
+    /// One `TypeMeta` per declaration, in order, for [`TypeMeta::field_plan`] to plan windows
+    /// over.
+    ///
+    /// A skipped field carries no wire bytes, so it enters as a zero-sized static rather than
+    /// being left out: it stays inside whichever window it was declared in and displaces
+    /// nothing, which keeps the derive emitting fields in declaration order.
+    ///
+    /// Treat fields that read the context as dynamic on the read side, since chain functions don't
+    /// carry the context and only the field's own direct read may consume it.
+    fn plan_metas(&self, trait_impl: TraitImpl, crate_name: &Path) -> Vec<TokenStream>;
     /// Get an iterator over the fields and their identifiers for the struct members.
     ///
     /// If the field has a named identifier, return it.
@@ -356,6 +371,21 @@ impl FieldsExt for Fields<Field> {
                 #crate_name::TypeMeta::Dynamic
             }
         }
+    }
+
+    fn plan_metas(&self, trait_impl: TraitImpl, crate_name: &Path) -> Vec<TokenStream> {
+        self.iter()
+            .map(|field| {
+                if field.skip.is_some() {
+                    return quote! { #crate_name::TypeMeta::Static { size: 0, zero_copy: true } };
+                }
+                if matches!(trait_impl, TraitImpl::SchemaRead) && field.reads_context() {
+                    return quote! { #crate_name::TypeMeta::Dynamic };
+                }
+                let target = field.target_fully_qualified(trait_impl);
+                quote! { #target::TYPE_META }
+            })
+            .collect()
     }
 
     fn struct_members_iter(&self) -> impl Iterator<Item = (&Field, Member)> {
