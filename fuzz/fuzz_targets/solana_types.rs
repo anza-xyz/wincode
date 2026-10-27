@@ -1,22 +1,20 @@
 #![no_main]
 
-// Solana crates still derive against wincode 0.5.x. Keep this target on that
-// exact release until the Solana dependency stack supports wincode 0.6.x.
 use {
     agave_votor_messages::{
-        consensus_message::{Certificate, CertificateType, ConsensusMessage, VoteMessage},
+        consensus_message::Block,
         reward_certificate::{NotarRewardCertificate, SkipRewardCertificate},
-        vote::{
-            FinalizationVote, GenesisVote, NotarizationFallbackVote, NotarizationVote,
-            SkipFallbackVote, SkipVote, Vote,
+        wire::{
+            ExpectedShredVersion, VersionedWireConsensusMessage, VotePayloadToSign,
+            WireBlockCertMessage, WireCertSignature,
         },
     },
     libfuzzer_sys::fuzz_target,
     solana_address::Address,
     solana_entry::{
         block_component::{
-            BlockComponent, BlockFooterV1, BlockHeaderV1, BlockMarkerV1, FinalCertificate,
-            GenesisCertificate, UpdateParentV1, VersionedBlockFooter, VersionedBlockHeader,
+            BlockComponent, BlockFinalizationCert, BlockFooterV1, BlockHeaderV1, BlockMarkerV1,
+            GenesisCertBlockMarker, UpdateParentV1, VersionedBlockFooter, VersionedBlockHeader,
             VersionedBlockMarker, VersionedUpdateParent, VotesAggregate,
         },
         entry::Entry,
@@ -34,7 +32,7 @@ use {
     },
     solana_signature::Signature,
     solana_transaction::{versioned::VersionedTransaction, Transaction},
-    wincode_0_5 as wincode,
+    wincode::{config::DefaultConfig, io::Reader, SchemaReadContext},
 };
 
 macro_rules! fuzz_roundtrip {
@@ -47,6 +45,46 @@ macro_rules! fuzz_roundtrip {
             assert_eq!(value, roundtrip, "roundtrip failed for {}", stringify!($ty));
         }
     };
+}
+
+/// `VersionedWireConsensusMessage` only reads with an `ExpectedShredVersion`
+/// context and rejects input whose trailing `u16` shred version does not match.
+/// Take the expected version from the last two bytes so well-formed inputs are
+/// accepted, and require the reader to be fully consumed to mirror
+/// `deserialize_exact`.
+fn fuzz_roundtrip_wire_consensus_message(data: &[u8]) {
+    let Some(shred_version) = data
+        .len()
+        .checked_sub(2)
+        .map(|i| u16::from_le_bytes([data[i], data[i + 1]]))
+    else {
+        return;
+    };
+    let mut reader: &[u8] = data;
+    let Ok(value) = <VersionedWireConsensusMessage as SchemaReadContext<
+        '_,
+        DefaultConfig,
+        ExpectedShredVersion,
+    >>::get_with_context(ExpectedShredVersion(shred_version), reader.by_ref()) else {
+        return;
+    };
+    if !reader.is_empty() {
+        return;
+    }
+    let serialized = wincode::serialize(&value).expect("serialize should succeed");
+    assert_eq!(
+        data, serialized,
+        "deserialize -> serialize != orignal_data for type \
+         VersionedWireConsensusMessage\nserialized {:?}\noriginal   {:?}",
+        serialized, data,
+    );
+    let roundtrip: VersionedWireConsensusMessage =
+        wincode::deserialize_with_context(ExpectedShredVersion(shred_version), &serialized)
+            .expect("roundtrip deserialize should succeed");
+    assert_eq!(
+        value, roundtrip,
+        "roundtrip failed for VersionedWireConsensusMessage"
+    );
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -69,22 +107,16 @@ fuzz_target!(|data: &[u8]| {
     fuzz_roundtrip!(data, Entry);
     fuzz_roundtrip!(data, SkipRewardCertificate);
     fuzz_roundtrip!(data, NotarRewardCertificate);
-    fuzz_roundtrip!(data, NotarizationVote);
-    fuzz_roundtrip!(data, FinalizationVote);
-    fuzz_roundtrip!(data, SkipVote);
-    fuzz_roundtrip!(data, NotarizationFallbackVote);
-    fuzz_roundtrip!(data, SkipFallbackVote);
-    fuzz_roundtrip!(data, GenesisVote);
-    fuzz_roundtrip!(data, Vote);
-    fuzz_roundtrip!(data, VoteMessage);
-    fuzz_roundtrip!(data, CertificateType);
-    fuzz_roundtrip!(data, Certificate);
-    fuzz_roundtrip!(data, ConsensusMessage);
+    fuzz_roundtrip!(data, Block);
+    fuzz_roundtrip!(data, WireCertSignature);
+    fuzz_roundtrip!(data, WireBlockCertMessage);
+    fuzz_roundtrip!(data, VotePayloadToSign);
+    fuzz_roundtrip_wire_consensus_message(data);
     fuzz_roundtrip!(data, BlockFooterV1);
     fuzz_roundtrip!(data, BlockHeaderV1);
     fuzz_roundtrip!(data, UpdateParentV1);
-    fuzz_roundtrip!(data, GenesisCertificate);
-    fuzz_roundtrip!(data, FinalCertificate);
+    fuzz_roundtrip!(data, GenesisCertBlockMarker);
+    fuzz_roundtrip!(data, BlockFinalizationCert);
     fuzz_roundtrip!(data, VotesAggregate);
     fuzz_roundtrip!(data, VersionedBlockFooter);
     fuzz_roundtrip!(data, VersionedBlockHeader);
