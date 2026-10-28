@@ -19,7 +19,7 @@ wincode-derive = { path = "../wincode-derive" }
 solana-address = { version = "2.7.0", features = ["wincode"] }
 solana-hash = { version = "4.6.0", features = ["wincode"] }
 solana-fee-calculator = { version = "3.3.0", features = ["wincode"] }
-solana-message = { version = "5.0.0", features = ["wincode"] }
+solana-message = { version = "6.0.0", features = ["wincode"] }
 solana-nonce = { version = "3.3.0", features = ["wincode"] }
 solana-signature = { version = "3.5.2", features = ["wincode"] }
 solana-transaction = { version = "5.0.0", features = ["wincode"] }
