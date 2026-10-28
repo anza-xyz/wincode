@@ -22,7 +22,7 @@ solana-fee-calculator = { version = "3.3.0", features = ["wincode"] }
 solana-message = { version = "5.0.0", features = ["wincode"] }
 solana-nonce = { version = "3.3.0", features = ["wincode"] }
 solana-signature = { version = "3.5.2", features = ["wincode"] }
-solana-transaction = { version = "5.0.0", features = ["wincode"] }
+solana-transaction = { version = "6.0.0", features = ["wincode"] }
 solana-entry = { version = "4.4.0-beta.1", features = ["agave-unstable-api"] }
 agave-votor-messages = { version = "4.4.0-beta.1", features = ["agave-unstable-api"] }
 
