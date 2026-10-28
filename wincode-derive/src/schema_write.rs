@@ -10,11 +10,11 @@ use {
         Error, FromDeriveInput, Result,
         ast::{Data, Fields, Style},
     },
-    proc_macro2::TokenStream,
+    proc_macro2::{Span, TokenStream},
     quote::quote,
     syn::{
-        DeriveInput, GenericParam, Generics, Path, PredicateType, Token, Type, WherePredicate,
-        parse_quote, punctuated::Punctuated,
+        DeriveInput, GenericParam, Generics, Ident, Path, PredicateType, Token, Type,
+        WherePredicate, parse_quote, punctuated::Punctuated,
     },
 };
 
@@ -22,7 +22,13 @@ fn impl_struct(
     fields: &Fields<Field>,
     repr: &StructRepr,
     crate_name: &Path,
-) -> (TokenStream, TokenStream, TokenStream) {
+) -> (
+    TokenStream,
+    TokenStream,
+    TokenStream,
+    Vec<TokenStream>,
+    Vec<(TokenStream, TokenStream)>,
+) {
     if fields.is_empty() {
         return (
             quote! {Ok(0)},
@@ -33,26 +39,105 @@ fn impl_struct(
                     zero_copy: true,
                 }
             },
+            Vec::new(),
+            Vec::new(),
         );
     }
 
-    let target = fields
-        .unskipped_iter()
-        .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
-    let mut size_count_idents = Vec::with_capacity(fields.len());
+    let metas = fields.plan_metas(TraitImpl::SchemaWrite, crate_name);
+    // Each field's target type and member. One entry per declaration, so an index here is also
+    // an index into the plan; a skipped field keeps its slot and holds none, rather than being
+    // filtered out.
+    let write_targets = fields
+        .struct_members_iter()
+        .map(|(field, ident)| match field.skip {
+            Some(_) => None,
+            None => Some((field.target_fully_qualified(TraitImpl::SchemaWrite), ident)),
+        })
+        .collect::<Vec<_>>();
 
-    let writes = fields.struct_members_iter()
-        .filter_map(|(field, ident)| {
-            if field.skip.is_none() {
-                let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
-                let write = quote! { #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
-                size_count_idents.push(ident);
-                Some(write)
-            } else {
-                None
+    let chain_name =
+        |index: usize| Ident::new(&format!("__wincode_write_chain_{index}"), Span::call_site());
+    let write_through = |write: &Option<_>| {
+        write.as_ref().map(|(target, ident)| {
+            quote! {
+                #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?;
+            }
+        })
+    };
+
+    let helper_trait = quote!(__WincodeWrite<__WincodeConfig>);
+    // The guards below share this call to the write plan.
+    let plan = quote!(<Self as #helper_trait>::PLAN);
+
+    // One chain function per field, handing off to the next field's chain fn while its window
+    // continues, so emission stays linear.
+    let chain_fns = write_targets
+        .iter()
+        .enumerate()
+        .map(|(index, write)| {
+            let name = chain_name(index);
+            let body = write_through(write);
+            let next = (index + 1 < fields.len()).then(|| {
+                let next_name = chain_name(index + 1);
+                let next_index = index + 1;
+                quote! {
+                    if const { #plan[#next_index].is_in_window() } {
+                        return <Self as #helper_trait>::#next_name(writer, src);
+                    }
+                }
+            });
+            (
+                quote! {
+                    fn #name(
+                        writer: impl #crate_name::io::Writer,
+                        src: &Self,
+                    ) -> #crate_name::WriteResult<()>;
+                },
+                quote! {
+                    #[inline(always)]
+                    fn #name(
+                        mut writer: impl #crate_name::io::Writer,
+                        src: &Self,
+                    ) -> #crate_name::WriteResult<()> {
+                        #body
+                        #next
+                        Ok(())
+                    }
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // An entry point per declaration, since any of them may open a window; the chain covers
+    // the rest.
+    let write_steps = write_targets
+        .iter()
+        .enumerate()
+        .map(|(index, write)| {
+            let name = chain_name(index);
+            let direct = write_through(write);
+            quote! {
+                if const { #plan[#index].opens_window() } {
+                    // Starts the chain that writes this field and every static one after it.
+                    // SAFETY: the run's size is the sum of the serialized sizes of the fields it
+                    // covers, which are each statically sized. The chain writes exactly those
+                    // fields, so it fills the trusted window exactly once.
+                    let size = const { #plan[#index].window_size() };
+                    let mut window =
+                        unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
+                    <Self as #helper_trait>::#name(#crate_name::io::Writer::by_ref(&mut window), src)?;
+                    #crate_name::io::Writer::finish(&mut window)?;
+                } else if const { #plan[#index].is_direct() } {
+                    #direct
+                }
             }
         })
         .collect::<Vec<_>>();
+
+    // Terms of the `size_of` sum, one per field that is actually written.
+    let (targets, size_count_idents): (Vec<_>, Vec<_>) =
+        write_targets.into_iter().flatten().unzip();
 
     let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name);
 
@@ -63,28 +148,17 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += #target::size_of(&src.#size_count_idents)?;
+                total += #targets::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
         quote! {
-            match <Self as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `write` on each field will write exactly `size` bytes,
-                    // fully initializing the trusted window.
-                    let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
-                    #(#writes)*
-                    #crate_name::io::Writer::finish(&mut writer)?;
-                }
-                #crate_name::TypeMeta::Dynamic => {
-                    #(#writes)*
-                }
-            }
+            #(#write_steps)*
             Ok(())
         },
         type_meta_impl,
+        metas,
+        chain_fns,
     )
 }
 
@@ -247,7 +321,7 @@ fn impl_enum(
             }
         },
         quote! {
-           #type_meta_impl
+            #type_meta_impl
         },
     )
 }
@@ -304,7 +378,7 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
     let ident = &args.ident;
     let zero_copy_asserts = assert_zero_copy(&args, &repr)?;
 
-    let (size_of_impl, write_impl, type_meta_impl) = match &args.data {
+    let (size_of_impl, write_impl, type_meta_impl, metas, chain_fns) = match &args.data {
         Data::Struct(fields) => {
             if args.tag_encoding.is_some() {
                 return Err(Error::custom("`tag_encoding` is only supported for enums"));
@@ -313,11 +387,36 @@ pub(crate) fn generate(input: DeriveInput) -> Result<TokenStream> {
             // impl needs the repr.
             impl_struct(fields, &repr, &crate_name)
         }
-        Data::Enum(v) => impl_enum(v, args.tag_encoding.as_ref(), &crate_name),
+        Data::Enum(v) => {
+            let (size_of, write, meta) = impl_enum(v, args.tag_encoding.as_ref(), &crate_name);
+            (size_of, write, meta, Vec::new(), Vec::new())
+        }
     };
 
+    // A private subtrait of the schema trait holds the plan and the chain functions, so they
+    // inherit `Self`, the schema trait's associated types and the struct's bounds.
+    // The plan is its associated const, so const-eval computes it once per instantiation.
+    let field_count = metas.len();
+    let (chain_decls, chain_defs): (Vec<_>, Vec<_>) = chain_fns.into_iter().unzip();
+    let helper_impl = (!metas.is_empty()).then(|| {
+        quote! {
+            trait __WincodeWrite<__WincodeConfig: #crate_name::config::ConfigCore>:
+                #crate_name::SchemaWrite<__WincodeConfig>
+            {
+                const PLAN: [#crate_name::FieldPlan; #field_count];
+                #(#chain_decls)*
+            }
+
+            impl #impl_generics __WincodeWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
+                const PLAN: [#crate_name::FieldPlan; #field_count] =
+                    #crate_name::TypeMeta::field_plan([#(#metas),*]);
+                #(#chain_defs)*
+            }
+        }
+    });
     Ok(quote! {
         const _: () = {
+            #helper_impl
             unsafe impl #impl_generics #crate_name::SchemaWrite<__WincodeConfig> for #ident #ty_generics #where_clause {
                 type Src = Self;
 
