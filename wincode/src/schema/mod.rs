@@ -2063,6 +2063,27 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_skip_default_val_cannot_see_field_bindings() {
+        fn a() -> u64 {
+            7
+        }
+
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        enum Enum {
+            V {
+                x: u64,
+                #[wincode(skip(default_val = a()))]
+                y: u64,
+            },
+        }
+
+        let serialized = serialize(&Enum::V { x: 1, y: 2 }).unwrap();
+        let deserialized: Enum = deserialize(&serialized).unwrap();
+        assert_eq!(deserialized, Enum::V { x: 1, y: 7 });
+    }
+
+    #[test]
     fn enum_with_tag_encoding_roundtrip() {
         #[derive(SchemaWrite, SchemaRead, Debug, PartialEq, proptest_derive::Arbitrary)]
         #[wincode(internal, tag_encoding = "u8")]

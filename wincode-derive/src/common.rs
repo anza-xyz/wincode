@@ -380,7 +380,12 @@ impl FieldsExt for Fields<Field> {
         &self,
         prefix: Option<&str>,
     ) -> impl Iterator<Item = (&Field, Ident)> + Clone {
-        self.iter().zip(anon_ident_iter(prefix))
+        self.iter().zip(anon_ident_iter(prefix).map(|mut ident| {
+            // `mixed_site` gives the bindings `macro_rules!` hygiene, so user expressions
+            // spliced into the impl (e.g. `default_val`) can't see them.
+            ident.set_span(Span::mixed_site());
+            ident
+        }))
     }
 
     fn unskipped_iter(&self) -> impl Iterator<Item = &Field> + Clone {
