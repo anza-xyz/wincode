@@ -93,7 +93,8 @@ for target in "${targets[@]}"; do
 							"binary_path_in_bundle": "$binary_path",
 							"coverage_binary_path_in_bundle": "$coverage_binary_path",
 							"sources_path_in_bundle": "./src/",
-							"sources_original_path": "$(pwd)"
+							"sources_original_path": "$(pwd)",
+							"llvm_version": "23"
 						}
 					},
 					"architecture": {
