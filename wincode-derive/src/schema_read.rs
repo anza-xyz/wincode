@@ -2,8 +2,9 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, TypeExt, Variant, VariantsExt,
-            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            Field, FieldsExt, SchemaArgs, StaticPrefixTokens, StructRepr, TraitImpl,
+            TrustedWindowTokens, TypeExt, Variant, VariantsExt, default_tag_encoding, extract_repr,
+            generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -108,6 +109,22 @@ fn impl_struct(
 
     let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name);
 
+    let StaticPrefixTokens {
+        trusted_window,
+        direct_steps: direct_read_impl,
+    } = fields.plan_static_prefix(TraitImpl::SchemaRead, &read_impl, crate_name);
+    let prefix_read_impl = trusted_window.map(|TrustedWindowTokens { layout_expr, steps }| {
+        quote! {
+            let static_prefix = const { #layout_expr };
+            if static_prefix.len > 0 {
+                // SAFETY: `static_prefix.size` is the sum of the serialized sizes of the prefix
+                // fields, and the guards read exactly those fields.
+                let mut reader = unsafe { #crate_name::io::Reader::as_trusted_for(&mut reader, static_prefix.size) }?;
+                #(#steps)*
+            }
+        }
+    });
+
     // Drop the initialized prefix in reverse: a declaration is live exactly when the count
     // reached past it.
     let drop_guard = fields.iter().enumerate().rev().map(|(index, field)| {
@@ -129,10 +146,6 @@ fn impl_struct(
     };
 
     let ident = &args.ident;
-    let trait_impl = match &args.context {
-        Some(ctx) => quote!(#crate_name::SchemaReadContext<'de, __WincodeConfig, #ctx>),
-        None => quote!(#crate_name::SchemaRead<'de, __WincodeConfig>),
-    };
     let (impl_generics, ty_generics, where_clause) = args.generics.split_for_impl();
     let init_guard = quote! {
         let dst_ptr = dst.as_mut_ptr();
@@ -159,23 +172,10 @@ fn impl_struct(
                 }
             }
 
-            match <Self as #trait_impl>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `read` on each field will consume exactly `size` bytes,
-                    // fully consuming the trusted window.
-                    let mut reader = unsafe { #crate_name::io::Reader::as_trusted_for(&mut reader, size) }?;
-                    #init_guard
-                    #(#read_impl)*
-                    ::core::mem::forget(guard);
-                }
-                #crate_name::TypeMeta::Dynamic => {
-                    #init_guard
-                    #(#read_impl)*
-                    ::core::mem::forget(guard);
-                }
-            }
+            #init_guard
+            #prefix_read_impl
+            #(#direct_read_impl)*
+            ::core::mem::forget(guard);
         },
         quote! {
             #type_meta_impl
