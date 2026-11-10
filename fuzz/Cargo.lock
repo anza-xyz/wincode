@@ -40,7 +40,7 @@ checksum = "1b8c52171e8afbe9c1f32996b71fa12fed24cf4c061651198f2d861886405a76"
 dependencies = [
  "bytes",
  "solana-hash",
- "solana-message",
+ "solana-message 5.1.0",
  "solana-packet",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -2470,6 +2470,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-message"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e850dc12128011de32eaee7628faf59d94d6366ffa25a986714d8449eed65ac5"
+dependencies = [
+ "solana-address",
+ "solana-hash",
+ "solana-instruction 4.0.0",
+ "solana-sanitize",
+ "solana-sdk-ids",
+ "solana-short-vec",
+ "solana-transaction-error",
+ "wincode",
+]
+
+[[package]]
 name = "solana-metrics"
 version = "4.4.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2542,7 +2558,7 @@ dependencies = [
  "rayon",
  "serde",
  "solana-hash",
- "solana-message",
+ "solana-message 5.1.0",
  "solana-metrics",
  "solana-packet",
  "solana-pubkey",
@@ -2674,7 +2690,7 @@ dependencies = [
  "solana-compute-budget",
  "solana-compute-budget-instruction",
  "solana-hash",
- "solana-message",
+ "solana-message 5.1.0",
  "solana-program-entrypoint",
  "solana-pubkey",
  "solana-sdk-ids",
@@ -2921,7 +2937,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e1d4d6932de8290b7835f9926281c210291718e14732f5a736ae31ca54e2e47"
 dependencies = [
  "solana-hash",
- "solana-message",
+ "solana-message 5.1.0",
  "solana-pubkey",
  "solana-sdk-ids",
  "solana-signature",
@@ -3013,7 +3029,7 @@ dependencies = [
  "solana-hash",
  "solana-instruction 4.0.0",
  "solana-instruction-error 3.1.0",
- "solana-message",
+ "solana-message 5.1.0",
  "solana-sanitize",
  "solana-sdk-ids",
  "solana-short-vec",
@@ -3650,7 +3666,7 @@ dependencies = [
  "solana-entry",
  "solana-fee-calculator",
  "solana-hash",
- "solana-message",
+ "solana-message 6.0.0",
  "solana-nonce",
  "solana-signature",
  "solana-transaction",
