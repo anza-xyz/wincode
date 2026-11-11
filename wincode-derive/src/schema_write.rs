@@ -37,15 +37,14 @@ fn impl_struct(
         );
     }
 
-    let target = fields
-        .unskipped_iter()
-        .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
+    let targets = fields.struct_targets(TraitImpl::SchemaWrite);
+    let unskipped_targets = targets.iter().flatten();
     let mut size_count_idents = Vec::with_capacity(fields.len());
 
     let writes = fields.struct_members_iter()
-        .map(|(field, ident)| {
-            if field.skip.is_none() {
-                let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
+        .zip(&targets)
+        .map(|((_, ident), target)| {
+            if let Some(target) = target {
                 let write = quote! { #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
                 size_count_idents.push(ident);
                 Some(write)
@@ -55,12 +54,12 @@ fn impl_struct(
         })
         .collect::<Vec<_>>();
 
-    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name);
+    let type_meta_impl = fields.type_meta_impl(&targets, repr, crate_name);
 
     let StaticPrefixTokens {
         trusted_window,
         direct_steps: direct_writes,
-    } = fields.plan_static_prefix(TraitImpl::SchemaWrite, &writes, crate_name);
+    } = fields.plan_static_prefix(TraitImpl::SchemaWrite, &targets, &writes, crate_name);
     let prefix_write_impl = trusted_window.map(|TrustedWindowTokens { layout_expr, steps }| {
         quote! {
             let static_prefix = const { #layout_expr };
@@ -81,7 +80,7 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += #target::size_of(&src.#size_count_idents)?;
+                total += #unskipped_targets::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },

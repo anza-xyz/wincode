@@ -36,12 +36,14 @@ fn impl_struct(
     }
 
     let num_fields = fields.len();
+    let targets = fields.struct_targets(TraitImpl::SchemaRead);
+    let mut lifetime_asserts = Vec::new();
     let read_impl = fields
         .iter()
+        .zip(&targets)
         .enumerate()
-        .map(|(i, field)| {
+        .map(|(i, (field, fully_qualified))| {
             let ident = field.struct_member_ident(i);
-            let fully_qualified = field.target_fully_qualified(TraitImpl::SchemaRead);
             let declared_ty = &field.ty;
             let read_ty = field
                 .ty
@@ -53,10 +55,8 @@ fn impl_struct(
             // `read_ty` only potentially differs from the declared field type only in lifetimes,
             // which do not affect layout. The coercion assertion below separately proves the
             // value-level lifetime conversion is sound.
-            let assert_safe_lifetime_shortening = if read_ty == *declared_ty {
-                quote! {}
-            } else {
-                quote! {
+            if field.skip.is_none() && read_ty != *declared_ty {
+                lifetime_asserts.push(quote! {
                     // Reading directly into the field bypasses an ordinary assignment, so make
                     // Rust prove that replacing input lifetimes with the field's declared
                     // lifetimes is a valid coercion. An outlives bound alone is insufficient for
@@ -66,8 +66,8 @@ fn impl_struct(
                         let _: fn(#read_ty) -> #declared_ty =
                             |value: #read_ty| -> #declared_ty { value };
                     }
-                }
-            };
+                });
+            }
             let init_count = if i == num_fields - 1 {
                 quote! {}
             } else {
@@ -83,7 +83,6 @@ fn impl_struct(
                 match &field.context {
                     Some(_) => {
                         quote! {
-                            #assert_safe_lifetime_shortening
                             #fully_qualified::read_with_context(
                                 ctx,
                                 #crate_name::io::Reader::by_ref(&mut reader),
@@ -94,7 +93,6 @@ fn impl_struct(
                     }
                     None => {
                         quote! {
-                            #assert_safe_lifetime_shortening
                             #fully_qualified::read(
                                 #crate_name::io::Reader::by_ref(&mut reader),
                                 unsafe { &mut *(&raw mut (*dst_ptr).#ident).cast::<#read_dst_ty>() }
@@ -107,12 +105,12 @@ fn impl_struct(
         })
         .collect::<Vec<_>>();
 
-    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaRead, repr, crate_name);
+    let type_meta_impl = fields.type_meta_impl(&targets, repr, crate_name);
 
     let StaticPrefixTokens {
         trusted_window,
         direct_steps: direct_read_impl,
-    } = fields.plan_static_prefix(TraitImpl::SchemaRead, &read_impl, crate_name);
+    } = fields.plan_static_prefix(TraitImpl::SchemaRead, &targets, &read_impl, crate_name);
     let prefix_read_impl = trusted_window.map(|TrustedWindowTokens { layout_expr, steps }| {
         quote! {
             let static_prefix = const { #layout_expr };
@@ -172,6 +170,7 @@ fn impl_struct(
                 }
             }
 
+            #(#lifetime_asserts)*
             #init_guard
             #prefix_read_impl
             #(#direct_read_impl)*
