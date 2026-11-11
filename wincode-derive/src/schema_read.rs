@@ -209,7 +209,7 @@ fn impl_enum(
         match fields.style {
             style @ (Style::Struct | Style::Tuple) => {
                 // No prefix disambiguation needed, as we are matching on a discriminant integer.
-                let mut construct_idents = Vec::with_capacity(fields.len());
+                let mut construct_fields = Vec::with_capacity(fields.len());
                 let read = fields.enum_members_iter(None)
                     .map(|(field, ident)| {
                         let target = field.target_fully_qualified(TraitImpl::SchemaRead);
@@ -234,7 +234,7 @@ fn impl_enum(
                                 }
                             }
                         };
-                        construct_idents.push(ident);
+                        construct_fields.push(field.enum_member_binding(ident));
                         read
                     })
                     .collect::<Vec<_>>();
@@ -247,11 +247,11 @@ fn impl_enum(
 
                 let constructor = if style.is_struct() {
                     quote! {
-                        Self::#variant_ident{#(#construct_idents),*}
+                        Self::#variant_ident{#(#construct_fields),*}
                     }
                 } else {
                     quote! {
-                        Self::#variant_ident(#(#construct_idents),*)
+                        Self::#variant_ident(#(#construct_fields),*)
                     }
                 };
 

@@ -147,15 +147,11 @@ fn impl_enum(
                             let write = quote! {
                                 #target::write(#crate_name::io::Writer::by_ref(&mut writer), #ident)?;
                             };
-                            pattern_fragments.push(quote! { #ident });
+                            pattern_fragments.push(field.enum_member_binding(&ident));
                             size_count_idents.push(ident);
                             Some(write)
                         } else {
-                            if style.is_struct() {
-                                pattern_fragments.push(quote! { #ident: _ });
-                            } else {
-                                pattern_fragments.push(quote! { _ });
-                            }
+                            pattern_fragments.push(field.enum_member_binding(quote! { _ }));
                             None
                         }
                     })
