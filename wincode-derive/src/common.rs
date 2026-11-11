@@ -4,8 +4,8 @@ use {
         ast::{Data, Fields, NestedMeta, Style},
         util::Flag,
     },
-    proc_macro2::{Span, TokenStream},
-    quote::{ToTokens as _, quote},
+    proc_macro2::{Literal, Span, TokenStream},
+    quote::{ToTokens, quote},
     std::{
         borrow::Cow,
         collections::{HashSet, VecDeque},
@@ -230,6 +230,11 @@ impl Field {
         }
     }
 
+    /// Whether the field's read under `trait_impl` consumes the context.
+    fn reads_context(&self, trait_impl: TraitImpl) -> bool {
+        matches!(trait_impl, TraitImpl::SchemaRead) && self.context.is_some() && self.skip.is_none()
+    }
+
     pub(crate) fn has_lifetime(&self) -> bool {
         self.ty.has_lifetime()
     }
@@ -293,13 +298,50 @@ impl Field {
     }
 }
 
+/// Code fragments for a struct's field steps, arranged around the trusted window over its
+/// static prefix.
+pub(crate) struct StaticPrefixTokens {
+    /// The window and the steps inside it, absent when fewer than two steps can share it.
+    pub(crate) trusted_window: Option<TrustedWindowTokens>,
+    /// The steps through the parent reader or writer, after the window. A step with a copy
+    /// inside the window is guarded on `static_prefix.len`.
+    pub(crate) direct_steps: Vec<TokenStream>,
+}
+
+/// Code fragments for the trusted window over a struct's static prefix.
+pub(crate) struct TrustedWindowTokens {
+    /// The `TypeMeta::static_prefix([...])` expression that measures the window.
+    pub(crate) layout_expr: TokenStream,
+    /// The steps inside the window, each guarded on `static_prefix.len`.
+    pub(crate) steps: Vec<TokenStream>,
+}
+
 pub(crate) trait FieldsExt {
     fn type_meta_impl(
         &self,
-        trait_impl: TraitImpl,
+        targets: &[Option<TokenStream>],
         repr: &StructRepr,
         crate_name: &Path,
     ) -> TokenStream;
+    /// The fully qualified target of each declaration, `None` for a skipped one.
+    fn struct_targets(&self, trait_impl: TraitImpl) -> Vec<Option<TokenStream>>;
+    /// Place each field's step inside the trusted window over the static prefix, after it, or
+    /// both, given `field_targets` as `struct_targets` returns them.
+    ///
+    /// A field that may fall in the prefix gets both copies, each guarded on whether
+    /// `static_prefix.len` covers the field. With fewer than two steps able to share a window,
+    /// the plan has no window and keeps the steps unguarded.
+    ///
+    /// A skipped field enters the plan as a zero-sized static, so it stays inside the prefix. A
+    /// field that reads the context enters as dynamic and gets a single unguarded step after the
+    /// window, since the context moves into one read.
+    fn plan_static_prefix(
+        &self,
+        trait_impl: TraitImpl,
+        field_targets: &[Option<TokenStream>],
+        field_steps: &[impl ToTokens],
+        crate_name: &Path,
+    ) -> StaticPrefixTokens;
     /// Get an iterator over the fields and their identifiers for the struct members.
     ///
     /// If the field has a named identifier, return it.
@@ -325,17 +367,12 @@ impl FieldsExt for Fields<Field> {
     /// Generate the `TYPE_META` implementation for a struct.
     fn type_meta_impl(
         &self,
-        trait_impl: TraitImpl,
+        targets: &[Option<TokenStream>],
         repr: &StructRepr,
         crate_name: &Path,
     ) -> TokenStream {
-        let tuple_expansion = {
-            let items = self.unskipped_iter().map(|field| {
-                let target = field.target_fully_qualified(trait_impl);
-                quote! { #target::TYPE_META }
-            });
-            quote! { #(#items),* }
-        };
+        let targets = targets.iter().flatten();
+        let tuple_expansion = quote! { #(#targets::TYPE_META),* };
         let is_zero_copy_eligible = repr.is_zero_copy_eligible();
         // Extract sizes and zero-copy flags from the TYPE_META implementations of the fields of the struct.
         // We can use this in aggregate to determine the static size and zero-copy eligibility of the struct.
@@ -355,6 +392,65 @@ impl FieldsExt for Fields<Field> {
             } else {
                 #crate_name::TypeMeta::Dynamic
             }
+        }
+    }
+
+    fn struct_targets(&self, trait_impl: TraitImpl) -> Vec<Option<TokenStream>> {
+        self.iter()
+            .map(|field| match field.skip {
+                Some(_) => None,
+                None => Some(field.target_fully_qualified(trait_impl)),
+            })
+            .collect()
+    }
+
+    fn plan_static_prefix(
+        &self,
+        trait_impl: TraitImpl,
+        field_targets: &[Option<TokenStream>],
+        field_steps: &[impl ToTokens],
+        crate_name: &Path,
+    ) -> StaticPrefixTokens {
+        let steps = field_steps
+            .iter()
+            .map(ToTokens::to_token_stream)
+            .collect::<Vec<_>>();
+        let mut metas = Vec::with_capacity(steps.len());
+        let mut windowed = Vec::with_capacity(steps.len());
+        let mut direct = Vec::with_capacity(steps.len());
+        for (index, ((field, target), step)) in
+            self.iter().zip(field_targets).zip(&steps).enumerate()
+        {
+            metas.push(match target {
+                None => quote! { #crate_name::TypeMeta::Static { size: 0, zero_copy: true } },
+                Some(_) if field.reads_context(trait_impl) => {
+                    quote! { #crate_name::TypeMeta::Dynamic }
+                }
+                Some(target) => quote! { #target::TYPE_META },
+            });
+            if step.is_empty() {
+                continue;
+            }
+            if field.reads_context(trait_impl) {
+                direct.push(step.clone());
+                continue;
+            }
+            let index = Literal::usize_unsuffixed(index);
+            windowed.push(quote! { if #index < static_prefix.len { #step } });
+            direct.push(quote! { if static_prefix.len <= #index { #step } });
+        }
+        if windowed.len() < 2 {
+            return StaticPrefixTokens {
+                trusted_window: None,
+                direct_steps: steps,
+            };
+        }
+        StaticPrefixTokens {
+            trusted_window: Some(TrustedWindowTokens {
+                layout_expr: quote! { #crate_name::TypeMeta::static_prefix([#(#metas),*]) },
+                steps: windowed,
+            }),
+            direct_steps: direct,
         }
     }
 

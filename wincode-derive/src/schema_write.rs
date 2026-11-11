@@ -2,8 +2,9 @@ use {
     crate::{
         assert_zero_copy::assert_zero_copy,
         common::{
-            Field, FieldsExt, SchemaArgs, StructRepr, TraitImpl, Variant, VariantsExt,
-            default_tag_encoding, extract_repr, generic_field_types, get_crate_name,
+            Field, FieldsExt, SchemaArgs, StaticPrefixTokens, StructRepr, TraitImpl,
+            TrustedWindowTokens, Variant, VariantsExt, default_tag_encoding, extract_repr,
+            generic_field_types, get_crate_name,
         },
     },
     darling::{
@@ -36,15 +37,14 @@ fn impl_struct(
         );
     }
 
-    let target = fields
-        .unskipped_iter()
-        .map(|field| field.target_fully_qualified(TraitImpl::SchemaWrite));
+    let targets = fields.struct_targets(TraitImpl::SchemaWrite);
+    let unskipped_targets = targets.iter().flatten();
     let mut size_count_idents = Vec::with_capacity(fields.len());
 
     let writes = fields.struct_members_iter()
-        .filter_map(|(field, ident)| {
-            if field.skip.is_none() {
-                let target = field.target_fully_qualified(TraitImpl::SchemaWrite);
+        .zip(&targets)
+        .map(|((_, ident), target)| {
+            if let Some(target) = target {
                 let write = quote! { #target::write(#crate_name::io::Writer::by_ref(&mut writer), &src.#ident)?; };
                 size_count_idents.push(ident);
                 Some(write)
@@ -54,7 +54,24 @@ fn impl_struct(
         })
         .collect::<Vec<_>>();
 
-    let type_meta_impl = fields.type_meta_impl(TraitImpl::SchemaWrite, repr, crate_name);
+    let type_meta_impl = fields.type_meta_impl(&targets, repr, crate_name);
+
+    let StaticPrefixTokens {
+        trusted_window,
+        direct_steps: direct_writes,
+    } = fields.plan_static_prefix(TraitImpl::SchemaWrite, &targets, &writes, crate_name);
+    let prefix_write_impl = trusted_window.map(|TrustedWindowTokens { layout_expr, steps }| {
+        quote! {
+            let static_prefix = const { #layout_expr };
+            if static_prefix.len > 0 {
+                // SAFETY: `static_prefix.size` is the sum of the serialized sizes of the prefix
+                // fields, and the guards write exactly those fields.
+                let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, static_prefix.size) }?;
+                #(#steps)*
+                #crate_name::io::Writer::finish(&mut writer)?;
+            }
+        }
+    });
 
     (
         quote! {
@@ -63,25 +80,13 @@ fn impl_struct(
             }
             let mut total = 0usize;
             #(
-                total += #target::size_of(&src.#size_count_idents)?;
+                total += #unskipped_targets::size_of(&src.#size_count_idents)?;
             )*
             Ok(total)
         },
         quote! {
-            match <Self as #crate_name::SchemaWrite<__WincodeConfig>>::TYPE_META {
-                #crate_name::TypeMeta::Static { size, .. } => {
-                    // SAFETY: `size` is the serialized size of the struct, which is the sum
-                    // of the serialized sizes of the fields.
-                    // Calling `write` on each field will write exactly `size` bytes,
-                    // fully initializing the trusted window.
-                    let mut writer = unsafe { #crate_name::io::Writer::as_trusted_for(&mut writer, size) }?;
-                    #(#writes)*
-                    #crate_name::io::Writer::finish(&mut writer)?;
-                }
-                #crate_name::TypeMeta::Dynamic => {
-                    #(#writes)*
-                }
-            }
+            #prefix_write_impl
+            #(#direct_writes)*
             Ok(())
         },
         type_meta_impl,
