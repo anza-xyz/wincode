@@ -180,6 +180,29 @@ impl Display for TraitImpl {
 }
 
 impl Field {
+    fn validate_inference(&self) -> Result<()> {
+        let Some(with) = &self.with else {
+            return Ok(());
+        };
+
+        let mut inference = InferenceCount(0);
+        inference.visit_type(with);
+
+        let mut available = GenericStack::new();
+        available.visit_type(&self.ty);
+        let available = available.0.len().max(1);
+        if inference.0 > available {
+            return Err(darling::Error::custom(format!(
+                "adapter type has {} inference placeholders, but field type provides only {available} type argument{}",
+                inference.0,
+                if available == 1 { "" } else { "s" },
+            ))
+            .with_span(with));
+        }
+
+        Ok(())
+    }
+
     /// Get the target type for a field.
     ///
     /// If the field has a `with` attribute, return it.
@@ -368,18 +391,13 @@ impl FieldsExt for Fields<Field> {
         &self,
         prefix: Option<&str>,
     ) -> impl Iterator<Item = (&Field, Cow<'_, Ident>)> + Clone {
-        let mut alpha = anon_ident_iter(prefix);
-        self.iter().map(move |field| {
+        self.iter().enumerate().map(move |(index, field)| {
             (
                 field,
                 if let Some(ident) = &field.ident {
                     Cow::Borrowed(ident)
                 } else {
-                    Cow::Owned(
-                        alpha
-                            .next()
-                            .expect("alpha iterator should never be exhausted"),
-                    )
+                    Cow::Owned(anon_ident(index, prefix))
                 },
             )
         })
@@ -394,17 +412,20 @@ impl FieldsExt for Fields<Field> {
     }
 }
 
-fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone + use<'_> {
+fn anon_ident(index: usize, prefix: Option<&str>) -> Ident {
     let prefix = prefix.unwrap_or("");
-    ('a'..='z').cycle().enumerate().map(move |(i, ch)| {
-        let wrap = i / 26;
-        let name = if wrap == 0 {
-            format!("{prefix}{ch}")
-        } else {
-            format!("{}{}{}", prefix, ch, wrap - 1)
-        };
-        Ident::new(&name, Span::call_site())
-    })
+    let ch = char::from(b'a' + (index % 26) as u8);
+    let wrap = index / 26;
+    let name = if wrap == 0 {
+        format!("{prefix}{ch}")
+    } else {
+        format!("{}{}{}", prefix, ch, wrap - 1)
+    };
+    Ident::new(&name, Span::call_site())
+}
+
+fn anon_ident_iter(prefix: Option<&str>) -> impl Iterator<Item = Ident> + Clone + use<'_> {
+    (0..).map(move |index| anon_ident(index, prefix))
 }
 
 #[derive(FromVariant)]
@@ -684,6 +705,18 @@ impl SchemaArgs {
 
     fn validate(mut self) -> Result<Self> {
         self.validate_variant_tags()?;
+        match &self.data {
+            Data::Struct(fields) => {
+                for field in fields.iter() {
+                    field.validate_inference()?;
+                }
+            }
+            Data::Enum(variants) => {
+                for field in variants.iter().flat_map(|variant| variant.fields.iter()) {
+                    field.validate_inference()?;
+                }
+            }
+        }
         self.populate_field_metadata()?;
         Ok(self)
     }
@@ -832,27 +865,29 @@ impl<'ast> From<GenericStack<'ast>> for InferGeneric<'ast> {
 
 impl VisitMut for InferGeneric<'_> {
     fn visit_generic_argument_mut(&mut self, ga: &mut GenericArgument) {
-        if let GenericArgument::Type(Type::Infer(_)) = ga {
-            let ty = self
-                .0
-                .pop_front()
-                .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
-                .clone();
-            *ga = GenericArgument::Type(ty);
+        if let GenericArgument::Type(Type::Infer(_)) = ga
+            && let Some(ty) = self.0.pop_front()
+        {
+            *ga = GenericArgument::Type(ty.clone());
         }
         visit_mut::visit_generic_argument_mut(self, ga);
     }
 
     fn visit_type_array_mut(&mut self, array: &mut syn::TypeArray) {
-        if let Type::Infer(_) = &*array.elem {
-            let ty = self
-                .0
-                .pop_front()
-                .expect("wincode-derive: inference mismatch: not enough collected types for `_`")
-                .clone();
-            *array.elem = ty;
+        if let Type::Infer(_) = &*array.elem
+            && let Some(ty) = self.0.pop_front()
+        {
+            *array.elem = ty.clone();
         }
         visit_mut::visit_type_array_mut(self, array);
+    }
+}
+
+struct InferenceCount(usize);
+
+impl Visit<'_> for InferenceCount {
+    fn visit_type_infer(&mut self, _: &syn::TypeInfer) {
+        self.0 += 1;
     }
 }
 
@@ -1069,6 +1104,33 @@ mod tests {
                 Pair<containers::Box<[containers::Pod<Foo<Bar<u8>>>]>, containers::Pod<u16>>
             )
         )
+    }
+
+    #[test]
+    fn rejects_too_many_inference_placeholders() {
+        for input in [
+            parse_quote! {
+                struct Invalid {
+                    #[wincode(with = "Adapter<_, _>")]
+                    field: u8,
+                }
+            },
+            parse_quote! {
+                struct Invalid {
+                    #[wincode(with = "Adapter<[_; 4], _>")]
+                    field: [u8; 4],
+                }
+            },
+        ] {
+            let error = match SchemaArgs::from_derive_input(&input) {
+                Ok(_) => panic!("invalid inference unexpectedly succeeded"),
+                Err(error) => error,
+            };
+            let diagnostic = error.write_errors().to_string();
+            assert!(diagnostic.contains("compile_error"));
+            assert!(diagnostic.contains("2 inference placeholders"));
+            assert!(diagnostic.contains("only 1 type argument"));
+        }
     }
 
     #[test]
