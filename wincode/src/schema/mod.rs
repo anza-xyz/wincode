@@ -201,6 +201,42 @@ impl TypeMeta {
             zero_copy: all_zero_copy,
         }
     }
+
+    /// Measure the leading run of statically sized fields, which the derive covers with one
+    /// trusted window.
+    ///
+    /// A run shorter than two fields comes back empty, since a window costs a parent check, a
+    /// child reader or writer and a parent advance. Pass a skipped declaration as a zero-sized
+    /// static field, so it stays inside the run.
+    #[doc(hidden)]
+    #[expect(clippy::arithmetic_side_effects)]
+    pub const fn static_prefix<const N: usize>(types: [Self; N]) -> StaticPrefix {
+        let mut prefix = StaticPrefix { len: 0, size: 0 };
+        while prefix.len < N {
+            let Self::Static { size, .. } = types[prefix.len] else {
+                break;
+            };
+            prefix.size = prefix
+                .size
+                .checked_add(size)
+                .expect("static prefix size overflows usize");
+            prefix.len += 1;
+        }
+        if prefix.len < 2 {
+            return StaticPrefix { len: 0, size: 0 };
+        }
+        prefix
+    }
+}
+
+/// The leading static run that [`TypeMeta::static_prefix`] measures.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaticPrefix {
+    /// Count of declarations in the run.
+    pub len: usize,
+    /// Count of wire bytes in the run.
+    pub size: usize,
 }
 
 /// Types that can be written (serialized) to a [`Writer`].
@@ -2097,6 +2133,384 @@ mod tests {
                 zero_copy: false
             }
         ));
+    }
+
+    #[test]
+    fn static_prefix_covers_runs_of_two_or_more() {
+        use crate::StaticPrefix;
+
+        const S: TypeMeta = TypeMeta::Static {
+            size: 4,
+            zero_copy: true,
+        };
+        const D: TypeMeta = TypeMeta::Dynamic;
+        let prefix = |len, size| StaticPrefix { len, size };
+
+        assert_eq!(TypeMeta::static_prefix([S, S, S]), prefix(3, 12));
+        assert_eq!(TypeMeta::static_prefix([S, S, D, S, S]), prefix(2, 8));
+        assert_eq!(TypeMeta::static_prefix([S, D, S, S]), prefix(0, 0));
+        assert_eq!(TypeMeta::static_prefix([D, S, S]), prefix(0, 0));
+    }
+
+    #[test]
+    fn static_prefix_matches_bincode() {
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u8,
+            b: u32,
+            c: u64,
+            tail: Vec<u8>,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct NoPrefix {
+            head: Vec<u8>,
+            a: u8,
+            b: u32,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Split {
+            a: u8,
+            head: Vec<u8>,
+            b: u32,
+            tail: Vec<u8>,
+            c: u64,
+        }
+
+        #[derive(
+            SchemaWrite, SchemaRead, Debug, PartialEq, serde::Serialize, serde::Deserialize,
+        )]
+        #[wincode(internal)]
+        struct Skipped {
+            a: u8,
+            // Zero-sized in the prefix, so `a` and `b` share the window.
+            #[wincode(skip)]
+            #[serde(skip)]
+            ignored: u64,
+            b: u32,
+            tail: Vec<u8>,
+        }
+
+        fn check<T>(value: &T)
+        where
+            T: SchemaWrite<DefaultConfig, Src = T>
+                + for<'de> SchemaRead<'de, DefaultConfig, Dst = T>
+                + serde::Serialize
+                + serde::de::DeserializeOwned
+                + core::fmt::Debug
+                + PartialEq,
+        {
+            let encoded = serialize(value).unwrap();
+            assert_eq!(encoded, bincode::serialize(value).unwrap());
+            assert_eq!(&deserialize::<T>(&encoded).unwrap(), value);
+            for len in 0..encoded.len() {
+                assert!(deserialize::<T>(&encoded[..len]).is_err());
+                assert!(crate::serialize_into(vec![0; len].as_mut_slice(), value).is_err());
+            }
+        }
+
+        for tail in [vec![], vec![7u8; 5]] {
+            check(&Prefix {
+                a: 1,
+                b: 2,
+                c: 3,
+                tail: tail.clone(),
+            });
+            check(&NoPrefix {
+                head: tail.clone(),
+                a: 1,
+                b: 2,
+                c: 3,
+            });
+            check(&Split {
+                a: 1,
+                head: tail.clone(),
+                b: 2,
+                tail: tail.clone(),
+                c: 3,
+            });
+            check(&Skipped {
+                a: 1,
+                ignored: 0,
+                b: 2,
+                tail: tail.clone(),
+            });
+        }
+    }
+
+    #[test]
+    fn static_prefix_resolves_self_and_bounds() {
+        macro_rules! default_of {
+            ($ty:ty) => {
+                <$ty>::DEFAULT
+            };
+        }
+
+        // The skipped fields sit inside the prefix, so the derive emits their defaults twice.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Skips {
+            a: u64,
+            #[wincode(skip(default_val = Self::DEFAULT))]
+            direct: u8,
+            // `Self` should resolve even when passed through a macro.
+            #[wincode(skip(default_val = default_of!(Self)))]
+            via_macro: u8,
+            // `Self::Dst` should resolve through the schema trait.
+            #[wincode(skip(default_val = core::mem::size_of::<Self::Dst>()))]
+            dst_size: usize,
+            b: u64,
+        }
+
+        impl Skips {
+            const DEFAULT: u8 = 7;
+        }
+
+        // Recursive, so the prefix reads `Self`'s field types.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Node {
+            value: u64,
+            next: Option<Box<Self>>,
+        }
+
+        // Generic, so the prefix depends on `T`.
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Bounded<T: Copy>
+        where
+            T: Default,
+        {
+            a: u64,
+            b: u64,
+            t: T,
+        }
+
+        let skips = Skips {
+            a: 1,
+            direct: 0,
+            via_macro: 0,
+            dst_size: 0,
+            b: 2,
+        };
+        assert_eq!(
+            deserialize::<Skips>(&serialize(&skips).unwrap()).unwrap(),
+            Skips {
+                a: 1,
+                direct: 7,
+                via_macro: 7,
+                dst_size: core::mem::size_of::<Skips>(),
+                b: 2,
+            }
+        );
+        let node = Node {
+            value: 1,
+            next: Some(Box::new(Node {
+                value: 2,
+                next: None,
+            })),
+        };
+        assert_eq!(
+            deserialize::<Node>(&serialize(&node).unwrap()).unwrap(),
+            node
+        );
+        let bounded = Bounded {
+            a: 1,
+            b: 2,
+            t: 3u16,
+        };
+        assert_eq!(
+            deserialize::<Bounded<u16>>(&serialize(&bounded).unwrap()).unwrap(),
+            bounded
+        );
+    }
+
+    #[test]
+    fn static_prefix_stops_at_context_read() {
+        // A non-copyable context, so it can be moved into only one field's read.
+        struct Offset(u32);
+
+        // Statically sized, so only its context read keeps it out of the prefix.
+        struct AddOffset;
+
+        unsafe impl<'de, C: ConfigCore> SchemaReadContext<'de, C, Offset> for AddOffset {
+            type Dst = u32;
+            const TYPE_META: TypeMeta = TypeMeta::Static {
+                size: 4,
+                zero_copy: false,
+            };
+
+            fn read_with_context(
+                ctx: Offset,
+                reader: impl Reader<'de>,
+                dst: &mut MaybeUninit<u32>,
+            ) -> ReadResult<()> {
+                dst.write(<u32 as SchemaRead<'de, C>>::get(reader)? + ctx.0);
+                Ok(())
+            }
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct After {
+            a: u64,
+            b: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Before {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            a: u64,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Between {
+            a: u64,
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct SkippedContext {
+            a: u64,
+            // Skipped, so it never reads the context and stays inside the prefix.
+            #[wincode(skip, context)]
+            ignored: u64,
+            b: u64,
+        }
+
+        #[derive(SchemaRead, Debug, PartialEq)]
+        #[wincode(internal, context = "Offset")]
+        struct Only {
+            #[wincode(with = "AddOffset", context)]
+            c: u32,
+        }
+
+        let bytes = serialize(&(1u64, 2u64, 10u32)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, After>(Offset(5), &bytes).unwrap(),
+            After { a: 1, b: 2, c: 15 }
+        );
+        let bytes = serialize(&(1u64, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, SkippedContext>(Offset(5), &bytes).unwrap(),
+            SkippedContext {
+                a: 1,
+                ignored: 0,
+                b: 2
+            }
+        );
+        let bytes = serialize(&(10u32, 1u64, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Before>(Offset(5), &bytes).unwrap(),
+            Before { c: 15, a: 1, b: 2 }
+        );
+        let bytes = serialize(&(1u64, 10u32, 2u64)).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Between>(Offset(5), &bytes).unwrap(),
+            Between { a: 1, c: 15, b: 2 }
+        );
+        let bytes = serialize(&10u32).unwrap();
+        assert_eq!(
+            crate::deserialize_with_context::<_, Only>(Offset(5), &bytes).unwrap(),
+            Only { c: 15 }
+        );
+    }
+
+    #[test]
+    fn test_struct_derive_handles_partial_drop_around_static_prefix() {
+        // A read can fail inside the prefix window, in the dynamic field after it or in the field
+        // after that, and each failure drops only the fields read before it.
+        #[derive(SchemaWrite, SchemaRead, proptest_derive::Arbitrary, Debug, PartialEq, Eq)]
+        #[wincode(internal)]
+        struct CouldLeak {
+            a: DropCountedMaybeError,
+            b: DropCountedMaybeError,
+            tail: Vec<DropCountedMaybeError>,
+            c: DropCountedMaybeError,
+        }
+
+        let _guard = TLDropGuard::new();
+        proptest!(proptest_cfg(), |(could_leak: CouldLeak)| {
+            let serialized = serialize(&could_leak).unwrap();
+            let deserialized = CouldLeak::deserialize(&serialized);
+            if let Ok(deserialized) = deserialized {
+                prop_assert_eq!(could_leak, deserialized);
+            }
+        });
+    }
+
+    #[test]
+    fn static_prefix_covers_borrowed_field() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Borrowed<'a> {
+            // Static through `ZeroCopy`, and its lifetime is rewritten to `'de` for the read.
+            a: &'a [u8; 4],
+            b: u16,
+            tail: &'a [u8],
+        }
+
+        let value = Borrowed {
+            a: &[1, 2, 3, 4],
+            b: 5,
+            tail: &[6, 7],
+        };
+        let bytes = serialize(&value).unwrap();
+        assert_eq!(deserialize::<Borrowed<'_>>(&bytes).unwrap(), value);
+    }
+
+    #[test]
+    fn static_prefix_vanishes_under_varint() {
+        #[derive(SchemaWrite, SchemaRead, Debug, PartialEq)]
+        #[wincode(internal)]
+        struct Prefix {
+            a: u8,
+            b: u32,
+            c: u64,
+            tail: Vec<u8>,
+        }
+
+        let config = Configuration::default().with_varint_encoding();
+        let value = Prefix {
+            a: 1,
+            b: 2,
+            c: 3,
+            tail: vec![4],
+        };
+
+        // Shorter than the 13 bytes a fixed-width prefix would reserve.
+        let mut buf = [0xAAu8; 12];
+        let written = {
+            let buf_len = buf.len();
+            let mut writer: &mut [u8] = &mut buf;
+            config::serialize_into(&mut writer, &value, config).unwrap();
+            buf_len - writer.len()
+        };
+        assert_eq!(&buf[..written], &[1, 2, 3, 1, 4]);
+        assert_eq!(
+            config::deserialize::<Prefix, _>(&buf[..written], config).unwrap(),
+            value
+        );
     }
 
     #[test]
